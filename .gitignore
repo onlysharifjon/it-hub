@@ -35,5 +35,5 @@ CREDENTIALS.md
 # Claude
 .claude/
 
-# Alembic versions (migration fayllar)
-backend/alembic/versions/
+# Alembic versions cache
+backend/alembic/versions/__pycache__/
