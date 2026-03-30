@@ -26,7 +26,7 @@ export default function Groups() {
 
   useEffect(() => {
     load()
-    fetchUsers().then(users => setTeachers(users.filter(u => u.role === 'teacher' || u.role === 'metodist')))
+    fetchUsers().then(r => setTeachers((r.items || r).filter(u => u.role === 'teacher' || u.role === 'metodist')))
     fetchStudents({ is_active: true, page_size: 100 }).then(r => setAllStudents(r.items || []))
   }, [])
 

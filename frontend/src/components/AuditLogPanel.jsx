@@ -15,7 +15,7 @@ function AuditLogPanel({ onClose }) {
 
   useEffect(() => {
     fetchAuditLogs(100)
-      .then(setLogs)
+      .then(r => setLogs(r.items || r))
       .catch(() => setError("Tarixni yuklashda xatolik"))
       .finally(() => setLoading(false))
   }, [])
