@@ -216,13 +216,15 @@ def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends
 # ── Lessons endpoints ─────────────────────────────────────────────────────────
 
 @app.get("/lessons", response_model=List[schemas.LessonRead])
-def list_lessons(db: Session = Depends(get_db), _: models.User = Depends(require_auth)):
-    return db.query(models.Lesson).order_by(models.Lesson.lesson_number).all()
-
-
-@app.get("/lessons/month/{month}", response_model=List[schemas.LessonRead])
-def lessons_by_month(month: int, db: Session = Depends(get_db), _: models.User = Depends(require_auth)):
-    return db.query(models.Lesson).filter(models.Lesson.month == month).order_by(models.Lesson.lesson_number).all()
+def list_lessons(
+    category: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_auth),
+):
+    q = db.query(models.Lesson)
+    if category:
+        q = q.filter(models.Lesson.category == category.lower())
+    return q.order_by(models.Lesson.lesson_number).all()
 
 
 @app.get("/lessons/{lesson_id}", response_model=schemas.LessonRead)
@@ -235,8 +237,13 @@ def get_lesson(lesson_id: int, db: Session = Depends(get_db), _: models.User = D
 
 @app.post("/lessons", response_model=schemas.LessonRead, status_code=201)
 def create_lesson(payload: schemas.LessonCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
-    if db.query(models.Lesson).filter(models.Lesson.lesson_number == payload.lesson_number).first():
-        raise HTTPException(status_code=400, detail="Bu dars raqami allaqachon mavjud")
+    if payload.category not in schemas.LESSON_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Noto'g'ri kategoriya")
+    if db.query(models.Lesson).filter(
+        models.Lesson.category == payload.category,
+        models.Lesson.lesson_number == payload.lesson_number
+    ).first():
+        raise HTTPException(status_code=400, detail="Bu kategoriyada ushbu dars raqami allaqachon mavjud")
     lesson = models.Lesson(**payload.dict(), updated_at=datetime.utcnow(), updated_by_id=actor.id)
     db.add(lesson)
     db.flush()

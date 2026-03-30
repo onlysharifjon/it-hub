@@ -36,7 +36,10 @@ export async function fetchMe() { return request('/auth/me') }
 
 // ── Lessons ───────────────────────────────────────────────────────────────────
 
-export async function fetchLessons() { return request('/lessons') }
+export async function fetchLessons(category) {
+  const q = category ? `?category=${category}` : ''
+  return request(`/lessons${q}`)
+}
 export async function createLesson(p) { return request('/lessons', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updateLesson(id, p) { return request(`/lessons/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deleteLesson(id) { return request(`/lessons/${id}`, { method: 'DELETE' }) }

@@ -35,9 +35,8 @@ class Lesson(Base):
     __tablename__ = "lessons"
 
     id = Column(Integer, primary_key=True, index=True)
-    month = Column(Integer, nullable=False)
-    week = Column(Integer, nullable=False)
-    lesson_number = Column(Integer, nullable=False, unique=True, index=True)
+    category = Column(String(50), nullable=False, default='foundation')
+    lesson_number = Column(Integer, nullable=False, index=True)
     title = Column(String(500), nullable=False)
     section = Column(Text, nullable=True)
     guide = Column(Text, nullable=True)
@@ -45,6 +44,8 @@ class Lesson(Base):
     extra_notes = Column(Text, nullable=True)
     updated_at = Column(DateTime, nullable=True)
     updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    __table_args__ = (UniqueConstraint("category", "lesson_number", name="uq_lesson_category_number"),)
 
     updated_by_user = relationship(
         "User", back_populates="updated_lessons", foreign_keys=[updated_by_id]

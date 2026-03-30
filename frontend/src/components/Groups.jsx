@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faPlus, faPen, faTrash, faUsers, faUserPlus, faUserMinus,
-  faToggleOn, faToggleOff, faLock, faLockOpen,
+  faPlus, faPen, faUsers, faUserPlus, faUserMinus,
+  faLock, faLockOpen,
 } from '@fortawesome/free-solid-svg-icons'
 import {
-  fetchGroups, createGroup, updateGroup, deleteGroup,
+  fetchGroups, createGroup, updateGroup,
   getGroup, addStudentToGroup, removeStudentFromGroup,
   fetchStudents, fetchUsers,
 } from '../api'
@@ -77,15 +77,6 @@ export default function Groups({ onOpenGroup }) {
     finally { setSaving(false) }
   }
 
-  async function handleDelete(id) {
-    if (!confirm("Guruhni o'chirishni tasdiqlaysizmi?")) return
-    try {
-      await deleteGroup(id)
-      setGroups(prev => prev.filter(g => g.id !== id))
-      toast.success("O'chirildi")
-    } catch (e) { toast.error(e.message) }
-  }
-
   async function handleToggle(g) {
     try {
       const updated = await updateGroup(g.id, { is_active: !g.is_active })
@@ -126,7 +117,11 @@ export default function Groups({ onOpenGroup }) {
       {loading ? <div className="muted center">Yuklanmoqda...</div> : (
         <div className="groups-grid">
           {groups.map(g => (
-            <div key={g.id} className={`group-card ${!g.is_active ? 'inactive' : ''}`}>
+            <div
+              key={g.id}
+              className={`group-card group-card-clickable ${!g.is_active ? 'inactive' : ''}`}
+              onClick={() => onOpenGroup(g)}
+            >
               <div className="group-card-header">
                 <h3>{g.name}</h3>
                 <span className={`status-badge ${g.is_active ? 'active' : 'inactive'}`}>
@@ -139,19 +134,13 @@ export default function Groups({ onOpenGroup }) {
                 <div><span className="label">Jadval:</span> {g.schedule || '—'}</div>
                 <div><span className="label">O'quvchilar:</span> <span className="badge">{g.student_count}</span></div>
               </div>
-              <div className="group-card-actions">
-                <button className="btn-sm" onClick={() => onOpenGroup(g)}>
-                  <FontAwesomeIcon icon={faUsers} /> Tarkib
-                </button>
+              <div className="group-card-actions" onClick={e => e.stopPropagation()}>
                 <button className="btn-sm" onClick={() => openEdit(g)}>
                   <FontAwesomeIcon icon={faPen} /> Tahrir
                 </button>
                 <button className="btn-sm" onClick={() => handleToggle(g)}>
                   <FontAwesomeIcon icon={g.is_active ? faLock : faLockOpen} />
                   {g.is_active ? ' Yopish' : ' Ochish'}
-                </button>
-                <button className="btn-sm danger" onClick={() => handleDelete(g.id)}>
-                  <FontAwesomeIcon icon={faTrash} />
                 </button>
               </div>
             </div>

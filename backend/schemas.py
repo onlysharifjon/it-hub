@@ -49,10 +49,12 @@ class UserUpdate(BaseModel):
 
 # ── Lessons ───────────────────────────────────────────────────────────────────
 
+LESSON_CATEGORIES = {'foundation', 'frontend', 'backend'}
+
+
 class LessonRead(BaseModel):
     id: int
-    month: int
-    week: int
+    category: str
     lesson_number: int
     title: str
     section: Optional[str] = None
@@ -74,8 +76,7 @@ class LessonRead(BaseModel):
 
 
 class LessonCreate(BaseModel):
-    month: int = Field(..., ge=1)
-    week: int = Field(..., ge=1)
+    category: str = Field('foundation')
     lesson_number: int = Field(..., ge=1)
     title: str = Field(..., min_length=1, max_length=500)
     section: Optional[str] = None
