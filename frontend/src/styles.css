@@ -1029,3 +1029,32 @@ select:focus {
 .bar.bar-current { background: var(--primary); }
 .bar-label { font-size: 10px; color: rgba(255,255,255,0.45); margin-top: 6px; }
 
+/* ── Pagination ───────────────────────────────────────────────────────────── */
+.pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 4px; margin-top: 4px;
+}
+.pagination-info { font-size: 13px; color: rgba(255,255,255,0.45); }
+.pagination-btns { display: flex; align-items: center; gap: 4px; }
+.pg-btn {
+  min-width: 32px; height: 32px; padding: 0 8px;
+  border-radius: 7px; border: 1px solid var(--border);
+  background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.6);
+  font-size: 13px; cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.pg-btn:hover:not(:disabled) { background: rgba(255,255,255,0.1); color: #fff; border-color: rgba(255,255,255,0.2); }
+.pg-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+.pg-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.pg-ellipsis { color: rgba(255,255,255,0.3); font-size: 13px; padding: 0 4px; }
+
+/* ── FA icon helpers ─────────────────────────────────────────────────────── */
+.page-icon { margin-right: 10px; color: var(--primary); }
+.text-muted { color: rgba(255,255,255,0.45); }
+.tg-badge { color: #29b6f6; font-size: 13px; }
+.search-wrap { position: relative; display: inline-block; }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: rgba(255,255,255,0.35); font-size: 13px; pointer-events: none; }
+.search-input { padding-left: 32px !important; }
+.py-4 { padding-top: 16px; padding-bottom: 16px; }
+.py-8 { padding-top: 32px; padding-bottom: 32px; }
+

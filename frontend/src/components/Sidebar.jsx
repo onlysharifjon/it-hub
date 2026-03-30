@@ -1,4 +1,9 @@
 import { useEffect, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faBook, faUserGraduate, faUsers, faCreditCard,
+  faChartBar, faRightFromBracket, faChevronDown, faChevronRight,
+} from '@fortawesome/free-solid-svg-icons'
 
 function Sidebar({
   months, weeksByMonth, selectedMonth, selectedWeek,
@@ -22,7 +27,7 @@ function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div className="brand">🎓 IT Hub LMS</div>
+      <div className="brand">IT Hub LMS</div>
 
       <nav className="sidebar-nav">
         {/* Metodika */}
@@ -31,7 +36,7 @@ function Sidebar({
           className={`nav-page-btn ${activePage === 'metodika' ? 'active' : ''}`}
           onClick={() => onNavigate('metodika')}
         >
-          📚 Dars rejalari
+          <FontAwesomeIcon icon={faBook} fixedWidth /> Dars rejalari
         </button>
 
         {/* Metodika submenu */}
@@ -81,13 +86,13 @@ function Sidebar({
               className={`nav-page-btn ${activePage === 'students' ? 'active' : ''}`}
               onClick={() => onNavigate('students')}
             >
-              👨‍🎓 Talabalar
+              <FontAwesomeIcon icon={faUserGraduate} fixedWidth /> Talabalar
             </button>
             <button
               className={`nav-page-btn ${activePage === 'groups' ? 'active' : ''}`}
               onClick={() => onNavigate('groups')}
             >
-              👥 Guruhlar
+              <FontAwesomeIcon icon={faUsers} fixedWidth /> Guruhlar
             </button>
           </>
         )}
@@ -99,13 +104,13 @@ function Sidebar({
               className={`nav-page-btn ${activePage === 'payments' ? 'active' : ''}`}
               onClick={() => onNavigate('payments')}
             >
-              💳 To'lovlar
+              <FontAwesomeIcon icon={faCreditCard} fixedWidth /> To'lovlar
             </button>
             <button
               className={`nav-page-btn ${activePage === 'dashboard' ? 'active' : ''}`}
               onClick={() => onNavigate('dashboard')}
             >
-              📊 Dashboard
+              <FontAwesomeIcon icon={faChartBar} fixedWidth /> Dashboard
             </button>
           </>
         )}
@@ -122,12 +127,7 @@ function Sidebar({
           </div>
         )}
         <button className="logout-btn" onClick={onLogout} title="Chiqish">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-            <polyline points="16 17 21 12 16 7"/>
-            <line x1="21" y1="12" x2="9" y2="12"/>
-          </svg>
-          Chiqish
+          <FontAwesomeIcon icon={faRightFromBracket} /> Chiqish
         </button>
       </div>
     </aside>

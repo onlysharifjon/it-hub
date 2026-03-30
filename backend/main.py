@@ -160,8 +160,17 @@ def me(user: models.User = Depends(require_auth)):
 # ── Users endpoints ───────────────────────────────────────────────────────────
 
 @app.get("/users", response_model=List[schemas.UserRead])
-def list_users(db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
-    return db.query(models.User).order_by(models.User.id).all()
+def list_users(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_metodist),
+):
+    q = db.query(models.User)
+    if search:
+        q = q.filter(models.User.username.ilike(f"%{search}%") | models.User.full_name.ilike(f"%{search}%"))
+    return q.order_by(models.User.id).offset((page - 1) * page_size).limit(page_size).all()
 
 
 @app.post("/users", response_model=schemas.UserRead, status_code=201)
@@ -299,9 +308,25 @@ def delete_lesson(lesson_id: int, db: Session = Depends(get_db), actor: models.U
 
 # ── Audit log endpoints ───────────────────────────────────────────────────────
 
-@app.get("/audit-logs", response_model=List[schemas.AuditLogRead])
-def list_audit_logs(limit: int = 100, offset: int = 0, db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
-    return db.query(models.AuditLog).order_by(models.AuditLog.changed_at.desc()).offset(offset).limit(limit).all()
+@app.get("/audit-logs")
+def list_audit_logs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_metodist),
+):
+    q = db.query(models.AuditLog).order_by(models.AuditLog.changed_at.desc())
+    total = q.count()
+    logs = q.offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": [schemas.AuditLogRead.from_orm(l) for l in logs],
+        "meta": {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, (total + page_size - 1) // page_size),
+        }
+    }
 
 
 @app.get("/audit-logs/lesson/{lesson_id}", response_model=List[schemas.AuditLogRead])
@@ -321,10 +346,12 @@ def _student_read(s: models.Student) -> schemas.StudentRead:
     )
 
 
-@app.get("/students", response_model=List[schemas.StudentRead])
+@app.get("/students")
 def list_students(
     search: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     _: models.User = Depends(require_metodist),
 ):
@@ -333,8 +360,17 @@ def list_students(
         q = q.filter(models.Student.is_active == is_active)
     if search:
         q = q.filter(models.Student.full_name.ilike(f"%{search}%") | models.Student.phone1.ilike(f"%{search}%"))
-    students = q.order_by(models.Student.full_name).all()
-    return [_student_read(s) for s in students]
+    total = q.count()
+    students = q.order_by(models.Student.full_name).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": [_student_read(s) for s in students],
+        "meta": {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, (total + page_size - 1) // page_size),
+        }
+    }
 
 
 @app.get("/students/{student_id}", response_model=schemas.StudentRead)
@@ -502,12 +538,14 @@ def _payment_read(p: models.Payment) -> schemas.PaymentRead:
     )
 
 
-@app.get("/payments", response_model=List[schemas.PaymentRead])
+@app.get("/payments")
 def list_payments(
     student_id: Optional[int] = Query(None),
     group_id: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
     year: Optional[int] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=100),
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin),
 ):
@@ -520,7 +558,17 @@ def list_payments(
         q = q.filter(models.Payment.month == month)
     if year:
         q = q.filter(models.Payment.year == year)
-    return [_payment_read(p) for p in q.order_by(models.Payment.paid_at.desc()).all()]
+    total = q.count()
+    payments = q.order_by(models.Payment.paid_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": [_payment_read(p) for p in payments],
+        "meta": {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, (total + page_size - 1) // page_size),
+        }
+    }
 
 
 @app.post("/payments", response_model=schemas.PaymentRead, status_code=201)

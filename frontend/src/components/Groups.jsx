@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faPlus, faPen, faTrash, faUsers, faUserPlus, faUserMinus,
+  faToggleOn, faToggleOff, faLock, faLockOpen,
+} from '@fortawesome/free-solid-svg-icons'
 import {
   fetchGroups, createGroup, updateGroup, deleteGroup,
   getGroup, addStudentToGroup, removeStudentFromGroup,
@@ -22,7 +27,7 @@ export default function Groups() {
   useEffect(() => {
     load()
     fetchUsers().then(users => setTeachers(users.filter(u => u.role === 'teacher' || u.role === 'metodist')))
-    fetchStudents({ is_active: true }).then(setAllStudents)
+    fetchStudents({ is_active: true, page_size: 100 }).then(r => setAllStudents(r.items || []))
   }, [])
 
   async function load() {
@@ -112,8 +117,10 @@ export default function Groups() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1>Guruhlar</h1>
-        <button className="button primary" onClick={openAdd}>+ Guruh yaratish</button>
+        <h1><FontAwesomeIcon icon={faUsers} className="page-icon" /> Guruhlar</h1>
+        <button className="button primary" onClick={openAdd}>
+          <FontAwesomeIcon icon={faPlus} /> Guruh yaratish
+        </button>
       </div>
 
       {loading ? <div className="muted center">Yuklanmoqda...</div> : (
@@ -133,14 +140,19 @@ export default function Groups() {
                 <div><span className="label">O'quvchilar:</span> <span className="badge">{g.student_count}</span></div>
               </div>
               <div className="group-card-actions">
-                <button className="btn-sm" onClick={() => { loadDetail(g.id).then(() => {}) ; setDetailGroup({ ...g, members: [] }) }}>
-                  👥 Tarkib
+                <button className="btn-sm" onClick={() => { loadDetail(g.id); setDetailGroup({ ...g, members: [] }) }}>
+                  <FontAwesomeIcon icon={faUsers} /> Tarkib
                 </button>
-                <button className="btn-sm" onClick={() => openEdit(g)}>✏️ Tahrir</button>
+                <button className="btn-sm" onClick={() => openEdit(g)}>
+                  <FontAwesomeIcon icon={faPen} /> Tahrir
+                </button>
                 <button className="btn-sm" onClick={() => handleToggle(g)}>
-                  {g.is_active ? '🔴 Yopish' : '🟢 Ochish'}
+                  <FontAwesomeIcon icon={g.is_active ? faLock : faLockOpen} />
+                  {g.is_active ? ' Yopish' : ' Ochish'}
                 </button>
-                <button className="btn-sm danger" onClick={() => handleDelete(g.id)}>🗑️</button>
+                <button className="btn-sm danger" onClick={() => handleDelete(g.id)}>
+                  <FontAwesomeIcon icon={faTrash} />
+                </button>
               </div>
             </div>
           ))}
@@ -197,7 +209,9 @@ export default function Groups() {
                     <option key={s.id} value={s.id}>{s.full_name} ({s.phone1})</option>
                   ))}
                 </select>
-                <button className="button primary" onClick={handleAddStudent}>+ Qo'shish</button>
+                <button className="button primary" onClick={handleAddStudent}>
+                  <FontAwesomeIcon icon={faUserPlus} /> Qo'shish
+                </button>
               </div>
               <table className="data-table mt-1">
                 <thead>
@@ -210,7 +224,7 @@ export default function Groups() {
                       <td>{m.student_name}</td>
                       <td>{m.student_phone}</td>
                       <td>{new Date(m.joined_at).toLocaleDateString('uz')}</td>
-                      <td><button className="btn-icon danger" onClick={() => handleRemoveStudent(m.student_id)}>✕</button></td>
+                      <td><button className="btn-icon danger" onClick={() => handleRemoveStudent(m.student_id)} title="Chiqarish"><FontAwesomeIcon icon={faUserMinus} /></button></td>
                     </tr>
                   ))}
                   {(detailGroup.members || []).length === 0 && (

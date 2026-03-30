@@ -59,6 +59,8 @@ export async function fetchStudents(params = {}) {
   const q = new URLSearchParams()
   if (params.search) q.set('search', params.search)
   if (params.is_active !== undefined) q.set('is_active', params.is_active)
+  if (params.page) q.set('page', params.page)
+  if (params.page_size) q.set('page_size', params.page_size)
   return request(`/students${q.toString() ? '?' + q : ''}`)
 }
 
@@ -94,6 +96,8 @@ export async function fetchPayments(params = {}) {
   if (params.group_id) q.set('group_id', params.group_id)
   if (params.month) q.set('month', params.month)
   if (params.year) q.set('year', params.year)
+  if (params.page) q.set('page', params.page)
+  if (params.page_size) q.set('page_size', params.page_size)
   return request(`/payments${q.toString() ? '?' + q : ''}`)
 }
 

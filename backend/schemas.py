@@ -258,6 +258,13 @@ class MonthlyStats(BaseModel):
     active_groups: int
 
 
+class PageMeta(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
 class StatsOverview(BaseModel):
     total_students: int
     active_students: int

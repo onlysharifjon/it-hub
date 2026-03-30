@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faFileExcel, faChartBar, faUsers, faUserGraduate, faMoneyBillWave, faArrowTrendUp, faArrowTrendDown } from '@fortawesome/free-solid-svg-icons'
 import { fetchStatsOverview, exportExcelUrl } from '../api'
 
 const MONTHS = ['Yan','Fev','Mar','Apr','May','Iyu','Iyl','Avg','Sen','Okt','Noy','Dek']
@@ -27,33 +29,34 @@ export default function Dashboard() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1>Dashboard</h1>
+        <h1><FontAwesomeIcon icon={faChartBar} className="page-icon" /> Dashboard</h1>
         <button className="button secondary" onClick={() => window.open(exportExcelUrl(), '_blank')}>
-          📊 Excel eksport
+          <FontAwesomeIcon icon={faFileExcel} /> Excel eksport
         </button>
       </div>
 
       {/* KPI Cards */}
       <div className="kpi-grid">
         <div className="kpi-card">
-          <div className="kpi-label">Jami talabalar</div>
+          <div className="kpi-label"><FontAwesomeIcon icon={faUserGraduate} /> Jami talabalar</div>
           <div className="kpi-value">{stats.total_students}</div>
           <div className="kpi-sub">Faol: {stats.active_students}</div>
         </div>
         <div className="kpi-card">
-          <div className="kpi-label">Guruhlar</div>
+          <div className="kpi-label"><FontAwesomeIcon icon={faUsers} /> Guruhlar</div>
           <div className="kpi-value">{stats.total_groups}</div>
           <div className="kpi-sub">Faol: {stats.active_groups}</div>
         </div>
         <div className="kpi-card highlight">
-          <div className="kpi-label">Bu oy daromad</div>
+          <div className="kpi-label"><FontAwesomeIcon icon={faMoneyBillWave} /> Bu oy daromad</div>
           <div className="kpi-value">{Number(stats.this_month_income).toLocaleString()} <span className="kpi-currency">so'm</span></div>
           <div className="kpi-sub" style={{ color: changeColor }}>
-            {changeSign}{change.toFixed(1)}% o'tgan oyga nisbatan
+            <FontAwesomeIcon icon={change >= 0 ? faArrowTrendUp : faArrowTrendDown} />
+            {' '}{changeSign}{change.toFixed(1)}% o'tgan oyga nisbatan
           </div>
         </div>
         <div className="kpi-card">
-          <div className="kpi-label">O'tgan oy daromad</div>
+          <div className="kpi-label"><FontAwesomeIcon icon={faMoneyBillWave} /> O'tgan oy daromad</div>
           <div className="kpi-value">{Number(stats.last_month_income).toLocaleString()} <span className="kpi-currency">so'm</span></div>
         </div>
       </div>
