@@ -7,15 +7,13 @@ import ProgressBar from './components/ProgressBar'
 import Login from './components/Login'
 import AddLessonModal from './components/AddLessonModal'
 import AuditLogPanel from './components/AuditLogPanel'
+import Students from './components/Students'
+import Groups from './components/Groups'
+import Payments from './components/Payments'
+import Dashboard from './components/Dashboard'
 import {
-  fetchLessons,
-  fetchMe,
-  updateLesson,
-  createLesson,
-  deleteLesson,
-  reorderLessons,
-  login as apiLogin,
-  setToken,
+  fetchLessons, fetchMe, updateLesson, createLesson,
+  deleteLesson, reorderLessons, login as apiLogin, setToken,
 } from './api'
 
 const MONTH_LABELS = { 1: '1-oy', 2: '2-oy', 3: '3-oy' }
@@ -33,23 +31,20 @@ function App() {
   const [isAuthed, setIsAuthed] = useState(Boolean(localStorage.getItem('token')))
   const [showAddModal, setShowAddModal] = useState(false)
   const [showAuditPanel, setShowAuditPanel] = useState(false)
+  const [activePage, setActivePage] = useState('metodika')
 
-  const isMetodist = currentUser?.role === 'metodist'
+  const isMetodist = currentUser?.role === 'metodist' || currentUser?.role === 'admin'
 
   useEffect(() => {
     if (isAuthed) {
-      fetchMe()
-        .then(setCurrentUser)
-        .catch(() => handleLogout())
+      fetchMe().then(setCurrentUser).catch(() => handleLogout())
       loadLessons()
     }
   }, [isAuthed])
 
   useEffect(() => {
     const firstWeek = weeksByMonth[selectedMonth]?.[0]
-    if (firstWeek && firstWeek !== selectedWeek) {
-      setSelectedWeek(firstWeek)
-    }
+    if (firstWeek && firstWeek !== selectedWeek) setSelectedWeek(firstWeek)
   }, [selectedMonth])
 
   const weeksByMonth = useMemo(() => {
@@ -66,10 +61,9 @@ function App() {
   }, [lessons])
 
   const filteredLessons = useMemo(
-    () =>
-      lessons
-        .filter((l) => l.month === selectedMonth && l.week === selectedWeek)
-        .sort((a, b) => a.lesson_number - b.lesson_number),
+    () => lessons
+      .filter((l) => l.month === selectedMonth && l.week === selectedWeek)
+      .sort((a, b) => a.lesson_number - b.lesson_number),
     [lessons, selectedMonth, selectedWeek],
   )
 
@@ -110,6 +104,7 @@ function App() {
     setCurrentUser(null)
     setLessons([])
     setSelectedLessonId(null)
+    setActivePage('metodika')
   }
 
   async function handleSave(updates) {
@@ -145,9 +140,7 @@ function App() {
       await deleteLesson(id)
       const remaining = lessons.filter((l) => l.id !== id)
       setLessons(remaining)
-      if (selectedLessonId === id) {
-        setSelectedLessonId(remaining[0]?.id ?? null)
-      }
+      if (selectedLessonId === id) setSelectedLessonId(remaining[0]?.id ?? null)
       toast.success("Dars o'chirildi")
     } catch {
       toast.error("O'chirishda xatolik")
@@ -158,8 +151,8 @@ function App() {
     try {
       const updated = await reorderLessons(items)
       setLessons((prev) => {
-        const updatedMap = Object.fromEntries(updated.map((l) => [l.id, l]))
-        return prev.map((l) => updatedMap[l.id] ?? l)
+        const map = Object.fromEntries(updated.map((l) => [l.id, l]))
+        return prev.map((l) => map[l.id] ?? l)
       })
     } catch {
       toast.error('Tartib almashtirishda xatolik')
@@ -193,85 +186,88 @@ function App() {
         onSelectWeek={setSelectedWeek}
         currentUser={currentUser}
         onLogout={handleLogout}
+        activePage={activePage}
+        onNavigate={setActivePage}
       />
+
       <main className="content">
-        <header className="header">
-          <div>
-            <p className="eyebrow">O'quv metodikasi</p>
-            <h1>36 ta dars rejalari</h1>
-          </div>
-          <div className="header-right">
-            {isMetodist && (
-              <button
-                className="button secondary icon-btn"
-                onClick={() => setShowAuditPanel(true)}
-                title="O'zgarishlar tarixi"
-              >
-                &#9679; Tarix
-              </button>
-            )}
-            <ProgressBar value={progress} />
-          </div>
-        </header>
-
-        {error && <div className="error">{error}</div>}
-
-        <div className="panels">
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Hafta {selectedWeek} darslari</h2>
-              <div className="panel-head-actions">
-                {loading && <span className="tag">Yuklanmoqda...</span>}
+        {/* ── Metodika sahifasi ── */}
+        {activePage === 'metodika' && (
+          <>
+            <header className="header">
+              <div>
+                <p className="eyebrow">O'quv metodikasi</p>
+                <h1>36 ta dars rejalari</h1>
+              </div>
+              <div className="header-right">
                 {isMetodist && (
-                  <button
-                    className="button primary small"
-                    onClick={() => setShowAddModal(true)}
-                  >
-                    + Dars
+                  <button className="button secondary icon-btn" onClick={() => setShowAuditPanel(true)}>
+                    &#9679; Tarix
                   </button>
                 )}
+                <ProgressBar value={progress} />
               </div>
-            </div>
-            <LessonList
-              lessons={filteredLessons}
-              selectedLessonId={selectedLessonId}
-              onSelectLesson={setSelectedLessonId}
-              canEdit={isMetodist}
-              onReorder={handleReorder}
-              onDelete={handleDeleteLesson}
-            />
-          </section>
+            </header>
 
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Dars tafsilotlari</h2>
-              {saving && <span className="tag">Saqlanmoqda...</span>}
+            {error && <div className="error">{error}</div>}
+
+            <div className="panels">
+              <section className="panel">
+                <div className="panel-head">
+                  <h2>Hafta {selectedWeek} darslari</h2>
+                  <div className="panel-head-actions">
+                    {loading && <span className="tag">Yuklanmoqda...</span>}
+                    {isMetodist && (
+                      <button className="button primary small" onClick={() => setShowAddModal(true)}>
+                        + Dars
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <LessonList
+                  lessons={filteredLessons}
+                  selectedLessonId={selectedLessonId}
+                  onSelectLesson={setSelectedLessonId}
+                  canEdit={isMetodist}
+                  onReorder={handleReorder}
+                  onDelete={handleDeleteLesson}
+                />
+              </section>
+
+              <section className="panel">
+                <div className="panel-head">
+                  <h2>Dars tafsilotlari</h2>
+                  {saving && <span className="tag">Saqlanmoqda...</span>}
+                </div>
+                {selectedLesson ? (
+                  <LessonDetail
+                    lesson={selectedLesson}
+                    onSave={handleSave}
+                    saving={saving}
+                    canEdit={isMetodist}
+                  />
+                ) : (
+                  <div className="muted">Dars tanlang</div>
+                )}
+              </section>
             </div>
-            {selectedLesson ? (
-              <LessonDetail
-                lesson={selectedLesson}
-                onSave={handleSave}
-                saving={saving}
-                canEdit={isMetodist}
+
+            {showAddModal && (
+              <AddLessonModal
+                onSave={handleAddLesson}
+                onClose={() => setShowAddModal(false)}
+                existingNumbers={lessons.map((l) => l.lesson_number)}
               />
-            ) : (
-              <div className="muted">Dars tanlang</div>
             )}
-          </section>
-        </div>
+            {showAuditPanel && <AuditLogPanel onClose={() => setShowAuditPanel(false)} />}
+          </>
+        )}
+
+        {activePage === 'students' && <Students />}
+        {activePage === 'groups' && <Groups />}
+        {activePage === 'payments' && <Payments />}
+        {activePage === 'dashboard' && <Dashboard />}
       </main>
-
-      {showAddModal && (
-        <AddLessonModal
-          onSave={handleAddLesson}
-          onClose={() => setShowAddModal(false)}
-          existingNumbers={lessons.map((l) => l.lesson_number)}
-        />
-      )}
-
-      {showAuditPanel && (
-        <AuditLogPanel onClose={() => setShowAuditPanel(false)} />
-      )}
     </div>
   )
 }
