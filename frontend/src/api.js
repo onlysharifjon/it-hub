@@ -105,6 +105,23 @@ export async function createPayment(p) { return request('/payments', { method: '
 export async function updatePayment(id, p) { return request(`/payments/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deletePayment(id) { return request(`/payments/${id}`, { method: 'DELETE' }) }
 
+// ── Attendance ────────────────────────────────────────────────────────────────
+
+export async function fetchAttendance(groupId, month, year) {
+  return request(`/groups/${groupId}/attendance?month=${month}&year=${year}`)
+}
+
+export async function saveAttendance(groupId, lessonDate, records) {
+  return request(`/groups/${groupId}/attendance/${lessonDate}`, {
+    method: 'POST',
+    body: JSON.stringify(records),
+  })
+}
+
+export async function deleteAttendanceDate(groupId, lessonDate) {
+  return request(`/groups/${groupId}/attendance/${lessonDate}`, { method: 'DELETE' })
+}
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 export async function fetchStatsOverview() { return request('/stats/overview') }

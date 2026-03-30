@@ -9,6 +9,7 @@ import AddLessonModal from './components/AddLessonModal'
 import AuditLogPanel from './components/AuditLogPanel'
 import Students from './components/Students'
 import Groups from './components/Groups'
+import GroupDetail from './components/GroupDetail'
 import Payments from './components/Payments'
 import Dashboard from './components/Dashboard'
 import {
@@ -32,6 +33,7 @@ function App() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showAuditPanel, setShowAuditPanel] = useState(false)
   const [activePage, setActivePage] = useState('metodika')
+  const [selectedGroup, setSelectedGroup] = useState(null)
 
   const isMetodist = currentUser?.role === 'metodist' || currentUser?.role === 'admin'
 
@@ -264,7 +266,17 @@ function App() {
         )}
 
         {activePage === 'students' && <Students />}
-        {activePage === 'groups' && <Groups />}
+        {activePage === 'groups' && (
+          <Groups
+            onOpenGroup={g => { setSelectedGroup(g); setActivePage('group_detail') }}
+          />
+        )}
+        {activePage === 'group_detail' && selectedGroup && (
+          <GroupDetail
+            group={selectedGroup}
+            onBack={() => setActivePage('groups')}
+          />
+        )}
         {activePage === 'payments' && <Payments />}
         {activePage === 'dashboard' && <Dashboard />}
       </main>

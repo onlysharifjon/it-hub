@@ -13,7 +13,7 @@ import {
 
 const EMPTY_GROUP = { name: '', teacher_id: '', course_price: '', schedule: '', start_date: '' }
 
-export default function Groups() {
+export default function Groups({ onOpenGroup }) {
   const [groups, setGroups] = useState([])
   const [teachers, setTeachers] = useState([])
   const [allStudents, setAllStudents] = useState([])
@@ -140,7 +140,7 @@ export default function Groups() {
                 <div><span className="label">O'quvchilar:</span> <span className="badge">{g.student_count}</span></div>
               </div>
               <div className="group-card-actions">
-                <button className="btn-sm" onClick={() => { loadDetail(g.id); setDetailGroup({ ...g, members: [] }) }}>
+                <button className="btn-sm" onClick={() => onOpenGroup(g)}>
                   <FontAwesomeIcon icon={faUsers} /> Tarkib
                 </button>
                 <button className="btn-sm" onClick={() => openEdit(g)}>

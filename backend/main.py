@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from decimal import Decimal
 from typing import List, Optional
 import io
@@ -733,3 +733,134 @@ def export_payments_excel(
 @app.get("/health")
 def health_check():
     return {"status": "ok", "version": "3.0.0"}
+
+
+# ── Attendance ─────────────────────────────────────────────────────────────────
+
+@app.get("/groups/{group_id}/attendance")
+def get_attendance(
+    group_id: int,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_metodist),
+):
+    """Return all attendance records for a group in given month/year."""
+    group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Guruh topilmadi")
+
+    members = (
+        db.query(models.GroupStudent)
+        .filter(models.GroupStudent.group_id == group_id)
+        .all()
+    )
+    student_ids = [m.student_id for m in members]
+
+    records = (
+        db.query(models.Attendance)
+        .filter(
+            models.Attendance.group_id == group_id,
+            extract("month", models.Attendance.lesson_date) == month,
+            extract("year", models.Attendance.lesson_date) == year,
+        )
+        .all()
+    )
+
+    # Unique lesson dates this month
+    dates = sorted(set(r.lesson_date for r in records))
+
+    # Build lookup: {student_id: {date: is_present}}
+    lookup = {}
+    for r in records:
+        lookup.setdefault(r.student_id, {})[r.lesson_date] = r.is_present
+
+    students_data = []
+    for m in members:
+        s = m.student
+        row = {
+            "student_id": s.id,
+            "student_name": s.full_name,
+            "phone": s.phone1,
+            "joined_at": m.joined_at.isoformat(),
+            "dates": {str(d): lookup.get(s.id, {}).get(d) for d in dates},
+            "present_count": sum(1 for d in dates if lookup.get(s.id, {}).get(d) is True),
+            "absent_count": sum(1 for d in dates if lookup.get(s.id, {}).get(d) is False),
+            "total_lessons": len(dates),
+        }
+        students_data.append(row)
+
+    return {
+        "group_id": group_id,
+        "group_name": group.name,
+        "teacher_name": group.teacher.full_name or group.teacher.username if group.teacher else None,
+        "schedule": group.schedule,
+        "month": month,
+        "year": year,
+        "dates": [str(d) for d in dates],
+        "students": students_data,
+    }
+
+
+@app.post("/groups/{group_id}/attendance/{lesson_date}")
+def save_attendance(
+    group_id: int,
+    lesson_date: str,
+    payload: List[dict],
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_metodist),
+):
+    """Save attendance for a specific date. payload: [{student_id, is_present}]"""
+    try:
+        d = date.fromisoformat(lesson_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Sana formati xato (YYYY-MM-DD)")
+
+    group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Guruh topilmadi")
+
+    for item in payload:
+        sid = item.get("student_id")
+        present = item.get("is_present", True)
+        existing = (
+            db.query(models.Attendance)
+            .filter(
+                models.Attendance.group_id == group_id,
+                models.Attendance.student_id == sid,
+                models.Attendance.lesson_date == d,
+            )
+            .first()
+        )
+        if existing:
+            existing.is_present = present
+        else:
+            db.add(models.Attendance(
+                group_id=group_id,
+                student_id=sid,
+                lesson_date=d,
+                is_present=present,
+            ))
+    db.commit()
+    return {"saved": len(payload), "date": lesson_date}
+
+
+@app.delete("/groups/{group_id}/attendance/{lesson_date}")
+def delete_attendance_date(
+    group_id: int,
+    lesson_date: str,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_metodist),
+):
+    """Delete all attendance records for a specific date."""
+    try:
+        d = date.fromisoformat(lesson_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Sana formati xato")
+
+    db.query(models.Attendance).filter(
+        models.Attendance.group_id == group_id,
+        models.Attendance.lesson_date == d,
+    ).delete()
+    db.commit()
+    return {"deleted": True, "date": lesson_date}
