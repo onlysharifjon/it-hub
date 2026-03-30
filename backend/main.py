@@ -33,9 +33,11 @@ app = FastAPI(title="IT Hub — LMS API", version="3.0.0")
 # ── Default users ──────────────────────────────────────────────────────────────
 
 DEFAULT_USERS = [
-    {"username": "admin",    "password": "Admin@2026",     "role": UserRole.admin.value,    "full_name": "Administrator"},
-    {"username": "metodist", "password": "Metodist@2026",  "role": UserRole.metodist.value, "full_name": "Metodist"},
-    {"username": "teacher",  "password": "Teacher@2026",   "role": UserRole.teacher.value,  "full_name": "O'qituvchi"},
+    {"username": "admin",     "password": "Admin@2026",     "role": UserRole.admin.value,    "full_name": "Administrator"},
+    {"username": "metodist",  "password": "Metodist@2026",  "role": UserRole.metodist.value, "full_name": "Metodist"},
+    {"username": "teacher1",  "password": "Teacher@2026",   "role": UserRole.teacher.value,  "full_name": "Sarvar Toshmatov"},
+    {"username": "teacher2",  "password": "Teacher@2026",   "role": UserRole.teacher.value,  "full_name": "Malika Yusupova"},
+    {"username": "teacher3",  "password": "Teacher@2026",   "role": UserRole.teacher.value,  "full_name": "Jasur Rahimov"},
 ]
 
 

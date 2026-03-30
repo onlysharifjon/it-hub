@@ -12,11 +12,15 @@ def _hash(plain: str) -> str:
     return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
 
 
-# 3 ta default foydalanuvchi — har bir rol uchun bittadan
 DEFAULT_USERS = [
-    {"username": "admin",    "password": "Admin@2026",    "role": UserRole.admin.value},
-    {"username": "metodist", "password": "Metodist@2026", "role": UserRole.metodist.value},
-    {"username": "teacher",  "password": "Teacher@2026",  "role": UserRole.teacher.value},
+    # Admin
+    {"username": "admin",    "password": "Admin@2026",    "role": UserRole.admin.value,    "full_name": "Administrator"},
+    # Metodist
+    {"username": "metodist", "password": "Metodist@2026", "role": UserRole.metodist.value, "full_name": "Metodist"},
+    # O'qituvchilar
+    {"username": "teacher1", "password": "Teacher@2026",  "role": UserRole.teacher.value,  "full_name": "Sarvar Toshmatov"},
+    {"username": "teacher2", "password": "Teacher@2026",  "role": UserRole.teacher.value,  "full_name": "Malika Yusupova"},
+    {"username": "teacher3", "password": "Teacher@2026",  "role": UserRole.teacher.value,  "full_name": "Jasur Rahimov"},
 ]
 
 
@@ -28,6 +32,7 @@ def seed_users(db: Session) -> None:
                 username=u["username"],
                 hashed_password=_hash(u["password"]),
                 role=u["role"],
+                full_name=u.get("full_name"),
                 is_active=True,
                 created_at=datetime.utcnow(),
             ))
