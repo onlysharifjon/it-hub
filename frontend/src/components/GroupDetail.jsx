@@ -6,27 +6,39 @@ import {
   faPlus, faTrash, faCheck, faXmark, faMinus,
   faUserGraduate, faChartBar,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchAttendance, saveAttendance, deleteAttendanceDate } from '../api'
+import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup } from '../api'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
 
-export default function GroupDetail({ group, onBack }) {
+const STAGE_COLORS = {
+  foundation: { bg: '#eff6ff', color: '#1d4ed8', bar: '#3b82f6' },
+  frontend:   { bg: '#f0fdf4', color: '#15803d', bar: '#22c55e' },
+  backend:    { bg: '#faf5ff', color: '#7e22ce', bar: '#a855f7' },
+}
+const STAGE_LABELS = { foundation: 'Foundation', frontend: 'Frontend', backend: 'Backend' }
+
+export default function GroupDetail({ group: groupProp, onBack }) {
   const [month, setMonth] = useState(NOW.getMonth() + 1)
   const [year, setYear] = useState(NOW.getFullYear())
+  const [group, setGroup] = useState(groupProp)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [newDate, setNewDate] = useState('')
   const [addingDate, setAddingDate] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { load() }, [month, year, group.id])
+  useEffect(() => { load() }, [month, year, groupProp.id])
 
   async function load() {
     setLoading(true)
     try {
-      const res = await fetchAttendance(group.id, month, year)
-      setData(res)
+      const [att, grp] = await Promise.all([
+        fetchAttendance(groupProp.id, month, year),
+        getGroup(groupProp.id),
+      ])
+      setData(att)
+      setGroup(grp)
     } catch { toast.error("Yuklab bo'lmadi") }
     finally { setLoading(false) }
   }
@@ -140,6 +152,44 @@ export default function GroupDetail({ group, onBack }) {
             )}
           </div>
 
+          {/* Stage progress card */}
+          {group.total_lessons != null && (
+            <div className="info-card">
+              <div className="info-card-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Kurs progressi</span>
+                <span
+                  style={{
+                    fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: 20,
+                    background: STAGE_COLORS[group.stage || 'foundation'].bg,
+                    color: STAGE_COLORS[group.stage || 'foundation'].color,
+                  }}
+                >
+                  {STAGE_LABELS[group.stage || 'foundation']}
+                </span>
+              </div>
+              <div className="group-progress-bar" style={{ margin: '8px 0 6px' }}>
+                <div
+                  className="group-progress-fill"
+                  style={{
+                    width: `${group.progress_pct || 0}%`,
+                    background: STAGE_COLORS[group.stage || 'foundation'].bar,
+                  }}
+                />
+              </div>
+              <div className="stat-row">
+                <span>Bajarildi</span>
+                <strong>{group.completed_lessons || 0}/{group.total_lessons} dars ({group.progress_pct || 0}%)</strong>
+              </div>
+              <div className="stat-row">
+                <span>Qoldi</span>
+                <strong style={{ color: (group.remaining_lessons || 0) <= 5 ? '#ef4444' : '#0a0a0a' }}>
+                  {group.remaining_lessons || group.total_lessons} dars
+                  {(group.remaining_lessons || group.total_lessons) <= 5 && ' ⚠'}
+                </strong>
+              </div>
+            </div>
+          )}
+
           {/* This month stats */}
           <div className="info-card">
             <div className="info-card-title">
@@ -156,9 +206,9 @@ export default function GroupDetail({ group, onBack }) {
           </div>
 
           {/* Per-student summary */}
-          <div className="info-card" style={{ flex: 1 }}>
+          <div className="info-card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             <div className="info-card-title">O'quvchilar xulosasi</div>
-            <div className="student-summary-list">
+            <div className="student-summary-list" style={{ overflowY: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
               {students.map(s => {
                 const pct = totalLessons ? Math.round(s.present_count / totalLessons * 100) : 0
                 return (

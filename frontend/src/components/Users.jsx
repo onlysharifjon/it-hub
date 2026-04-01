@@ -1,0 +1,330 @@
+import { useEffect, useState } from 'react'
+import { toast } from 'react-hot-toast'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faUserShield, faPlus, faLock, faLockOpen,
+  faPen, faSearch, faXmark,
+} from '@fortawesome/free-solid-svg-icons'
+import { fetchUsers, createUser, updateUser, blockUser, unblockUser } from '../api'
+
+const ROLE_LABELS = { admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi" }
+const ROLE_COLORS = { admin: '#2563eb', metodist: '#7c3aed', teacher: '#374151' }
+
+function statusLabel(u) {
+  if (u.blocked_at) return 'blocked'
+  if (u.expires_at && new Date(u.expires_at) < new Date()) return 'expired'
+  if (!u.is_active) return 'inactive'
+  return 'active'
+}
+
+function StatusBadge({ user }) {
+  const s = statusLabel(user)
+  const map = {
+    active:   { label: 'Faol',        color: '#16a34a', bg: '#dcfce7' },
+    blocked:  { label: 'Bloklangan',  color: '#dc2626', bg: '#fee2e2' },
+    expired:  { label: 'Muddati o\'tgan', color: '#d97706', bg: '#fef3c7' },
+    inactive: { label: 'Nofaol',      color: '#6b7280', bg: '#f3f4f6' },
+  }
+  const { label, color, bg } = map[s] || map.inactive
+  return (
+    <span style={{
+      fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20,
+      color, background: bg, whiteSpace: 'nowrap',
+    }}>
+      {label}
+    </span>
+  )
+}
+
+const emptyForm = { username: '', full_name: '', password: '', role: 'teacher', expires_at: '' }
+
+export default function Users() {
+  const [users, setUsers] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('')
+
+  // Create / Edit modal
+  const [modal, setModal] = useState(null)  // null | 'create' | 'edit'
+  const [form, setForm] = useState(emptyForm)
+  const [editId, setEditId] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  // Block modal
+  const [blockModal, setBlockModal] = useState(null)  // null | user object
+  const [blockForm, setBlockForm] = useState({ reason: '', contact: '' })
+  const [blocking, setBlocking] = useState(false)
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    setLoading(true)
+    try {
+      const res = await fetchUsers()
+      setUsers(Array.isArray(res) ? res : (res.items || []))
+    }
+    catch { toast.error("Foydalanuvchilar yuklanmadi") }
+    finally { setLoading(false) }
+  }
+
+  function openCreate() {
+    setForm(emptyForm)
+    setEditId(null)
+    setModal('create')
+  }
+
+  function openEdit(u) {
+    setForm({
+      username: u.username,
+      full_name: u.full_name || '',
+      password: '',
+      role: u.role,
+      expires_at: u.expires_at ? u.expires_at.slice(0, 10) : '',
+    })
+    setEditId(u.id)
+    setModal('edit')
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const payload = {
+        full_name: form.full_name || null,
+        role: form.role,
+        expires_at: form.expires_at ? form.expires_at + 'T00:00:00' : null,
+      }
+      if (modal === 'create') {
+        if (!form.username.trim()) { toast.error('Username kerak'); setSaving(false); return }
+        if (form.password.length < 6) { toast.error("Parol kamida 6 ta belgi"); setSaving(false); return }
+        await createUser({ ...payload, username: form.username, password: form.password })
+        toast.success('Foydalanuvchi yaratildi')
+      } else {
+        const p = { ...payload }
+        if (form.password) p.password = form.password
+        await updateUser(editId, p)
+        toast.success("Saqlandi")
+      }
+      setModal(null)
+      load()
+    } catch (err) {
+      toast.error(err.message || 'Xato')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function openBlock(u) {
+    setBlockForm({ reason: '', contact: '' })
+    setBlockModal(u)
+  }
+
+  async function handleBlock() {
+    if (!blockForm.reason.trim()) { toast.error('Sabab kiriting'); return }
+    if (!blockForm.contact.trim()) { toast.error('Kontakt kiriting'); return }
+    setBlocking(true)
+    try {
+      await blockUser(blockModal.id, { reason: blockForm.reason, contact: blockForm.contact })
+      toast.success('Akkount bloklandi')
+      setBlockModal(null)
+      load()
+    } catch (err) {
+      toast.error(err.message || 'Xato')
+    } finally {
+      setBlocking(false)
+    }
+  }
+
+  async function handleUnblock(u) {
+    try {
+      await unblockUser(u.id)
+      toast.success('Blok olib tashlandi')
+      load()
+    } catch (err) {
+      toast.error(err.message || 'Xato')
+    }
+  }
+
+  const filtered = users.filter(u =>
+    !search ||
+    u.username.toLowerCase().includes(search.toLowerCase()) ||
+    (u.full_name || '').toLowerCase().includes(search.toLowerCase())
+  )
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <h1><FontAwesomeIcon icon={faUserShield} className="page-icon" /> Foydalanuvchilar</h1>
+        <button className="button primary" onClick={openCreate}>
+          <FontAwesomeIcon icon={faPlus} /> Yangi foydalanuvchi
+        </button>
+      </div>
+
+      <div className="toolbar">
+        <div className="search-wrap">
+          <FontAwesomeIcon icon={faSearch} className="search-icon" />
+          <input
+            className="search-input"
+            placeholder="Qidirish..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="muted center py-8">Yuklanmoqda...</div>
+      ) : (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Ism</th>
+                <th>Username</th>
+                <th>Rol</th>
+                <th>Holat</th>
+                <th>Muddati</th>
+                <th style={{ textAlign: 'right' }}>Amallar</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(u => (
+                <tr key={u.id}>
+                  <td className="text-muted">{u.id}</td>
+                  <td style={{ fontWeight: 500 }}>{u.full_name || '—'}</td>
+                  <td className="text-muted">{u.username}</td>
+                  <td>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20,
+                      color: '#fff', background: ROLE_COLORS[u.role] || '#6b7280',
+                    }}>
+                      {ROLE_LABELS[u.role] || u.role}
+                    </span>
+                  </td>
+                  <td><StatusBadge user={u} /></td>
+                  <td className="text-muted" style={{ fontSize: 12 }}>
+                    {u.expires_at ? new Date(u.expires_at).toLocaleDateString('uz-UZ') : '∞'}
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <button className="button small secondary" onClick={() => openEdit(u)} title="Tahrirlash">
+                        <FontAwesomeIcon icon={faPen} />
+                      </button>
+                      {u.blocked_at ? (
+                        <button className="button small secondary" onClick={() => handleUnblock(u)} title="Blokni olib tashlash">
+                          <FontAwesomeIcon icon={faLockOpen} style={{ color: '#16a34a' }} />
+                        </button>
+                      ) : (
+                        <button className="button small secondary" onClick={() => openBlock(u)} title="Bloklash">
+                          <FontAwesomeIcon icon={faLock} style={{ color: '#ef4444' }} />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {filtered.length === 0 && (
+                <tr><td colSpan={7} className="muted center">Foydalanuvchilar yo'q</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Create / Edit Modal ── */}
+      {modal && (
+        <div className="modal-overlay" onClick={() => setModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <h3>{modal === 'create' ? 'Yangi foydalanuvchi' : 'Foydalanuvchini tahrirlash'}</h3>
+              <button className="modal-close" onClick={() => setModal(null)}>
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+            <div className="modal-body">
+              {modal === 'create' && (
+                <div className="form-group">
+                  <label className="form-label">Username *</label>
+                  <input className="form-input" value={form.username}
+                    onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
+                    placeholder="foydalanuvchi_nomi" />
+                </div>
+              )}
+              <div className="form-group">
+                <label className="form-label">Ism familiya</label>
+                <input className="form-input" value={form.full_name}
+                  onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
+                  placeholder="To'liq ism" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">{modal === 'create' ? 'Parol *' : "Yangi parol (o'zgartirish uchun)"}</label>
+                <input className="form-input" type="password" value={form.password}
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder={modal === 'create' ? 'Kamida 6 ta belgi' : "Bo'sh qoldiring — o'zgarmaydi"} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Rol</label>
+                <select className="form-input" value={form.role}
+                  onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
+                  <option value="teacher">O'qituvchi</option>
+                  <option value="metodist">Metodist</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Muddati (bo'sh = cheksiz)</label>
+                <input className="form-input" type="date" value={form.expires_at}
+                  onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setModal(null)}>Bekor</button>
+              <button className="button primary" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saqlanmoqda...' : 'Saqlash'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Block Modal ── */}
+      {blockModal && (
+        <div className="modal-overlay" onClick={() => setBlockModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <div className="modal-header">
+              <h3>Akkountni bloklash</h3>
+              <button className="modal-close" onClick={() => setBlockModal(null)}>
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: '#4b5563', marginBottom: 16 }}>
+                <strong>{blockModal.full_name || blockModal.username}</strong> akkauntini bloklayapsiz.
+                Foydalanuvchi tizimga kira olmaydi.
+              </p>
+              <div className="form-group">
+                <label className="form-label">Sabab *</label>
+                <textarea className="form-input" rows={3} value={blockForm.reason}
+                  onChange={e => setBlockForm(f => ({ ...f, reason: e.target.value }))}
+                  placeholder="Blok sababi..." style={{ resize: 'vertical' }} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Bog'lanish kontakti *</label>
+                <input className="form-input" value={blockForm.contact}
+                  onChange={e => setBlockForm(f => ({ ...f, contact: e.target.value }))}
+                  placeholder="+998 90 123 45 67 yoki Telegram: @username" />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setBlockModal(null)}>Bekor</button>
+              <button className="button danger" onClick={handleBlock} disabled={blocking}>
+                {blocking ? 'Yuklanmoqda...' : (
+                  <><FontAwesomeIcon icon={faLock} /> Bloklash</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

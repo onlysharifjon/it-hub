@@ -3,10 +3,11 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faTrash, faFileExcel, faCreditCard,
-  faChevronDown, faFilter,
+  faChevronDown, faFilter, faPrint,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchPayments, createPayment, deletePayment, fetchStudents, fetchGroups, exportExcelUrl } from '../api'
+import { fetchPayments, createPayment, deletePayment, fetchStudents, fetchGroups, exportExcelUrl, receiptUrl } from '../api'
 import Pagination from './Pagination'
+import DateFilter from './DateFilter'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
@@ -22,17 +23,23 @@ export default function Payments() {
   const [saving, setSaving] = useState(false)
   const [page, setPage] = useState(1)
   const [filter, setFilter] = useState({ month: NOW.getMonth() + 1, year: NOW.getFullYear() })
+  const [dateFilter, setDateFilter] = useState({ preset: 'all', date_from: '', date_to: '' })
 
   useEffect(() => {
     fetchStudents({ page_size: 100 }).then(r => setStudents(r.items || []))
-    fetchGroups().then(setGroups)
-    load(filter, 1)
+    fetchGroups({ page_size: 100 }).then(r => setGroups(r.items || []))
+    load(filter, dateFilter, 1)
   }, [])
 
-  async function load(f = filter, p = page) {
+  async function load(f = filter, df = dateFilter, p = page) {
     setLoading(true)
     try {
-      const res = await fetchPayments({ ...f, page: p, page_size: 25 })
+      const res = await fetchPayments({
+        ...f,
+        date_from: df.date_from || undefined,
+        date_to: df.date_to || undefined,
+        page: p, page_size: 25,
+      })
       setData(res)
     } catch { toast.error("Yuklab bo'lmadi") }
     finally { setLoading(false) }
@@ -40,12 +47,18 @@ export default function Payments() {
 
   function applyFilter() {
     setPage(1)
-    load(filter, 1)
+    load(filter, dateFilter, 1)
+  }
+
+  function handleDateFilter(df) {
+    setDateFilter(df)
+    setPage(1)
+    load(filter, df, 1)
   }
 
   function handlePageChange(p) {
     setPage(p)
-    load(filter, p)
+    load(filter, dateFilter, p)
   }
 
   async function handleSave() {
@@ -112,6 +125,9 @@ export default function Payments() {
           {meta && <span className="text-muted"> ({meta.total} ta)</span>}
         </div>
       </div>
+      <div className="toolbar">
+        <DateFilter value={dateFilter} onChange={handleDateFilter} />
+      </div>
 
       {loading ? (
         <div className="muted center py-8">Yuklanmoqda...</div>
@@ -142,6 +158,13 @@ export default function Payments() {
                     <td>{new Date(p.paid_at).toLocaleDateString('uz')}</td>
                     <td>{p.notes || <span className="text-muted">—</span>}</td>
                     <td>
+                      <button
+                        className="btn-icon"
+                        title="Chek ko'rish"
+                        onClick={() => window.open(receiptUrl(p.id), '_blank')}
+                      >
+                        <FontAwesomeIcon icon={faPrint} />
+                      </button>
                       <button className="btn-icon danger" onClick={() => handleDelete(p.id)}>
                         <FontAwesomeIcon icon={faTrash} />
                       </button>

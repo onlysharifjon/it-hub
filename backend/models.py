@@ -22,6 +22,11 @@ class User(Base):
     full_name = Column(String(200), nullable=True)
     role = Column(String(20), nullable=False, default=UserRole.teacher.value)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Block & expiry
+    blocked_reason  = Column(Text, nullable=True)         # sabab matni
+    blocked_contact = Column(String(300), nullable=True)  # bog'lanish ma'lumoti
+    blocked_at      = Column(DateTime, nullable=True)
+    expires_at      = Column(DateTime, nullable=True)     # null = cheksiz
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     updated_lessons = relationship(
@@ -69,20 +74,42 @@ class AuditLog(Base):
 
 # ── LMS Modellari ─────────────────────────────────────────────────────────────
 
+class Tariff(Base):
+    __tablename__ = "tariffs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    price = Column(Numeric(12, 2), nullable=False, default=100000)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class Student(Base):
     __tablename__ = "students"
 
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String(200), nullable=False)
     phone1 = Column(String(20), nullable=False)
-    phone2 = Column(String(20), nullable=True)
-    telegram_id = Column(String(50), nullable=True)
+    father_name  = Column(String(200), nullable=True)
+    father_phone = Column(String(20),  nullable=True)
+    mother_name  = Column(String(200), nullable=True)
+    mother_phone = Column(String(20),  nullable=True)
+    telegram_id  = Column(String(50),  nullable=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    is_archived = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     group_memberships = relationship("GroupStudent", back_populates="student")
     payments = relationship("Payment", back_populates="student")
+
+
+STAGE_TOTAL_LESSONS = {
+    'foundation': 24,   # 2 oy × 12 dars/oy
+    'frontend':   72,   # 6 oy × 12 dars/oy
+    'backend':    108,  # 9 oy × 12 dars/oy
+}
 
 
 class Group(Base):
@@ -90,8 +117,10 @@ class Group(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False)
+    stage = Column(String(20), nullable=False, default='foundation')  # foundation | frontend | backend
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     course_price = Column(Numeric(12, 2), nullable=False, default=0)
+    teacher_pay_per_student = Column(Numeric(12, 2), nullable=False, default=0)
     schedule = Column(String(200), nullable=True)   # e.g. "Du,Cho,Ju 14:00"
     start_date = Column(DateTime, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
@@ -108,10 +137,12 @@ class GroupStudent(Base):
     id = Column(Integer, primary_key=True, index=True)
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
+    tariff_id = Column(Integer, ForeignKey("tariffs.id"), nullable=True)
     joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     group = relationship("Group", back_populates="members")
     student = relationship("Student", back_populates="group_memberships")
+    tariff = relationship("Tariff")
 
 
 class Payment(Base):
@@ -128,6 +159,17 @@ class Payment(Base):
 
     student = relationship("Student", back_populates="payments")
     group = relationship("Group", back_populates="payments")
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(300), nullable=False)
+    amount = Column(Numeric(12, 2), nullable=False)
+    month = Column(Integer, nullable=False)
+    year = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class Attendance(Base):

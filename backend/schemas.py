@@ -27,6 +27,10 @@ class UserRead(BaseModel):
     full_name: Optional[str] = None
     role: UserRole
     is_active: bool
+    blocked_reason:  Optional[str] = None
+    blocked_contact: Optional[str] = None
+    blocked_at:      Optional[datetime] = None
+    expires_at:      Optional[datetime] = None
     created_at: datetime
 
     class Config:
@@ -38,13 +42,22 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=6)
     full_name: Optional[str] = None
     role: UserRole = UserRole.teacher
+    expires_at: Optional[datetime] = None
 
 
 class UserUpdate(BaseModel):
-    password: Optional[str] = Field(None, min_length=6)
-    full_name: Optional[str] = None
-    role: Optional[UserRole] = None
-    is_active: Optional[bool] = None
+    password:        Optional[str]      = Field(None, min_length=6)
+    full_name:       Optional[str]      = None
+    role:            Optional[UserRole] = None
+    is_active:       Optional[bool]     = None
+    expires_at:      Optional[datetime] = None
+    blocked_reason:  Optional[str]      = None
+    blocked_contact: Optional[str]      = None
+
+
+class BlockUserRequest(BaseModel):
+    reason:  str = Field(..., min_length=3)
+    contact: str = Field(..., min_length=3)
 
 
 # ── Lessons ───────────────────────────────────────────────────────────────────
@@ -128,14 +141,47 @@ class AuditLogRead(BaseModel):
 
 # ── Students ──────────────────────────────────────────────────────────────────
 
+# ── Tariffs ───────────────────────────────────────────────────────────────────
+
+class TariffRead(BaseModel):
+    id: int
+    name: str
+    price: Decimal
+    description: Optional[str] = None
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class TariffCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=200)
+    price: Decimal = Field(..., ge=0)
+    description: Optional[str] = None
+
+
+class TariffUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=200)
+    price: Optional[Decimal] = Field(None, ge=0)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+# ── Students ──────────────────────────────────────────────────────────────────
+
 class StudentRead(BaseModel):
     id: int
     full_name: str
     phone1: str
-    phone2: Optional[str] = None
+    father_name:  Optional[str] = None
+    father_phone: Optional[str] = None
+    mother_name:  Optional[str] = None
+    mother_phone: Optional[str] = None
     telegram_id: Optional[str] = None
     notes: Optional[str] = None
     is_active: bool
+    is_archived: bool = False
     created_at: datetime
     group_count: Optional[int] = 0
 
@@ -146,7 +192,10 @@ class StudentRead(BaseModel):
 class StudentCreate(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=200)
     phone1: str = Field(..., min_length=7, max_length=20)
-    phone2: Optional[str] = Field(None, max_length=20)
+    father_name:  Optional[str] = Field(None, max_length=200)
+    father_phone: Optional[str] = Field(None, max_length=20)
+    mother_name:  Optional[str] = Field(None, max_length=200)
+    mother_phone: Optional[str] = Field(None, max_length=20)
     telegram_id: Optional[str] = Field(None, max_length=50)
     notes: Optional[str] = None
 
@@ -154,10 +203,14 @@ class StudentCreate(BaseModel):
 class StudentUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=2, max_length=200)
     phone1: Optional[str] = Field(None, min_length=7, max_length=20)
-    phone2: Optional[str] = Field(None, max_length=20)
+    father_name:  Optional[str] = Field(None, max_length=200)
+    father_phone: Optional[str] = Field(None, max_length=20)
+    mother_name:  Optional[str] = Field(None, max_length=200)
+    mother_phone: Optional[str] = Field(None, max_length=20)
     telegram_id: Optional[str] = Field(None, max_length=50)
     notes: Optional[str] = None
     is_active: Optional[bool] = None
+    is_archived: Optional[bool] = None
 
 
 # ── Groups ────────────────────────────────────────────────────────────────────
@@ -168,22 +221,35 @@ class GroupStudentRead(BaseModel):
     student_name: Optional[str] = None
     student_phone: Optional[str] = None
     joined_at: datetime
+    tariff_id: Optional[int] = None
+    tariff_name: Optional[str] = None
+    tariff_price: Optional[Decimal] = None
 
     class Config:
         orm_mode = True
 
 
+STAGE_LABELS = {'foundation': 'Foundation', 'frontend': 'Frontend', 'backend': 'Backend'}
+STAGE_TOTAL_LESSONS = {'foundation': 24, 'frontend': 72, 'backend': 108}
+
+
 class GroupRead(BaseModel):
     id: int
     name: str
+    stage: str = 'foundation'
     teacher_id: Optional[int] = None
     teacher_name: Optional[str] = None
     course_price: Decimal
+    teacher_pay_per_student: Decimal = Decimal('0')
     schedule: Optional[str] = None
     start_date: Optional[datetime] = None
     is_active: bool
     created_at: datetime
     student_count: Optional[int] = 0
+    total_lessons: int = 24
+    completed_lessons: int = 0
+    remaining_lessons: int = 24
+    progress_pct: float = 0.0
 
     class Config:
         orm_mode = True
@@ -195,16 +261,20 @@ class GroupDetail(GroupRead):
 
 class GroupCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)
+    stage: str = Field('foundation')
     teacher_id: Optional[int] = None
     course_price: Decimal = Field(..., ge=0)
+    teacher_pay_per_student: Decimal = Field(Decimal('0'), ge=0)
     schedule: Optional[str] = Field(None, max_length=200)
     start_date: Optional[datetime] = None
 
 
 class GroupUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=200)
+    stage: Optional[str] = None
     teacher_id: Optional[int] = None
     course_price: Optional[Decimal] = Field(None, ge=0)
+    teacher_pay_per_student: Optional[Decimal] = Field(None, ge=0)
     schedule: Optional[str] = Field(None, max_length=200)
     start_date: Optional[datetime] = None
     is_active: Optional[bool] = None
@@ -212,6 +282,7 @@ class GroupUpdate(BaseModel):
 
 class AddStudentToGroup(BaseModel):
     student_id: int
+    tariff_id: Optional[int] = None
 
 
 # ── Payments ──────────────────────────────────────────────────────────────────
@@ -248,6 +319,34 @@ class PaymentUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+# ── Expenses ──────────────────────────────────────────────────────────────────
+
+class ExpenseRead(BaseModel):
+    id: int
+    name: str
+    amount: Decimal
+    month: int
+    year: int
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class ExpenseCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=300)
+    amount: Decimal = Field(..., gt=0)
+    month: int = Field(..., ge=1, le=12)
+    year: int = Field(..., ge=2020)
+
+
+class ExpenseUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=300)
+    amount: Optional[Decimal] = Field(None, gt=0)
+    month: Optional[int] = Field(None, ge=1, le=12)
+    year: Optional[int] = Field(None, ge=2020)
+
+
 # ── Statistics ────────────────────────────────────────────────────────────────
 
 class MonthlyStats(BaseModel):
@@ -257,6 +356,10 @@ class MonthlyStats(BaseModel):
     payment_count: int
     active_students: int
     active_groups: int
+    teacher_salary: Decimal = Decimal('0')
+    external_expenses: Decimal = Decimal('0')
+    total_expenses: Decimal = Decimal('0')
+    net_profit: Decimal = Decimal('0')
 
 
 class PageMeta(BaseModel):
@@ -274,4 +377,8 @@ class StatsOverview(BaseModel):
     this_month_income: Decimal
     last_month_income: Decimal
     income_change_pct: float
+    teacher_salary: Decimal = Decimal('0')
+    external_expenses: Decimal = Decimal('0')
+    total_expenses: Decimal = Decimal('0')
+    net_profit: Decimal = Decimal('0')
     monthly_history: List[MonthlyStats]

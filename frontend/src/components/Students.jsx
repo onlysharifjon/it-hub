@@ -2,30 +2,45 @@ import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faPen, faTrash, faToggleOn, faToggleOff, faPlus,
+  faPen, faToggleOn, faToggleOff, faPlus,
   faMagnifyingGlass, faUserGraduate, faPhone,
+  faBoxArchive, faArrowUpFromBracket,
 } from '@fortawesome/free-solid-svg-icons'
 import { faTelegram as faTelegramBrand } from '@fortawesome/free-brands-svg-icons'
-import { fetchStudents, createStudent, updateStudent, deleteStudent } from '../api'
+import { fetchStudents, createStudent, updateStudent, archiveStudent, unarchiveStudent } from '../api'
 import Pagination from './Pagination'
+import DateFilter from './DateFilter'
 
-const EMPTY = { full_name: '', phone1: '', phone2: '', telegram_id: '', notes: '' }
+const EMPTY = {
+  full_name: '', phone1: '',
+  father_name: '', father_phone: '',
+  mother_name: '', mother_phone: '',
+  telegram_id: '', notes: '',
+}
 
 export default function Students() {
+  const [tab, setTab] = useState('active')          // 'active' | 'archived'
   const [data, setData] = useState({ items: [], meta: null })
   const [search, setSearch] = useState('')
+  const [dateFilter, setDateFilter] = useState({ preset: 'all', date_from: '', date_to: '' })
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { load(search, page) }, [page])
+  useEffect(() => { load(search, dateFilter, page, tab) }, [tab])
 
-  async function load(s = search, p = page) {
+  async function load(s = search, df = dateFilter, p = page, t = tab) {
     setLoading(true)
     try {
-      const res = await fetchStudents({ search: s || undefined, page: p, page_size: 20 })
+      const res = await fetchStudents({
+        search: s || undefined,
+        is_archived: t === 'archived' ? true : false,
+        date_from: df.date_from || undefined,
+        date_to: df.date_to || undefined,
+        page: p, page_size: 20,
+      })
       setData(res)
     } catch { toast.error("Yuklab bo'lmadi") }
     finally { setLoading(false) }
@@ -35,17 +50,34 @@ export default function Students() {
     const val = e.target.value
     setSearch(val)
     setPage(1)
-    if (val.length === 0 || val.length >= 2) load(val, 1)
+    if (val.length === 0 || val.length >= 2) load(val, dateFilter, 1, tab)
+  }
+
+  function handleDateFilter(df) {
+    setDateFilter(df)
+    setPage(1)
+    load(search, df, 1, tab)
   }
 
   function handlePageChange(p) {
     setPage(p)
-    load(search, p)
+    load(search, dateFilter, p, tab)
+  }
+
+  function switchTab(t) {
+    setTab(t)
+    setPage(1)
+    setSearch('')
   }
 
   function openAdd() { setForm(EMPTY); setModal('add') }
   function openEdit(s) {
-    setForm({ full_name: s.full_name, phone1: s.phone1, phone2: s.phone2 || '', telegram_id: s.telegram_id || '', notes: s.notes || '' })
+    setForm({
+      full_name: s.full_name, phone1: s.phone1,
+      father_name: s.father_name || '', father_phone: s.father_phone || '',
+      mother_name: s.mother_name || '', mother_phone: s.mother_phone || '',
+      telegram_id: s.telegram_id || '', notes: s.notes || '',
+    })
     setModal(s)
   }
 
@@ -61,24 +93,32 @@ export default function Students() {
         toast.success('Saqlandi')
       }
       setModal(null)
-      load(search, page)
+      load()
     } catch (e) { toast.error(e.message) }
     finally { setSaving(false) }
   }
 
-  async function handleDelete(id) {
-    if (!confirm("O'chirishni tasdiqlaysizmi?")) return
+  async function handleArchive(s) {
+    if (!confirm(`"${s.full_name}" ni arxivga o'tkazishni tasdiqlaysizmi?`)) return
     try {
-      await deleteStudent(id)
-      toast.success("O'chirildi")
-      load(search, page)
+      await archiveStudent(s.id)
+      toast.success("Arxivga o'tkazildi")
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  async function handleUnarchive(s) {
+    try {
+      await unarchiveStudent(s.id)
+      toast.success("Arxivdan chiqarildi")
+      load()
     } catch (e) { toast.error(e.message) }
   }
 
   async function handleToggle(s) {
     try {
       await updateStudent(s.id, { is_active: !s.is_active })
-      load(search, page)
+      load()
     } catch { toast.error('Xatolik') }
   }
 
@@ -92,8 +132,26 @@ export default function Students() {
           <FontAwesomeIcon icon={faUserGraduate} className="page-icon" />
           Talabalar
         </h1>
-        <button className="button primary" onClick={openAdd}>
-          <FontAwesomeIcon icon={faPlus} /> Talaba qo'shish
+        {tab === 'active' && (
+          <button className="button primary" onClick={openAdd}>
+            <FontAwesomeIcon icon={faPlus} /> Talaba qo'shish
+          </button>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className="tab-bar">
+        <button
+          className={`tab-btn ${tab === 'active' ? 'active' : ''}`}
+          onClick={() => switchTab('active')}
+        >
+          <FontAwesomeIcon icon={faUserGraduate} /> Faol talabalar
+        </button>
+        <button
+          className={`tab-btn ${tab === 'archived' ? 'active' : ''}`}
+          onClick={() => switchTab('archived')}
+        >
+          <FontAwesomeIcon icon={faBoxArchive} /> Arxiv
         </button>
       </div>
 
@@ -109,6 +167,9 @@ export default function Students() {
         </div>
         {meta && <span className="muted">Jami: {meta.total} ta talaba</span>}
       </div>
+      <div className="toolbar">
+        <DateFilter value={dateFilter} onChange={handleDateFilter} />
+      </div>
 
       {loading ? (
         <div className="muted center py-8">Yuklanmoqda...</div>
@@ -120,8 +181,8 @@ export default function Students() {
                 <tr>
                   <th>#</th>
                   <th>Ism Familiya</th>
-                  <th><FontAwesomeIcon icon={faPhone} /> Telefon 1</th>
-                  <th><FontAwesomeIcon icon={faPhone} /> Telefon 2</th>
+                  <th><FontAwesomeIcon icon={faPhone} /> Telefon</th>
+                  <th>Ota-ona</th>
                   <th>Telegram</th>
                   <th>Guruhlar</th>
                   <th>Holat</th>
@@ -133,8 +194,17 @@ export default function Students() {
                   <tr key={s.id} className={!s.is_active ? 'row-inactive' : ''}>
                     <td className="text-muted">{(page - 1) * 20 + i + 1}</td>
                     <td><strong>{s.full_name}</strong></td>
-                    <td>{s.phone1}</td>
-                    <td>{s.phone2 || <span className="text-muted">—</span>}</td>
+                    <td>
+                      <div>{s.phone1}</div>
+                    </td>
+                    <td>
+                      {(s.father_name || s.mother_name) ? (
+                        <div style={{ fontSize: 12 }}>
+                          {s.father_name && <div>{s.father_name}{s.father_phone ? ` — ${s.father_phone}` : ''}</div>}
+                          {s.mother_name && <div>{s.mother_name}{s.mother_phone ? ` — ${s.mother_phone}` : ''}</div>}
+                        </div>
+                      ) : <span className="text-muted">—</span>}
+                    </td>
                     <td>
                       {s.telegram_id
                         ? <span className="tg-badge"><FontAwesomeIcon icon={faTelegramBrand} /> {s.telegram_id}</span>
@@ -147,20 +217,32 @@ export default function Students() {
                       </span>
                     </td>
                     <td className="actions">
-                      <button className="btn-icon" onClick={() => openEdit(s)} title="Tahrirlash">
-                        <FontAwesomeIcon icon={faPen} />
-                      </button>
-                      <button className="btn-icon" onClick={() => handleToggle(s)} title={s.is_active ? "O'chirish" : "Faollashtirish"}>
-                        <FontAwesomeIcon icon={s.is_active ? faToggleOn : faToggleOff} style={{ color: s.is_active ? '#22c55e' : '#ef4444' }} />
-                      </button>
-                      <button className="btn-icon danger" onClick={() => handleDelete(s.id)} title="O'chirish">
-                        <FontAwesomeIcon icon={faTrash} />
-                      </button>
+                      {tab === 'active' ? (
+                        <>
+                          <button className="btn-icon" onClick={() => openEdit(s)} title="Tahrirlash">
+                            <FontAwesomeIcon icon={faPen} />
+                          </button>
+                          <button className="btn-icon" onClick={() => handleToggle(s)} title={s.is_active ? "Nofaollashtirish" : "Faollashtirish"}>
+                            <FontAwesomeIcon icon={s.is_active ? faToggleOn : faToggleOff} style={{ color: s.is_active ? '#22c55e' : '#ef4444' }} />
+                          </button>
+                          <button className="btn-icon danger" onClick={() => handleArchive(s)} title="Arxivga o'tkazish">
+                            <FontAwesomeIcon icon={faBoxArchive} />
+                          </button>
+                        </>
+                      ) : (
+                        <button className="btn-icon" onClick={() => handleUnarchive(s)} title="Arxivdan chiqarish" style={{ color: '#2563eb' }}>
+                          <FontAwesomeIcon icon={faArrowUpFromBracket} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
                 {students.length === 0 && (
-                  <tr><td colSpan={8} className="muted center py-4">Talabalar topilmadi</td></tr>
+                  <tr>
+                    <td colSpan={8} className="muted center py-4">
+                      {tab === 'archived' ? 'Arxivlangan talabalar yo\'q' : 'Talabalar topilmadi'}
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -179,10 +261,28 @@ export default function Students() {
             <div className="modal-body">
               <label>Ism Familiya *</label>
               <input className="field" value={form.full_name} onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))} placeholder="To'liq ism" />
-              <label><FontAwesomeIcon icon={faPhone} /> Telefon 1 *</label>
+              <label><FontAwesomeIcon icon={faPhone} /> Telefon *</label>
               <input className="field" value={form.phone1} onChange={e => setForm(p => ({ ...p, phone1: e.target.value }))} placeholder="+998901234567" />
-              <label><FontAwesomeIcon icon={faPhone} /> Telefon 2</label>
-              <input className="field" value={form.phone2} onChange={e => setForm(p => ({ ...p, phone2: e.target.value }))} placeholder="Ixtiyoriy" />
+              <div className="row-2">
+                <div>
+                  <label>Otasining ismi</label>
+                  <input className="field" value={form.father_name} onChange={e => setForm(p => ({ ...p, father_name: e.target.value }))} placeholder="Ixtiyoriy" />
+                </div>
+                <div>
+                  <label>Otasining telefoni</label>
+                  <input className="field" value={form.father_phone} onChange={e => setForm(p => ({ ...p, father_phone: e.target.value }))} placeholder="+998..." />
+                </div>
+              </div>
+              <div className="row-2">
+                <div>
+                  <label>Onasining ismi</label>
+                  <input className="field" value={form.mother_name} onChange={e => setForm(p => ({ ...p, mother_name: e.target.value }))} placeholder="Ixtiyoriy" />
+                </div>
+                <div>
+                  <label>Onasining telefoni</label>
+                  <input className="field" value={form.mother_phone} onChange={e => setForm(p => ({ ...p, mother_phone: e.target.value }))} placeholder="+998..." />
+                </div>
+              </div>
               <label>Telegram ID</label>
               <input className="field" value={form.telegram_id} onChange={e => setForm(p => ({ ...p, telegram_id: e.target.value }))} placeholder="username (@ siz)" />
               <label>Izoh</label>

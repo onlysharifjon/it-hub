@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faBook, faUserGraduate, faUsers, faCreditCard,
-  faChartBar, faRightFromBracket,
+  faChartBar, faRightFromBracket, faChevronDown,
+  faCalendarCheck, faTag, faWallet, faUserShield,
+  faChalkboardTeacher, faReceipt,
 } from '@fortawesome/free-solid-svg-icons'
 
 const CATEGORIES = [
@@ -16,11 +18,22 @@ function Sidebar({
   currentUser, onLogout,
   activePage, onNavigate, isOpen,
 }) {
-  const isAdmin = currentUser?.role === 'admin'
+  const isAdmin    = currentUser?.role === 'admin'
   const isMetodist = currentUser?.role === 'metodist' || isAdmin
 
+  const [catOpen, setCatOpen] = useState(activePage === 'lessons')
+
   const avatarLetter = (currentUser?.full_name || currentUser?.username)?.[0]?.toUpperCase() ?? '?'
-  const roleLabels = { admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi" }
+  const roleLabels   = { admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi" }
+
+  function handleLessonsClick() {
+    if (activePage === 'lessons') {
+      setCatOpen(v => !v)
+    } else {
+      onNavigate('lessons')
+      setCatOpen(true)
+    }
+  }
 
   function handleCategoryClick(key) {
     onSelectCategory(key)
@@ -36,24 +49,38 @@ function Sidebar({
         <div className="nav-section-label">Metodika</div>
         <button
           className={`nav-page-btn ${activePage === 'lessons' ? 'active' : ''}`}
-          onClick={() => onNavigate('lessons')}
+          onClick={handleLessonsClick}
         >
-          <FontAwesomeIcon icon={faBook} fixedWidth /> Dars rejalari
+          <FontAwesomeIcon icon={faBook} fixedWidth />
+          <span style={{ flex: 1 }}>Dars rejalari</span>
+          <span className={`cat-chevron${catOpen && activePage === 'lessons' ? ' open' : ''}`}>
+            <FontAwesomeIcon icon={faChevronDown} />
+          </span>
         </button>
 
-        {activePage === 'lessons' && (
+        <div className={`category-list-wrap${catOpen && activePage === 'lessons' ? ' open' : ''}`}>
           <div className="category-list">
-            {CATEGORIES.map(c => (
+            {CATEGORIES.map((c, i) => (
               <button
                 key={c.key}
                 className={`category-btn ${selectedCategory === c.key ? 'active' : ''}`}
                 onClick={() => handleCategoryClick(c.key)}
+                style={{ animationDelay: `${i * 40}ms` }}
               >
                 {c.label}
               </button>
             ))}
           </div>
-        )}
+        </div>
+
+        {/* Davomat — teacher + metodist + admin */}
+        <div className="nav-section-label mt-3">Davomat</div>
+        <button
+          className={`nav-page-btn ${activePage === 'today_attendance' ? 'active' : ''}`}
+          onClick={() => onNavigate('today_attendance')}
+        >
+          <FontAwesomeIcon icon={faCalendarCheck} fixedWidth /> Bugungi darslar
+        </button>
 
         {/* LMS */}
         {isMetodist && (
@@ -77,6 +104,13 @@ function Sidebar({
         {/* Admin only */}
         {isAdmin && (
           <>
+            <div className="nav-section-label mt-3">Moliya</div>
+            <button
+              className={`nav-page-btn ${activePage === 'finance' ? 'active' : ''}`}
+              onClick={() => onNavigate('finance')}
+            >
+              <FontAwesomeIcon icon={faWallet} fixedWidth /> Moliya
+            </button>
             <button
               className={`nav-page-btn ${activePage === 'payments' ? 'active' : ''}`}
               onClick={() => onNavigate('payments')}
@@ -84,10 +118,35 @@ function Sidebar({
               <FontAwesomeIcon icon={faCreditCard} fixedWidth /> To'lovlar
             </button>
             <button
+              className={`nav-page-btn ${activePage === 'tariffs' ? 'active' : ''}`}
+              onClick={() => onNavigate('tariffs')}
+            >
+              <FontAwesomeIcon icon={faTag} fixedWidth /> Tariflar
+            </button>
+            <button
+              className={`nav-page-btn ${activePage === 'teacher_salaries' ? 'active' : ''}`}
+              onClick={() => onNavigate('teacher_salaries')}
+            >
+              <FontAwesomeIcon icon={faChalkboardTeacher} fixedWidth /> O'qituvchi maoshi
+            </button>
+            <button
+              className={`nav-page-btn ${activePage === 'expenses' ? 'active' : ''}`}
+              onClick={() => onNavigate('expenses')}
+            >
+              <FontAwesomeIcon icon={faReceipt} fixedWidth /> Xarajatlar
+            </button>
+            <button
               className={`nav-page-btn ${activePage === 'dashboard' ? 'active' : ''}`}
               onClick={() => onNavigate('dashboard')}
             >
               <FontAwesomeIcon icon={faChartBar} fixedWidth /> Dashboard
+            </button>
+            <div className="nav-section-label mt-3">Boshqaruv</div>
+            <button
+              className={`nav-page-btn ${activePage === 'users' ? 'active' : ''}`}
+              onClick={() => onNavigate('users')}
+            >
+              <FontAwesomeIcon icon={faUserShield} fixedWidth /> Foydalanuvchilar
             </button>
           </>
         )}
@@ -103,7 +162,7 @@ function Sidebar({
             </div>
           </div>
         )}
-        <button className="logout-btn" onClick={onLogout} title="Chiqish">
+        <button className="logout-btn" onClick={onLogout}>
           <FontAwesomeIcon icon={faRightFromBracket} /> Chiqish
         </button>
       </div>
