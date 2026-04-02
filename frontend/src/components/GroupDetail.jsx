@@ -18,7 +18,8 @@ const STAGE_COLORS = {
 }
 const STAGE_LABELS = { foundation: 'Foundation', frontend: 'Frontend', backend: 'Backend' }
 
-export default function GroupDetail({ group: groupProp, onBack }) {
+export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'metodist'
   const [month, setMonth] = useState(NOW.getMonth() + 1)
   const [year, setYear] = useState(NOW.getFullYear())
   const [group, setGroup] = useState(groupProp)
@@ -43,10 +44,11 @@ export default function GroupDetail({ group: groupProp, onBack }) {
     finally { setLoading(false) }
   }
 
-  async function handleAddDate() {
-    if (!newDate) return
+  async function handleAddDate(dateOverride) {
+    const target = dateOverride || newDate
+    if (!target) return
     const existing = data?.dates || []
-    if (existing.includes(newDate)) return toast.error("Bu sana allaqachon mavjud")
+    if (existing.includes(target)) return toast.error("Bu sana allaqachon mavjud")
 
     setSaving(true)
     try {
@@ -54,9 +56,8 @@ export default function GroupDetail({ group: groupProp, onBack }) {
         student_id: s.student_id,
         is_present: true,
       }))
-      await saveAttendance(group.id, newDate, records)
-      setNewDate('')
-      setAddingDate(false)
+      await saveAttendance(group.id, target, records)
+      if (!dateOverride) { setNewDate(''); setAddingDate(false) }
       toast.success("Dars sanasi qo'shildi")
       await load()
     } catch (e) { toast.error(e.message) }
@@ -110,6 +111,17 @@ export default function GroupDetail({ group: groupProp, onBack }) {
   const dates = data?.dates || []
   const students = data?.students || []
   const totalLessons = dates.length
+
+  const TODAY_STR = NOW.toISOString().slice(0, 10)
+  const attendanceDatesSet = new Set(dates)
+  const allDaysInMonth = (() => {
+    const days = []
+    const count = new Date(year, month, 0).getDate()
+    for (let d = 1; d <= count; d++) {
+      days.push(`${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`)
+    }
+    return days
+  })()
 
   // monthly stats
   const avgAttendance = students.length && totalLessons
@@ -270,22 +282,33 @@ export default function GroupDetail({ group: groupProp, onBack }) {
                 <thead>
                   <tr>
                     <th className="att-name-col">O'quvchi</th>
-                    {dates.map(d => (
-                      <th key={d} className="att-date-col">
-                        <div className="att-date-header">
-                          <span>{formatDate(d)}</span>
-                          <button
-                            className="att-delete-date"
-                            onClick={() => handleDeleteDate(d)}
-                            title="Sanani o'chirish"
-                          >
-                            <FontAwesomeIcon icon={faTrash} />
-                          </button>
-                        </div>
-                      </th>
-                    ))}
+                    {allDaysInMonth.map(d => {
+                      const isToday = d === TODAY_STR
+                      const hasLesson = attendanceDatesSet.has(d)
+                      return (
+                        <th
+                          key={d}
+                          className={`att-date-col${isToday ? ' att-col-today' : ''}${!hasLesson ? ' att-col-nolesson' : ''}`}
+                          onClick={!hasLesson && isAdmin ? () => handleAddDate(d) : undefined}
+                          title={!hasLesson && isAdmin ? "Bosing: bu kunga dars qo'shish" : undefined}
+                          style={!hasLesson && isAdmin ? { cursor: 'pointer' } : undefined}
+                        >
+                          <div className="att-date-header">
+                            <span>{formatDate(d)}</span>
+                            {hasLesson && (
+                              <button
+                                className="att-delete-date"
+                                onClick={() => handleDeleteDate(d)}
+                                title="Sanani o'chirish"
+                              >
+                                <FontAwesomeIcon icon={faTrash} />
+                              </button>
+                            )}
+                          </div>
+                        </th>
+                      )
+                    })}
                     <th className="att-total-col">Jami</th>
-                    {dates.length === 0 && <th className="text-muted" style={{ fontWeight: 400 }}>Dars qo'shilmagan</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -295,18 +318,30 @@ export default function GroupDetail({ group: groupProp, onBack }) {
                         <div className="att-student-name">{s.student_name}</div>
                         <div className="att-student-phone text-muted">{s.phone}</div>
                       </td>
-                      {dates.map(d => {
+                      {allDaysInMonth.map(d => {
+                        const isToday = d === TODAY_STR
+                        const hasLesson = attendanceDatesSet.has(d)
                         const val = s.dates[d]
+                        if (!hasLesson) {
+                          return (
+                            <td
+                              key={d}
+                              className={`att-cell-nolesson${isToday ? ' att-cell-today' : ''}${isAdmin ? ' att-cell-nolesson-admin' : ''}`}
+                              onClick={isAdmin ? () => handleAddDate(d) : undefined}
+                              title={isAdmin ? "Bosing: bu kunga dars qo'shish" : undefined}
+                            />
+                          )
+                        }
                         return (
                           <td
                             key={d}
-                            className={`att-cell ${val === true ? 'att-present' : val === false ? 'att-absent' : 'att-empty'}`}
+                            className={`att-cell${isToday ? ' att-cell-today' : ''} ${val === true ? 'att-present' : val === false ? 'att-absent' : 'att-empty'}`}
                             onClick={() => handleToggle(s.student_id, d, val)}
                             title="Bosing: Keldi → Kelmadi → Belgilanmagan"
                           >
                             {val === true && <FontAwesomeIcon icon={faCheck} />}
                             {val === false && <FontAwesomeIcon icon={faXmark} />}
-                            {val === null || val === undefined ? <FontAwesomeIcon icon={faMinus} className="text-muted" /> : null}
+                            {(val === null || val === undefined) && <FontAwesomeIcon icon={faMinus} className="text-muted" />}
                           </td>
                         )
                       })}
@@ -314,7 +349,6 @@ export default function GroupDetail({ group: groupProp, onBack }) {
                         <span style={{ color: '#22c55e', fontWeight: 600 }}>{s.present_count}</span>
                         <span className="text-muted">/{totalLessons}</span>
                       </td>
-                      {dates.length === 0 && <td></td>}
                     </tr>
                   ))}
                   {students.length === 0 && (

@@ -122,7 +122,7 @@ function App() {
             }} />
           )}
           {activePage === 'group_detail' && selectedGroup && (
-            <GroupDetail group={selectedGroup} onBack={() => handleNavigate('groups')} />
+            <GroupDetail group={selectedGroup} onBack={() => handleNavigate('groups')} currentUser={currentUser} />
           )}
           {activePage === 'group_detail' && !selectedGroup && (
             <Groups onOpenGroup={g => {

@@ -1611,6 +1611,45 @@ input.lp-input:focus {
 .att-absent  { color: var(--danger); }
 .att-empty   { color: var(--muted-2); }
 
+/* Today column */
+.att-col-today {
+  background: #eff6ff !important;
+  color: #1d4ed8 !important;
+  border-top: 3px solid #3b82f6;
+  position: relative;
+}
+.att-cell-today {
+  background: #eff6ff !important;
+}
+
+/* No-lesson days */
+.att-col-nolesson {
+  opacity: 0.35;
+}
+.att-col-nolesson:hover {
+  opacity: 0.7;
+}
+.att-cell-nolesson {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent,
+    transparent 3px,
+    var(--border) 3px,
+    var(--border) 4px
+  );
+  opacity: 0.3;
+  cursor: default;
+}
+.att-cell-nolesson-admin {
+  cursor: pointer;
+  opacity: 0.25;
+  transition: opacity .15s, background .15s;
+}
+.att-cell-nolesson-admin:hover {
+  opacity: 0.7;
+  background: #dcfce7;
+}
+
 /* ═══════════════════════════════════════════════════════
    RESPONSIVE — TABLET (≤ 1024px)
 ═══════════════════════════════════════════════════════ */
