@@ -20,6 +20,7 @@ function Sidebar({
 }) {
   const isAdmin    = currentUser?.role === 'admin'
   const isMetodist = currentUser?.role === 'metodist' || isAdmin
+  const isTeacher  = currentUser?.role === 'teacher'
 
   const [catOpen, setCatOpen] = useState(activePage === 'lessons')
 
@@ -72,6 +73,19 @@ function Sidebar({
             ))}
           </div>
         </div>
+
+        {/* Teacher only — My dashboard */}
+        {isTeacher && (
+          <>
+            <div className="nav-section-label mt-3">Mening panelim</div>
+            <button
+              className={`nav-page-btn ${activePage === 'teacher_dashboard' ? 'active' : ''}`}
+              onClick={() => onNavigate('teacher_dashboard')}
+            >
+              <FontAwesomeIcon icon={faChalkboardTeacher} fixedWidth /> Mening guruhlarim
+            </button>
+          </>
+        )}
 
         {/* Davomat — teacher + metodist + admin */}
         <div className="nav-section-label mt-3">Davomat</div>

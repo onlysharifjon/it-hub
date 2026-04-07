@@ -15,6 +15,7 @@ import Finance from './components/Finance'
 import TodayAttendance from './components/TodayAttendance'
 import Users from './components/Users'
 import TeacherSalaries from './components/TeacherSalaries'
+import TeacherDashboard from './components/TeacherDashboard'
 import Expenses from './components/Expenses'
 import { fetchMe, login as apiLogin, setToken } from './api'
 
@@ -138,6 +139,14 @@ function App() {
           {activePage === 'expenses' && <Expenses />}
           {activePage === 'tariffs' && <Tariffs />}
           {activePage === 'finance' && <Finance />}
+          {activePage === 'teacher_dashboard' && (
+            <TeacherDashboard currentUser={currentUser} onOpenGroup={g => {
+              sessionStorage.setItem('selectedGroup', JSON.stringify(g))
+              setSelectedGroup(g)
+              window.location.hash = 'group_detail'
+              setActivePage('group_detail')
+            }} />
+          )}
           {activePage === 'today_attendance' && (
             <TodayAttendance currentUser={currentUser} onOpenGroup={g => {
               sessionStorage.setItem('selectedGroup', JSON.stringify(g))

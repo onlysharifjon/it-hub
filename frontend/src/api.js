@@ -190,6 +190,13 @@ export async function fetchTeacherSalaries(month, year) {
   return request(`/stats/teacher-salaries?month=${month}&year=${year}`)
 }
 
+export async function fetchTeacherDashboard(month, year) {
+  const q = new URLSearchParams()
+  if (month) q.set('month', month)
+  if (year)  q.set('year', year)
+  return request(`/teacher/dashboard${q.toString() ? '?' + q : ''}`)
+}
+
 export async function fetchStatsOverview(year) {
   const q = year ? `?year=${year}` : ''
   return request(`/stats/overview${q}`)

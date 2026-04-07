@@ -689,10 +689,13 @@ def list_groups(
 
 
 @app.get("/groups/{group_id}", response_model=schemas.GroupDetail)
-def get_group(group_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
+def get_group(group_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_auth)):
     g = db.query(models.Group).filter(models.Group.id == group_id).first()
     if not g:
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
+    # Teacher faqat o'z guruhini ko'ra oladi
+    if actor.role == UserRole.teacher.value and g.teacher_id != actor.id:
+        raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
     return _group_detail(g, db=db)
 
 
@@ -910,7 +913,7 @@ def stats_overview(
                     extract('month', models.Attendance.lesson_date) == m,
                     extract('year',  models.Attendance.lesson_date) == y,
                 ).scalar() or 0
-                total += (pay_per / Decimal('12') * Decimal(str(attended))).quantize(Decimal('1'))
+                total += (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
         return total
 
     this_income = month_income(cur_month, cur_year)
@@ -992,7 +995,7 @@ def teacher_salaries_breakdown(
                 extract('month', models.Attendance.lesson_date) == month,
                 extract('year',  models.Attendance.lesson_date) == year,
             ).scalar() or 0
-            share = (pay_per / Decimal('12') * Decimal(str(attended))).quantize(Decimal('1'))
+            share = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
             group_salary += share
             student_details.append({
                 "student_id": mem.student_id,
@@ -1038,6 +1041,100 @@ def teacher_salaries_breakdown(
         "year": year,
         "total_teacher_salary": float(grand_total),
         "teachers": result,
+    }
+
+
+# ── Teacher: My dashboard ─────────────────────────────────────────────────────
+
+@app.get("/teacher/dashboard")
+def teacher_my_dashboard(
+    month: int = Query(None, ge=1, le=12),
+    year:  int = Query(None, ge=2020),
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_auth),
+):
+    """
+    Teacher sees their own groups + estimated salary for the given month.
+    Admin/metodist can also call this for any teacher_id (optional query param).
+    """
+    sel_month = month or date.today().month
+    sel_year  = year  or date.today().year
+
+    groups = (
+        db.query(models.Group)
+        .filter(models.Group.teacher_id == actor.id, models.Group.is_active == True)
+        .order_by(models.Group.name)
+        .all()
+    )
+
+    total_salary  = Decimal(0)
+    total_students = 0
+    groups_out = []
+
+    for g in groups:
+        stage      = g.stage or 'foundation'
+        total_less = schemas.STAGE_TOTAL_LESSONS.get(stage, 24)
+        completed  = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
+            models.Attendance.group_id == g.id
+        ).scalar() or 0
+        pct = round(completed / total_less * 100, 1) if total_less > 0 else 0.0
+
+        pay_per = Decimal(str(g.teacher_pay_per_student or 0))
+        group_salary = Decimal(0)
+        student_salaries = []
+
+        for mem in g.members:
+            attended = db.query(func.count(models.Attendance.id)).filter(
+                models.Attendance.group_id   == g.id,
+                models.Attendance.student_id == mem.student_id,
+                models.Attendance.is_present == True,
+                extract('month', models.Attendance.lesson_date) == sel_month,
+                extract('year',  models.Attendance.lesson_date) == sel_year,
+            ).scalar() or 0
+            share = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
+            group_salary += share
+            student_salaries.append({
+                "student_id":   mem.student_id,
+                "student_name": mem.student.full_name,
+                "attended":     attended,
+                "salary_share": float(share),
+            })
+
+        # lessons held this month
+        month_lessons = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
+            models.Attendance.group_id == g.id,
+            extract('month', models.Attendance.lesson_date) == sel_month,
+            extract('year',  models.Attendance.lesson_date) == sel_year,
+        ).scalar() or 0
+
+        total_salary   += group_salary
+        total_students += len(g.members)
+
+        groups_out.append({
+            "id":                      g.id,
+            "name":                    g.name,
+            "stage":                   stage,
+            "schedule":                g.schedule or "",
+            "start_date":              str(g.start_date) if g.start_date else None,
+            "student_count":           len(g.members),
+            "total_lessons":           total_less,
+            "completed_lessons":       completed,
+            "progress_pct":            pct,
+            "teacher_pay_per_student": float(pay_per),
+            "month_salary":            float(group_salary),
+            "month_lessons_held":      month_lessons,
+            "student_salaries":        student_salaries,
+        })
+
+    return {
+        "teacher_id":    actor.id,
+        "teacher_name":  actor.full_name or actor.username,
+        "month":         sel_month,
+        "year":          sel_year,
+        "total_groups":  len(groups_out),
+        "total_students": total_students,
+        "total_salary":  float(total_salary),
+        "groups":        groups_out,
     }
 
 
@@ -1470,12 +1567,16 @@ def get_attendance(
     month: int = Query(..., ge=1, le=12),
     year: int = Query(..., ge=2020),
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_metodist),
+    actor: models.User = Depends(require_auth),
 ):
     """Return all attendance records for a group in given month/year."""
     group = db.query(models.Group).filter(models.Group.id == group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
+
+    # Teacher faqat o'z guruhini ko'ra oladi
+    if actor.role == UserRole.teacher.value and group.teacher_id != actor.id:
+        raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
 
     members = (
         db.query(models.GroupStudent)
