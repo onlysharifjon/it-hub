@@ -863,6 +863,39 @@ def delete_payment(payment_id: int, db: Session = Depends(get_db), actor: models
     db.commit()
 
 
+# ── Salary helper ─────────────────────────────────────────────────────────────
+
+def _group_salary(db: Session, group: models.Group, month: int, year: int):
+    """
+    O'qituvchi maoshini hisoblaydi.
+    Formula: teacher_pay_per_student × talaba_kelgan_darslar_soni
+    (teacher_pay_per_student = 1 dars uchun 1 talabadan olinadigan summa)
+    """
+    pay_per = Decimal(str(group.teacher_pay_per_student or 0))
+    if pay_per == 0:
+        return Decimal(0), []
+
+    total = Decimal(0)
+    students = []
+    for mem in group.members:
+        attended = db.query(func.count(models.Attendance.id)).filter(
+            models.Attendance.group_id   == group.id,
+            models.Attendance.student_id == mem.student_id,
+            models.Attendance.is_present == True,
+            extract('month', models.Attendance.lesson_date) == month,
+            extract('year',  models.Attendance.lesson_date) == year,
+        ).scalar() or 0
+        share = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
+        total += share
+        students.append({
+            "student_id":   mem.student_id,
+            "student_name": mem.student.full_name,
+            "attended":     attended,
+            "salary_share": float(share),
+        })
+    return total, students
+
+
 # ── Statistics endpoints ──────────────────────────────────────────────────────
 
 @app.get("/stats/overview", response_model=schemas.StatsOverview)
@@ -899,22 +932,7 @@ def stats_overview(
         return r or Decimal(0)
 
     def teacher_salary_for_month(grps, m, y):
-        """Attendance-based: pay_per_student / 12 × attended_lessons per student."""
-        total = Decimal(0)
-        for g in grps:
-            pay_per = Decimal(str(g.teacher_pay_per_student or 0))
-            if pay_per == 0:
-                continue
-            for mem in g.members:
-                attended = db.query(func.count(models.Attendance.id)).filter(
-                    models.Attendance.group_id == g.id,
-                    models.Attendance.student_id == mem.student_id,
-                    models.Attendance.is_present == True,
-                    extract('month', models.Attendance.lesson_date) == m,
-                    extract('year',  models.Attendance.lesson_date) == y,
-                ).scalar() or 0
-                total += (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
-        return total
+        return sum((_group_salary(db, g, m, y)[0] for g in grps), Decimal(0))
 
     this_income = month_income(cur_month, cur_year)
     last_income = month_income(prev_month, prev_year)
@@ -973,36 +991,16 @@ def teacher_salaries_breakdown(
 ):
     """
     Per-teacher salary breakdown based on attendance.
-    Formula: teacher_pay_per_student / 12 × student_attended_lessons
+    Formula: teacher_pay_per_student × attended_lessons  (per-lesson rate per student)
     """
     groups = db.query(models.Group).filter(models.Group.is_active == True).all()
     teachers: dict = {}
     grand_total = Decimal(0)
 
     for g in groups:
-        pay_per = Decimal(str(g.teacher_pay_per_student or 0))
-        if pay_per == 0:
+        group_salary, student_details = _group_salary(db, g, month, year)
+        if group_salary == 0 and not student_details:
             continue
-
-        group_salary = Decimal(0)
-        student_details = []
-
-        for mem in g.members:
-            attended = db.query(func.count(models.Attendance.id)).filter(
-                models.Attendance.group_id == g.id,
-                models.Attendance.student_id == mem.student_id,
-                models.Attendance.is_present == True,
-                extract('month', models.Attendance.lesson_date) == month,
-                extract('year',  models.Attendance.lesson_date) == year,
-            ).scalar() or 0
-            share = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
-            group_salary += share
-            student_details.append({
-                "student_id": mem.student_id,
-                "student_name": mem.student.full_name,
-                "attended": attended,
-                "salary_share": float(share),
-            })
 
         grand_total += group_salary
         tid = g.teacher_id  # may be None
@@ -1079,26 +1077,7 @@ def teacher_my_dashboard(
         ).scalar() or 0
         pct = round(completed / total_less * 100, 1) if total_less > 0 else 0.0
 
-        pay_per = Decimal(str(g.teacher_pay_per_student or 0))
-        group_salary = Decimal(0)
-        student_salaries = []
-
-        for mem in g.members:
-            attended = db.query(func.count(models.Attendance.id)).filter(
-                models.Attendance.group_id   == g.id,
-                models.Attendance.student_id == mem.student_id,
-                models.Attendance.is_present == True,
-                extract('month', models.Attendance.lesson_date) == sel_month,
-                extract('year',  models.Attendance.lesson_date) == sel_year,
-            ).scalar() or 0
-            share = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
-            group_salary += share
-            student_salaries.append({
-                "student_id":   mem.student_id,
-                "student_name": mem.student.full_name,
-                "attended":     attended,
-                "salary_share": float(share),
-            })
+        group_salary, student_salaries = _group_salary(db, g, sel_month, sel_year)
 
         # lessons held this month
         month_lessons = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
