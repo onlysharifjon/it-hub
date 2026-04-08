@@ -30,7 +30,7 @@ services:
       DATABASE_URL: postgresql://ithub_user:IthubSecure2026@db:5432/ithub_db
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-525600}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5373}
     depends_on:
       db:
         condition: service_healthy
