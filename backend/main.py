@@ -13,7 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import bcrypt as _bcrypt
 from jose import JWTError, jwt
 from sqlalchemy import func, extract
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload, joinedload
 
 from . import models, schemas
 from .database import get_db
@@ -676,7 +676,16 @@ def list_groups(
     if date_to:
         q = q.filter(models.Group.start_date < datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1))
     total = q.count()
-    groups = q.order_by(models.Group.name).offset((page - 1) * page_size).limit(page_size).all()
+    groups = (
+        q.options(
+            joinedload(models.Group.teacher),
+            selectinload(models.Group.members),
+        )
+        .order_by(models.Group.name)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
     return {
         "items": [_group_read(g, db=db) for g in groups],
         "meta": {
@@ -690,7 +699,16 @@ def list_groups(
 
 @app.get("/groups/{group_id}", response_model=schemas.GroupDetail)
 def get_group(group_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_auth)):
-    g = db.query(models.Group).filter(models.Group.id == group_id).first()
+    g = (
+        db.query(models.Group)
+        .options(
+            joinedload(models.Group.teacher),
+            selectinload(models.Group.members).joinedload(models.GroupStudent.student),
+            selectinload(models.Group.members).joinedload(models.GroupStudent.tariff),
+        )
+        .filter(models.Group.id == group_id)
+        .first()
+    )
     if not g:
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
     # Teacher faqat o'z guruhini ko'ra oladi
@@ -867,33 +885,95 @@ def delete_payment(payment_id: int, db: Session = Depends(get_db), actor: models
 
 def _group_salary(db: Session, group: models.Group, month: int, year: int):
     """
-    O'qituvchi maoshini hisoblaydi.
+    O'qituvchi maoshini hisoblaydi — 2 query (N+1 o'rniga).
     Formula: teacher_pay_per_student × talaba_kelgan_darslar_soni
-    (teacher_pay_per_student = 1 dars uchun 1 talabadan olinadigan summa)
     """
     pay_per = Decimal(str(group.teacher_pay_per_student or 0))
     if pay_per == 0:
         return Decimal(0), []
 
-    total = Decimal(0)
-    students = []
-    for mem in group.members:
-        attended = db.query(func.count(models.Attendance.id)).filter(
-            models.Attendance.group_id   == group.id,
-            models.Attendance.student_id == mem.student_id,
+    # 1-query: guruh a'zolari va ismlari
+    member_rows = (
+        db.query(models.GroupStudent.student_id, models.Student.full_name)
+        .join(models.Student, models.Student.id == models.GroupStudent.student_id)
+        .filter(models.GroupStudent.group_id == group.id)
+        .all()
+    )
+    if not member_rows:
+        return Decimal(0), []
+
+    student_ids = [r.student_id for r in member_rows]
+    name_map    = {r.student_id: r.full_name for r in member_rows}
+
+    # 2-query: bir oyda har talaba uchun kelgan darslar soni (GROUP BY)
+    att_rows = (
+        db.query(
+            models.Attendance.student_id,
+            func.count(models.Attendance.id).label('cnt'),
+        )
+        .filter(
+            models.Attendance.group_id  == group.id,
             models.Attendance.is_present == True,
             extract('month', models.Attendance.lesson_date) == month,
             extract('year',  models.Attendance.lesson_date) == year,
-        ).scalar() or 0
-        share = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
-        total += share
+            models.Attendance.student_id.in_(student_ids),
+        )
+        .group_by(models.Attendance.student_id)
+        .all()
+    )
+    attended_map = {r.student_id: r.cnt for r in att_rows}
+
+    total    = Decimal(0)
+    students = []
+    for sid, sname in name_map.items():
+        attended = attended_map.get(sid, 0)
+        share    = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
+        total   += share
         students.append({
-            "student_id":   mem.student_id,
-            "student_name": mem.student.full_name,
+            "student_id":   sid,
+            "student_name": sname,
             "attended":     attended,
             "salary_share": float(share),
         })
     return total, students
+
+
+def _batch_salary_by_month(db: Session, groups: list, year: int) -> dict:
+    """
+    Barcha guruhlar uchun 12 oylik maoshni 1 query da hisoblaydi.
+    Qaytaradi: {month: total_salary}
+    """
+    active = [g for g in groups if (g.teacher_pay_per_student or 0) > 0]
+    result = {m: Decimal(0) for m in range(1, 13)}
+    if not active:
+        return result
+
+    group_pay   = {g.id: Decimal(str(g.teacher_pay_per_student)) for g in active}
+    group_ids   = list(group_pay.keys())
+
+    rows = (
+        db.query(
+            extract('month', models.Attendance.lesson_date).label('mon'),
+            models.Attendance.group_id,
+            models.Attendance.student_id,
+            func.count(models.Attendance.id).label('cnt'),
+        )
+        .filter(
+            models.Attendance.group_id.in_(group_ids),
+            models.Attendance.is_present == True,
+            extract('year', models.Attendance.lesson_date) == year,
+        )
+        .group_by(
+            extract('month', models.Attendance.lesson_date),
+            models.Attendance.group_id,
+            models.Attendance.student_id,
+        )
+        .all()
+    )
+    for row in rows:
+        pay = group_pay.get(row.group_id, Decimal(0))
+        result[int(row.mon)] += (pay * Decimal(str(row.cnt))).quantize(Decimal('1'))
+    return result
 
 
 # ── Statistics endpoints ──────────────────────────────────────────────────────
@@ -916,42 +996,49 @@ def stats_overview(
     total_groups = db.query(func.count(models.Group.id)).scalar()
     active_groups_count = db.query(func.count(models.Group.id)).filter(models.Group.is_active == True).scalar()
 
-    # Load active groups for salary calculation
+    # Load active groups (1 query)
     active_grps = db.query(models.Group).filter(models.Group.is_active == True).all()
 
-    def month_income(m, y):
-        r = db.query(func.sum(models.Payment.amount)).filter(
-            models.Payment.month == m, models.Payment.year == y
-        ).scalar()
-        return r or Decimal(0)
+    # Batch: barcha to'lovlar yil bo'yicha (1 query)
+    pay_rows = (
+        db.query(models.Payment.month, models.Payment.year,
+                 func.sum(models.Payment.amount).label('total'),
+                 func.count(models.Payment.id).label('cnt'))
+        .filter(models.Payment.year.in_([sel_year, cur_year, prev_year]))
+        .group_by(models.Payment.month, models.Payment.year)
+        .all()
+    )
+    pay_map = {(r.month, r.year): (r.total or Decimal(0), r.cnt) for r in pay_rows}
 
-    def month_external_expenses(m, y):
-        r = db.query(func.sum(models.Expense.amount)).filter(
-            models.Expense.month == m, models.Expense.year == y
-        ).scalar()
-        return r or Decimal(0)
+    # Batch: barcha xarajatlar yil bo'yicha (1 query)
+    exp_rows = (
+        db.query(models.Expense.month, models.Expense.year,
+                 func.sum(models.Expense.amount).label('total'))
+        .filter(models.Expense.year.in_([sel_year, cur_year, prev_year]))
+        .group_by(models.Expense.month, models.Expense.year)
+        .all()
+    )
+    exp_map = {(r.month, r.year): r.total or Decimal(0) for r in exp_rows}
 
-    def teacher_salary_for_month(grps, m, y):
-        return sum((_group_salary(db, g, m, y)[0] for g in grps), Decimal(0))
+    # Batch: 12 oylik maosh (1 query)
+    salary_cur_year = _batch_salary_by_month(db, active_grps, cur_year)
+    salary_sel_year = salary_cur_year if sel_year == cur_year else _batch_salary_by_month(db, active_grps, sel_year)
 
-    this_income = month_income(cur_month, cur_year)
-    last_income = month_income(prev_month, prev_year)
-    change_pct = float((this_income - last_income) / last_income * 100) if last_income else 0.0
+    this_income = pay_map.get((cur_month, cur_year), (Decimal(0), 0))[0]
+    last_income = pay_map.get((prev_month, prev_year), (Decimal(0), 0))[0]
+    change_pct  = float((this_income - last_income) / last_income * 100) if last_income else 0.0
 
-    cur_teacher_salary = teacher_salary_for_month(active_grps, cur_month, cur_year)
-    cur_external = month_external_expenses(cur_month, cur_year)
-    cur_total_exp = cur_teacher_salary + cur_external
-    cur_net_profit = this_income - cur_total_exp
+    cur_teacher_salary = salary_cur_year[cur_month]
+    cur_external       = exp_map.get((cur_month, cur_year), Decimal(0))
+    cur_total_exp      = cur_teacher_salary + cur_external
+    cur_net_profit     = this_income - cur_total_exp
 
-    # All 12 months of selected year (Jan → Dec)
     history = []
     for m in range(1, 13):
-        income = month_income(m, sel_year)
-        pcount = db.query(func.count(models.Payment.id)).filter(
-            models.Payment.month == m, models.Payment.year == sel_year
-        ).scalar()
-        ext_exp = month_external_expenses(m, sel_year)
-        t_salary = teacher_salary_for_month(active_grps, m, sel_year)
+        income    = pay_map.get((m, sel_year), (Decimal(0), 0))[0]
+        pcount    = pay_map.get((m, sel_year), (Decimal(0), 0))[1]
+        ext_exp   = exp_map.get((m, sel_year), Decimal(0))
+        t_salary  = salary_sel_year[m]
         total_exp = t_salary + ext_exp
         history.append(schemas.MonthlyStats(
             year=sel_year, month=m, total_income=income,
@@ -1060,31 +1147,94 @@ def teacher_my_dashboard(
 
     groups = (
         db.query(models.Group)
+        .options(selectinload(models.Group.members))
         .filter(models.Group.teacher_id == actor.id, models.Group.is_active == True)
         .order_by(models.Group.name)
         .all()
     )
+    if not groups:
+        return {"teacher_id": actor.id, "teacher_name": actor.full_name or actor.username,
+                "month": sel_month, "year": sel_year, "total_groups": 0,
+                "total_students": 0, "total_salary": 0.0, "groups": []}
 
-    total_salary  = Decimal(0)
-    total_students = 0
-    groups_out = []
+    group_ids = [g.id for g in groups]
 
-    for g in groups:
-        stage      = g.stage or 'foundation'
-        total_less = schemas.STAGE_TOTAL_LESSONS.get(stage, 24)
-        completed  = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
-            models.Attendance.group_id == g.id
-        ).scalar() or 0
-        pct = round(completed / total_less * 100, 1) if total_less > 0 else 0.0
+    # Batch 1: all-time completed lessons per group (1 query)
+    comp_rows = (
+        db.query(models.Attendance.group_id,
+                 func.count(func.distinct(models.Attendance.lesson_date)).label('cnt'))
+        .filter(models.Attendance.group_id.in_(group_ids))
+        .group_by(models.Attendance.group_id)
+        .all()
+    )
+    completed_map = {r.group_id: r.cnt for r in comp_rows}
 
-        group_salary, student_salaries = _group_salary(db, g, sel_month, sel_year)
-
-        # lessons held this month
-        month_lessons = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
-            models.Attendance.group_id == g.id,
+    # Batch 2: this-month lessons per group (1 query)
+    mless_rows = (
+        db.query(models.Attendance.group_id,
+                 func.count(func.distinct(models.Attendance.lesson_date)).label('cnt'))
+        .filter(
+            models.Attendance.group_id.in_(group_ids),
             extract('month', models.Attendance.lesson_date) == sel_month,
             extract('year',  models.Attendance.lesson_date) == sel_year,
-        ).scalar() or 0
+        )
+        .group_by(models.Attendance.group_id)
+        .all()
+    )
+    month_lessons_map = {r.group_id: r.cnt for r in mless_rows}
+
+    # Batch 3: all attendance for salary (1 query)
+    att_rows = (
+        db.query(models.Attendance.group_id, models.Attendance.student_id,
+                 func.count(models.Attendance.id).label('cnt'))
+        .filter(
+            models.Attendance.group_id.in_(group_ids),
+            models.Attendance.is_present == True,
+            extract('month', models.Attendance.lesson_date) == sel_month,
+            extract('year',  models.Attendance.lesson_date) == sel_year,
+        )
+        .group_by(models.Attendance.group_id, models.Attendance.student_id)
+        .all()
+    )
+    # {group_id: {student_id: attended_count}}
+    att_map: dict = {}
+    for r in att_rows:
+        att_map.setdefault(r.group_id, {})[r.student_id] = r.cnt
+
+    # Batch 4: student names (1 query)
+    all_student_ids = [m.student_id for g in groups for m in g.members]
+    name_rows = (
+        db.query(models.Student.id, models.Student.full_name)
+        .filter(models.Student.id.in_(all_student_ids))
+        .all()
+    )
+    student_name_map = {r.id: r.full_name for r in name_rows}
+
+    total_salary   = Decimal(0)
+    total_students = 0
+    groups_out     = []
+
+    for g in groups:
+        stage     = g.stage or 'foundation'
+        total_less = schemas.STAGE_TOTAL_LESSONS.get(stage, 24)
+        completed  = completed_map.get(g.id, 0)
+        pct        = round(completed / total_less * 100, 1) if total_less > 0 else 0.0
+        pay_per    = Decimal(str(g.teacher_pay_per_student or 0))
+
+        group_salary    = Decimal(0)
+        student_salaries = []
+        g_att = att_map.get(g.id, {})
+
+        for mem in g.members:
+            attended = g_att.get(mem.student_id, 0)
+            share    = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
+            group_salary += share
+            student_salaries.append({
+                "student_id":   mem.student_id,
+                "student_name": student_name_map.get(mem.student_id, ""),
+                "attended":     attended,
+                "salary_share": float(share),
+            })
 
         total_salary   += group_salary
         total_students += len(g.members)
@@ -1101,7 +1251,7 @@ def teacher_my_dashboard(
             "progress_pct":            pct,
             "teacher_pay_per_student": float(pay_per),
             "month_salary":            float(group_salary),
-            "month_lessons_held":      month_lessons,
+            "month_lessons_held":      month_lessons_map.get(g.id, 0),
             "student_salaries":        student_salaries,
         })
 
@@ -1392,21 +1542,34 @@ def today_groups(
     ref_wd = ref_date.weekday()
     is_admin_or_metodist = actor.role in (UserRole.admin.value, UserRole.metodist.value)
 
-    q = db.query(models.Group).filter(models.Group.is_active == True)
+    q = (
+        db.query(models.Group)
+        .options(joinedload(models.Group.teacher), selectinload(models.Group.members))
+        .filter(models.Group.is_active == True)
+    )
     if not is_admin_or_metodist:
-        # Teacher: only their groups
         q = q.filter(models.Group.teacher_id == actor.id)
     groups = q.order_by(models.Group.name).all()
 
+    # Batch: barcha guruhlar uchun shu kunda davomat soni (1 query)
+    group_ids = [g.id for g in groups]
+    taken_rows = (
+        db.query(models.Attendance.group_id,
+                 func.count(models.Attendance.id).label('cnt'))
+        .filter(
+            models.Attendance.group_id.in_(group_ids),
+            models.Attendance.lesson_date == ref_date,
+        )
+        .group_by(models.Attendance.group_id)
+        .all()
+    )
+    taken_map = {r.group_id: r.cnt for r in taken_rows}
+
     result = []
     for g in groups:
-        # Teacher: filter by today's schedule; admin sees all
         if not is_admin_or_metodist and not _schedule_has_today(g.schedule, ref_wd):
             continue
-        taken = db.query(func.count(models.Attendance.id)).filter(
-            models.Attendance.group_id == g.id,
-            models.Attendance.lesson_date == ref_date,
-        ).scalar() or 0
+        taken = taken_map.get(g.id, 0)
         result.append({
             "id": g.id,
             "name": g.name,
