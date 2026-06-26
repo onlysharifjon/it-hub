@@ -37,7 +37,7 @@ def test_list_lessons_unauthenticated(client):
 # ── Create (metodist only) ────────────────────────────────────────────────────
 
 def test_create_lesson_as_metodist(client, metodist_token):
-    payload = {"month": 1, "week": 1, "lesson_number": 10, "title": "Yangi dars"}
+    payload = {"category": "foundation", "lesson_number": 10, "title": "Yangi dars"}
     res = client.post("/lessons", json=payload, headers=auth(metodist_token))
     assert res.status_code == 201
     data = res.json()
@@ -46,13 +46,13 @@ def test_create_lesson_as_metodist(client, metodist_token):
 
 
 def test_create_lesson_as_teacher_forbidden(client, teacher_token):
-    payload = {"month": 1, "week": 1, "lesson_number": 10, "title": "Yangi dars"}
+    payload = {"category": "foundation", "lesson_number": 10, "title": "Yangi dars"}
     res = client.post("/lessons", json=payload, headers=auth(teacher_token))
     assert res.status_code == 403
 
 
 def test_create_lesson_duplicate_number(client, metodist_token, sample_lesson):
-    payload = {"month": 1, "week": 1, "lesson_number": 1, "title": "Takroriy"}
+    payload = {"category": "foundation", "lesson_number": 1, "title": "Takroriy"}
     res = client.post("/lessons", json=payload, headers=auth(metodist_token))
     assert res.status_code == 400
 

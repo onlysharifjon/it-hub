@@ -63,10 +63,9 @@ def _create_user(db, username: str, password: str, role: UserRole) -> User:
     return user
 
 
-def _create_lesson(db, lesson_number: int = 1, month: int = 1, week: int = 1) -> Lesson:
+def _create_lesson(db, lesson_number: int = 1, category: str = 'foundation') -> Lesson:
     lesson = Lesson(
-        month=month,
-        week=week,
+        category=category,
         lesson_number=lesson_number,
         title=f"Test dars {lesson_number}",
     )
