@@ -6,10 +6,11 @@ from typing import List, Optional
 import io
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 import bcrypt as _bcrypt
 from jose import JWTError, jwt
 from sqlalchemy import func, extract
@@ -28,17 +29,23 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost
 
 auth_scheme = HTTPBearer(auto_error=False)
 
+UPLOAD_DIR = "/app/uploads"
+AVATARS_DIR = f"{UPLOAD_DIR}/avatars"
+os.makedirs(AVATARS_DIR, exist_ok=True)
+
 app = FastAPI(title="IT Hub — LMS API", version="3.0.0")
 
 # ── Default users ──────────────────────────────────────────────────────────────
 
 DEFAULT_USERS = [
-    {"username": "admin",     "password": "Admin@2026",     "role": UserRole.admin.value,    "full_name": "Administrator"},
-    {"username": "dev",       "password": "Dev@2026",       "role": UserRole.admin.value,    "full_name": "Developer"},
-    {"username": "metodist",  "password": "Metodist@2026",  "role": UserRole.metodist.value, "full_name": "Metodist"},
-    {"username": "teacher1",  "password": "Teacher@2026",   "role": UserRole.teacher.value,  "full_name": "Sarvar Toshmatov"},
-    {"username": "teacher2",  "password": "Teacher@2026",   "role": UserRole.teacher.value,  "full_name": "Malika Yusupova"},
-    {"username": "teacher3",  "password": "Teacher@2026",   "role": UserRole.teacher.value,  "full_name": "Jasur Rahimov"},
+    {"username": "admin",       "password": "Admin@2026",      "role": UserRole.admin.value,       "full_name": "Administrator"},
+    {"username": "dev",         "password": "Dev@2026",        "role": UserRole.admin.value,       "full_name": "Developer"},
+    {"username": "metodist",    "password": "Metodist@2026",   "role": UserRole.metodist.value,    "full_name": "Metodist"},
+    {"username": "teacher1",    "password": "Teacher@2026",    "role": UserRole.teacher.value,     "full_name": "Sarvar Toshmatov"},
+    {"username": "teacher2",    "password": "Teacher@2026",    "role": UserRole.teacher.value,     "full_name": "Malika Yusupova"},
+    {"username": "teacher3",    "password": "Teacher@2026",    "role": UserRole.teacher.value,     "full_name": "Jasur Rahimov"},
+    {"username": "hunter1",     "password": "Hunter@2026",     "role": UserRole.hunter.value,      "full_name": "Hunter 1"},
+    {"username": "callcenter1", "password": "CallCenter@2026", "role": UserRole.call_center.value, "full_name": "Call Center 1"},
 ]
 
 
@@ -72,6 +79,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -131,6 +140,34 @@ def require_metodist(user: models.User = Depends(require_auth)) -> models.User:
 def require_admin(user: models.User = Depends(require_auth)) -> models.User:
     if user.role != UserRole.admin.value:
         raise HTTPException(status_code=403, detail="Bu amal faqat admin uchun")
+    return user
+
+
+def require_hunter(user: models.User = Depends(require_auth)) -> models.User:
+    if user.role not in (UserRole.hunter.value, UserRole.admin.value):
+        raise HTTPException(status_code=403, detail="Bu amal faqat hunter/admin uchun")
+    return user
+
+
+def require_call_center(user: models.User = Depends(require_auth)) -> models.User:
+    if user.role not in (UserRole.call_center.value, UserRole.admin.value):
+        raise HTTPException(status_code=403, detail="Bu amal faqat call_center/admin uchun")
+    return user
+
+
+def require_crm_access(user: models.User = Depends(require_auth)) -> models.User:
+    """Hunter, Call center va admin lidlarga kirishi mumkin."""
+    allowed = (UserRole.hunter.value, UserRole.call_center.value, UserRole.admin.value)
+    if user.role not in allowed:
+        raise HTTPException(status_code=403, detail="Ruxsat yo'q")
+    return user
+
+
+def require_lms_write(user: models.User = Depends(require_auth)) -> models.User:
+    """Metodist, Hunter va admin — talabalar va guruhlar bilan ishlash."""
+    allowed = (UserRole.metodist.value, UserRole.hunter.value, UserRole.admin.value)
+    if user.role not in allowed:
+        raise HTTPException(status_code=403, detail="Ruxsat yo'q")
     return user
 
 
@@ -223,6 +260,36 @@ def login(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
 
 @app.get("/auth/me", response_model=schemas.UserRead)
 def me(user: models.User = Depends(require_auth)):
+    return user
+
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_AVATAR_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+@app.post("/me/avatar", response_model=schemas.UserRead)
+async def upload_avatar(
+    file: UploadFile = File(...),
+    user: models.User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(400, "Faqat JPEG, PNG, WebP yoki GIF rasm yuklash mumkin")
+
+    contents = await file.read()
+    if len(contents) > MAX_AVATAR_BYTES:
+        raise HTTPException(400, "Fayl hajmi 5 MB dan oshmasin")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
+    filename = f"{user.id}.{ext}"
+    filepath = os.path.join(AVATARS_DIR, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(contents)
+
+    user.avatar = f"avatars/{filename}"
+    db.commit()
+    db.refresh(user)
     return user
 
 
@@ -496,6 +563,45 @@ def delete_tariff(tariff_id: int, db: Session = Depends(get_db), actor: models.U
     db.commit()
 
 
+# ── Courses endpoints ─────────────────────────────────────────────────────────
+
+@app.get("/courses", response_model=List[schemas.CourseRead])
+def list_courses(db: Session = Depends(get_db), _: models.User = Depends(require_auth)):
+    return db.query(models.Course).order_by(models.Course.name).all()
+
+
+@app.post("/courses", response_model=schemas.CourseRead, status_code=201)
+def create_course(payload: schemas.CourseCreate, db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
+    c = models.Course(**payload.dict())
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return c
+
+
+@app.put("/courses/{course_id}", response_model=schemas.CourseRead)
+def update_course(course_id: int, payload: schemas.CourseUpdate, db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
+    c = db.query(models.Course).filter(models.Course.id == course_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Kurs topilmadi")
+    for k, v in payload.dict(exclude_unset=True).items():
+        setattr(c, k, v)
+    db.commit()
+    db.refresh(c)
+    return c
+
+
+@app.delete("/courses/{course_id}", status_code=204)
+def delete_course(course_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
+    c = db.query(models.Course).filter(models.Course.id == course_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Kurs topilmadi")
+    if db.query(models.Group).filter(models.Group.course_id == course_id).first():
+        raise HTTPException(status_code=400, detail="Bu kursga bog'liq guruhlar mavjud")
+    db.delete(c)
+    db.commit()
+
+
 # ── Students endpoints ────────────────────────────────────────────────────────
 
 def _student_read(s: models.Student) -> schemas.StudentRead:
@@ -519,7 +625,7 @@ def list_students(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_metodist),
+    _: models.User = Depends(require_lms_write),
 ):
     q = db.query(models.Student)
     # by default exclude archived unless explicitly requested
@@ -554,7 +660,7 @@ def list_students(
 
 
 @app.get("/students/{student_id}", response_model=schemas.StudentRead)
-def get_student(student_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
+def get_student(student_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_lms_write)):
     s = db.query(models.Student).filter(models.Student.id == student_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
@@ -562,7 +668,7 @@ def get_student(student_id: int, db: Session = Depends(get_db), _: models.User =
 
 
 @app.post("/students", response_model=schemas.StudentRead, status_code=201)
-def create_student(payload: schemas.StudentCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
+def create_student(payload: schemas.StudentCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     s = models.Student(**payload.dict())
     db.add(s)
     db.flush()
@@ -574,7 +680,7 @@ def create_student(payload: schemas.StudentCreate, db: Session = Depends(get_db)
 
 
 @app.put("/students/{student_id}", response_model=schemas.StudentRead)
-def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
+def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     s = db.query(models.Student).filter(models.Student.id == student_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
@@ -587,7 +693,7 @@ def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session 
 
 
 @app.post("/students/{student_id}/archive", response_model=schemas.StudentRead)
-def archive_student(student_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
+def archive_student(student_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     s = db.query(models.Student).filter(models.Student.id == student_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
@@ -602,7 +708,7 @@ def archive_student(student_id: int, db: Session = Depends(get_db), actor: model
 
 
 @app.post("/students/{student_id}/unarchive", response_model=schemas.StudentRead)
-def unarchive_student(student_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
+def unarchive_student(student_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     s = db.query(models.Student).filter(models.Student.id == student_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
@@ -620,7 +726,7 @@ def unarchive_student(student_id: int, db: Session = Depends(get_db), actor: mod
 
 def _group_read(g: models.Group, db: Session = None) -> schemas.GroupRead:
     stage = g.stage or 'foundation'
-    total = schemas.STAGE_TOTAL_LESSONS.get(stage, 24)
+    total = g.course.total_lessons if g.course else schemas.STAGE_TOTAL_LESSONS.get(stage, 24)
     completed = 0
     if db is not None:
         completed = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
@@ -629,7 +735,9 @@ def _group_read(g: models.Group, db: Session = None) -> schemas.GroupRead:
     remaining = max(0, total - completed)
     pct = round(completed / total * 100, 1) if total > 0 else 0.0
     return schemas.GroupRead(
-        id=g.id, name=g.name, stage=stage, teacher_id=g.teacher_id,
+        id=g.id, name=g.name, stage=stage,
+        course_id=g.course_id, course_name=g.course.name if g.course else None,
+        teacher_id=g.teacher_id,
         teacher_name=g.teacher.full_name or g.teacher.username if g.teacher else None,
         course_price=g.course_price, schedule=g.schedule,
         start_date=g.start_date, is_active=g.is_active,
@@ -664,7 +772,7 @@ def list_groups(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_metodist),
+    _: models.User = Depends(require_lms_write),
 ):
     q = db.query(models.Group)
     if is_active is not None:
@@ -679,6 +787,7 @@ def list_groups(
     groups = (
         q.options(
             joinedload(models.Group.teacher),
+            joinedload(models.Group.course),
             selectinload(models.Group.members),
         )
         .order_by(models.Group.name)
@@ -703,6 +812,7 @@ def get_group(group_id: int, db: Session = Depends(get_db), actor: models.User =
         db.query(models.Group)
         .options(
             joinedload(models.Group.teacher),
+            joinedload(models.Group.course),
             selectinload(models.Group.members).joinedload(models.GroupStudent.student),
             selectinload(models.Group.members).joinedload(models.GroupStudent.tariff),
         )
@@ -718,7 +828,7 @@ def get_group(group_id: int, db: Session = Depends(get_db), actor: models.User =
 
 
 @app.post("/groups", response_model=schemas.GroupRead, status_code=201)
-def create_group(payload: schemas.GroupCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
+def create_group(payload: schemas.GroupCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     data = payload.dict()
     data.setdefault('stage', 'foundation')
     g = models.Group(**data)
@@ -732,7 +842,7 @@ def create_group(payload: schemas.GroupCreate, db: Session = Depends(get_db), ac
 
 
 @app.put("/groups/{group_id}", response_model=schemas.GroupRead)
-def update_group(group_id: int, payload: schemas.GroupUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
+def update_group(group_id: int, payload: schemas.GroupUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     g = db.query(models.Group).filter(models.Group.id == group_id).first()
     if not g:
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
@@ -753,7 +863,7 @@ def delete_group(group_id: int, db: Session = Depends(get_db), actor: models.Use
 
 
 @app.post("/groups/{group_id}/students", status_code=201)
-def add_student_to_group(group_id: int, payload: schemas.AddStudentToGroup, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
+def add_student_to_group(group_id: int, payload: schemas.AddStudentToGroup, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     g = db.query(models.Group).filter(models.Group.id == group_id).first()
     if not g:
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
@@ -785,7 +895,7 @@ def add_student_to_group(group_id: int, payload: schemas.AddStudentToGroup, db: 
 
 
 @app.delete("/groups/{group_id}/students/{student_id}", status_code=204)
-def remove_student_from_group(group_id: int, student_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
+def remove_student_from_group(group_id: int, student_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     gs = db.query(models.GroupStudent).filter(
         models.GroupStudent.group_id == group_id,
         models.GroupStudent.student_id == student_id
@@ -1834,3 +1944,108 @@ def delete_attendance_date(
     ).delete()
     db.commit()
     return {"deleted": True, "date": lesson_date}
+
+
+# ═══════════════════════════════════════════════════════
+#  LEADS  (Hunter & Call Center CRM)
+# ═══════════════════════════════════════════════════════
+
+def _lead_read(lead: models.Lead) -> schemas.LeadRead:
+    return schemas.LeadRead(
+        id=lead.id,
+        full_name=lead.full_name,
+        phone=lead.phone,
+        course_interest=lead.course_interest,
+        status=lead.status,
+        callback_at=lead.callback_at,
+        notes=lead.notes,
+        created_by_id=lead.created_by_id,
+        created_by_name=lead.created_by.full_name or lead.created_by.username if lead.created_by else None,
+        updated_by_name=lead.updated_by.full_name or lead.updated_by.username if lead.updated_by else None,
+        created_at=lead.created_at,
+        updated_at=lead.updated_at,
+    )
+
+
+@app.get("/leads", response_model=List[schemas.LeadRead])
+def list_leads(
+    status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.Lead).options(
+        joinedload(models.Lead.created_by),
+        joinedload(models.Lead.updated_by),
+    )
+    # Hunter faqat o'z lidlarini ko'radi
+    if actor.role == UserRole.hunter.value:
+        q = q.filter(models.Lead.created_by_id == actor.id)
+    if status:
+        q = q.filter(models.Lead.status == status)
+    if search:
+        q = q.filter(
+            models.Lead.full_name.ilike(f"%{search}%") |
+            models.Lead.phone.ilike(f"%{search}%")
+        )
+    leads = q.order_by(models.Lead.created_at.desc()).all()
+    return [_lead_read(l) for l in leads]
+
+
+@app.post("/leads", response_model=schemas.LeadRead, status_code=201)
+def create_lead(
+    payload: schemas.LeadCreate,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    lead = models.Lead(
+        **payload.dict(),
+        status=models.LeadStatus.new.value,
+        created_by_id=actor.id,
+        created_at=datetime.utcnow(),
+    )
+    db.add(lead)
+    db.commit()
+    db.refresh(lead)
+    db.refresh(lead, attribute_names=["created_by", "updated_by"])
+    return _lead_read(lead)
+
+
+@app.patch("/leads/{lead_id}/status", response_model=schemas.LeadRead)
+def update_lead_status(
+    lead_id: int,
+    payload: schemas.LeadStatusUpdate,
+    actor: models.User = Depends(require_call_center),
+    db: Session = Depends(get_db),
+):
+    lead = db.query(models.Lead).options(
+        joinedload(models.Lead.created_by),
+        joinedload(models.Lead.updated_by),
+    ).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    lead.status = payload.status.value
+    lead.callback_at = payload.callback_at
+    if payload.notes is not None:
+        lead.notes = payload.notes
+    lead.updated_by_id = actor.id
+    lead.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(lead)
+    db.refresh(lead, attribute_names=["created_by", "updated_by"])
+    return _lead_read(lead)
+
+
+@app.delete("/leads/{lead_id}", status_code=204)
+def delete_lead(
+    lead_id: int,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    if actor.role == UserRole.hunter.value and lead.created_by_id != actor.id:
+        raise HTTPException(403, "Faqat o'z lidingizni o'chira olasiz")
+    db.delete(lead)
+    db.commit()

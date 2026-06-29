@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Toaster } from 'react-hot-toast'
+import MinaretLogo from './components/MinaretLogo'
+import MinarWatermark from './components/MinarWatermark'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars } from '@fortawesome/free-solid-svg-icons'
+import { ThemeProvider } from './ThemeContext'
 import Sidebar from './components/Sidebar'
 import Login from './components/Login'
 import Lessons from './components/Lessons'
@@ -11,12 +14,14 @@ import GroupDetail from './components/GroupDetail'
 import Payments from './components/Payments'
 import Dashboard from './components/Dashboard'
 import Tariffs from './components/Tariffs'
+import Courses from './components/Courses'
 import Finance from './components/Finance'
 import TodayAttendance from './components/TodayAttendance'
 import Users from './components/Users'
 import TeacherSalaries from './components/TeacherSalaries'
 import TeacherDashboard from './components/TeacherDashboard'
 import Expenses from './components/Expenses'
+import Leads from './components/Leads'
 import { fetchMe, login as apiLogin, setToken } from './api'
 
 function readHash() {
@@ -78,14 +83,17 @@ function App() {
 
   if (!isAuthed) {
     return (
-      <div className="app-shell login-mode">
-        <Toaster position="top-right" />
-        <Login onSuccess={handleLogin} />
-      </div>
+      <ThemeProvider>
+        <div className="app-shell login-mode">
+          <Toaster position="top-right" />
+          <Login onSuccess={handleLogin} />
+        </div>
+      </ThemeProvider>
     )
   }
 
   return (
+    <ThemeProvider>
     <div className="app-shell">
       <Toaster position="top-right" />
 
@@ -95,6 +103,7 @@ function App() {
         selectedCategory={selectedCategory}
         onSelectCategory={setSelectedCategory}
         currentUser={currentUser}
+        onAvatarUpdate={setCurrentUser}
         onLogout={handleLogout}
         activePage={activePage}
         onNavigate={handleNavigate}
@@ -102,11 +111,14 @@ function App() {
       />
 
       <main className="content">
+        <div className="content-watermark">
+          <MinarWatermark size={380} />
+        </div>
         <div className="mobile-topbar">
           <button className="menu-toggle" onClick={() => setSidebarOpen(o => !o)} aria-label="Menu">
             <FontAwesomeIcon icon={faBars} />
           </button>
-          <span className="mobile-brand">IT Hub LMS</span>
+          <span className="mobile-brand">Minar LMS</span>
         </div>
 
         <div className="page-anim" key={activePage}>
@@ -138,6 +150,7 @@ function App() {
           {activePage === 'teacher_salaries' && <TeacherSalaries />}
           {activePage === 'expenses' && <Expenses />}
           {activePage === 'tariffs' && <Tariffs />}
+          {activePage === 'courses' && <Courses />}
           {activePage === 'finance' && <Finance />}
           {activePage === 'teacher_dashboard' && (
             <TeacherDashboard currentUser={currentUser} onOpenGroup={g => {
@@ -155,10 +168,12 @@ function App() {
               setActivePage('group_detail')
             }} />
           )}
+          {activePage === 'leads' && <Leads currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
         </div>
       </main>
     </div>
+    </ThemeProvider>
   )
 }
 

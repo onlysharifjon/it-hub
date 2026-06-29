@@ -4,7 +4,7 @@ from typing import Optional, List
 
 from pydantic import BaseModel, Field
 
-from .models import UserRole
+from .models import UserRole, LeadStatus
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -27,6 +27,7 @@ class UserRead(BaseModel):
     full_name: Optional[str] = None
     role: UserRole
     is_active: bool
+    avatar: Optional[str] = None
     blocked_reason:  Optional[str] = None
     blocked_contact: Optional[str] = None
     blocked_at:      Optional[datetime] = None
@@ -53,6 +54,39 @@ class UserUpdate(BaseModel):
     expires_at:      Optional[datetime] = None
     blocked_reason:  Optional[str]      = None
     blocked_contact: Optional[str]      = None
+
+
+# ── Leads ─────────────────────────────────────────────────────────────────────
+
+class LeadCreate(BaseModel):
+    full_name:       str            = Field(..., min_length=2, max_length=200)
+    phone:           str            = Field(..., min_length=7, max_length=30)
+    course_interest: Optional[str]  = None
+    notes:           Optional[str]  = None
+
+
+class LeadStatusUpdate(BaseModel):
+    status:      LeadStatus
+    callback_at: Optional[datetime] = None
+    notes:       Optional[str]      = None
+
+
+class LeadRead(BaseModel):
+    id:              int
+    full_name:       str
+    phone:           str
+    course_interest: Optional[str]      = None
+    status:          LeadStatus
+    callback_at:     Optional[datetime] = None
+    notes:           Optional[str]      = None
+    created_by_id:   int
+    created_by_name: Optional[str]      = None
+    updated_by_name: Optional[str]      = None
+    created_at:      datetime
+    updated_at:      Optional[datetime] = None
+
+    class Config:
+        orm_mode = True
 
 
 class BlockUserRequest(BaseModel):
@@ -140,6 +174,36 @@ class AuditLogRead(BaseModel):
 
 
 # ── Students ──────────────────────────────────────────────────────────────────
+
+# ── Courses ───────────────────────────────────────────────────────────────────
+
+class CourseRead(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    total_lessons: int
+    duration_months: Optional[int] = None
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class CourseCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=200)
+    description: Optional[str] = None
+    total_lessons: int = Field(..., ge=1)
+    duration_months: Optional[int] = Field(None, ge=1)
+
+
+class CourseUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=200)
+    description: Optional[str] = None
+    total_lessons: Optional[int] = Field(None, ge=1)
+    duration_months: Optional[int] = Field(None, ge=1)
+    is_active: Optional[bool] = None
+
 
 # ── Tariffs ───────────────────────────────────────────────────────────────────
 
@@ -237,6 +301,8 @@ class GroupRead(BaseModel):
     id: int
     name: str
     stage: str = 'foundation'
+    course_id: Optional[int] = None
+    course_name: Optional[str] = None
     teacher_id: Optional[int] = None
     teacher_name: Optional[str] = None
     course_price: Decimal
@@ -262,6 +328,7 @@ class GroupDetail(GroupRead):
 class GroupCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)
     stage: str = Field('foundation')
+    course_id: Optional[int] = None
     teacher_id: Optional[int] = None
     course_price: Decimal = Field(..., ge=0)
     teacher_pay_per_student: Decimal = Field(Decimal('0'), ge=0)
@@ -272,6 +339,7 @@ class GroupCreate(BaseModel):
 class GroupUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=200)
     stage: Optional[str] = None
+    course_id: Optional[int] = None
     teacher_id: Optional[int] = None
     course_price: Optional[Decimal] = Field(None, ge=0)
     teacher_pay_per_student: Optional[Decimal] = Field(None, ge=0)

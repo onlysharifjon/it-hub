@@ -37,6 +37,23 @@ export async function login(username, password) {
 
 export async function fetchMe() { return request('/auth/me') }
 
+export async function uploadAvatar(file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE}/me/avatar`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(typeof err.detail === 'string' ? err.detail : 'Yuklash xatosi')
+  }
+  return res.json()
+}
+
+export { API_BASE }
+
 // ── Lessons ───────────────────────────────────────────────────────────────────
 
 export async function fetchLessons(category) {
@@ -47,6 +64,18 @@ export async function createLesson(p)        { return request('/lessons', { meth
 export async function updateLesson(id, p)    { return request(`/lessons/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deleteLesson(id)       { return request(`/lessons/${id}`, { method: 'DELETE' }) }
 export async function reorderLessons(items)  { return request('/lessons/reorder', { method: 'PUT', body: JSON.stringify({ items }) }) }
+
+// ── Leads ─────────────────────────────────────────────────────────────────────
+
+export async function fetchLeads(params = {}) {
+  const q = new URLSearchParams()
+  if (params.search) q.set('search', params.search)
+  if (params.status) q.set('status', params.status)
+  return request(`/leads${q.toString() ? '?' + q : ''}`)
+}
+export async function createLead(p)                    { return request('/leads', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateLeadStatus(id, p)          { return request(`/leads/${id}/status`, { method: 'PATCH', body: JSON.stringify(p) }) }
+export async function deleteLead(id)                   { return request(`/leads/${id}`, { method: 'DELETE' }) }
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
@@ -151,6 +180,13 @@ export async function saveAttendance(groupId, lessonDate, records) {
 export async function deleteAttendanceDate(groupId, lessonDate) {
   return request(`/groups/${groupId}/attendance/${lessonDate}`, { method: 'DELETE' })
 }
+
+// ── Courses ───────────────────────────────────────────────────────────────────
+
+export async function fetchCourses()        { return request('/courses') }
+export async function createCourse(p)       { return request('/courses', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateCourse(id, p)   { return request(`/courses/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
+export async function deleteCourse(id)      { return request(`/courses/${id}`, { method: 'DELETE' }) }
 
 // ── Tariffs ───────────────────────────────────────────────────────────────────
 

@@ -18,6 +18,9 @@ RUN poetry config virtualenvs.create false \
     && PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \
        poetry install --no-interaction --no-root --without dev
 
+# Extra deps not tracked in poetry.lock
+RUN pip install --no-cache-dir python-multipart==0.0.9
+
 # Copy source code
 COPY . .
 

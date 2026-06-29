@@ -165,10 +165,9 @@ export default function Students() {
             onChange={handleSearch}
           />
         </div>
-        {meta && <span className="muted">Jami: {meta.total} ta talaba</span>}
-      </div>
-      <div className="toolbar">
+        <span style={{ flex: 1 }} />
         <DateFilter value={dateFilter} onChange={handleDateFilter} />
+        {meta && <span className="toolbar-count">Jami: <strong>{meta.total}</strong> ta talaba</span>}
       </div>
 
       {loading ? (

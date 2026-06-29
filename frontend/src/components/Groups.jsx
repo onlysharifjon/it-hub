@@ -8,12 +8,12 @@ import {
 import {
   fetchGroups, createGroup, updateGroup,
   getGroup, addStudentToGroup, removeStudentFromGroup,
-  fetchStudents, fetchUsers, fetchTariffs,
+  fetchStudents, fetchUsers, fetchTariffs, fetchCourses,
 } from '../api'
 import DateFilter from './DateFilter'
 import Pagination from './Pagination'
 
-const EMPTY_GROUP = { name: '', stage: 'foundation', teacher_id: '', course_price: '', teacher_pay_per_student: '', schedule: '', start_date: '' }
+const EMPTY_GROUP = { name: '', course_id: '', stage: 'foundation', teacher_id: '', course_price: '', teacher_pay_per_student: '', schedule: '', start_date: '' }
 
 const STAGE_COLORS = {
   foundation: { bg: '#eff6ff', color: '#1d4ed8', bar: '#3b82f6' },
@@ -36,12 +36,14 @@ export default function Groups({ onOpenGroup }) {
   const [addStudentId, setAddStudentId] = useState('')
   const [addTariffId, setAddTariffId] = useState('')
   const [tariffs, setTariffs] = useState([])
+  const [courses, setCourses] = useState([])
 
   useEffect(() => {
     load(dateFilter, page)
     fetchUsers().then(r => setTeachers((r.items || r).filter(u => u.role === 'teacher' || u.role === 'metodist')))
     fetchStudents({ is_active: true, page_size: 100 }).then(r => setAllStudents(r.items || []))
     fetchTariffs().then(r => setTariffs(r || []))
+    fetchCourses().then(r => setCourses(r || []))
   }, [])
 
   async function load(df = dateFilter, p = page) {
@@ -77,7 +79,8 @@ export default function Groups({ onOpenGroup }) {
   function openAdd() { setForm(EMPTY_GROUP); setModal('add') }
   function openEdit(g) {
     setForm({
-      name: g.name, stage: g.stage || 'foundation', teacher_id: g.teacher_id || '',
+      name: g.name, course_id: g.course_id || '', stage: g.stage || 'foundation',
+      teacher_id: g.teacher_id || '',
       course_price: g.course_price, teacher_pay_per_student: g.teacher_pay_per_student || '',
       schedule: g.schedule || '',
       start_date: g.start_date ? g.start_date.slice(0, 10) : '',
@@ -87,9 +90,11 @@ export default function Groups({ onOpenGroup }) {
 
   async function handleSave() {
     if (!form.name.trim()) return toast.error("Guruh nomi majburiy")
+    if (!form.course_id) return toast.error("Kursni tanlang")
     setSaving(true)
     const payload = {
       name: form.name,
+      course_id: parseInt(form.course_id),
       stage: form.stage || 'foundation',
       teacher_id: form.teacher_id ? parseInt(form.teacher_id) : null,
       course_price: parseFloat(form.course_price) || 0,
@@ -174,7 +179,7 @@ export default function Groups({ onOpenGroup }) {
                         color: STAGE_COLORS[g.stage || 'foundation'].color,
                       }}
                     >
-                      {STAGE_LABELS[g.stage || 'foundation']}
+                      {g.course_name || STAGE_LABELS[g.stage || 'foundation']}
                     </span>
                     <span className={`status-badge ${g.is_active ? 'active' : 'inactive'}`}>
                       {g.is_active ? 'Faol' : 'Yopiq'}
@@ -252,11 +257,14 @@ export default function Groups({ onOpenGroup }) {
             <div className="modal-body">
               <label>Guruh nomi *</label>
               <input className="field" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Masalan: Python 1-guruh" />
-              <label>Bosqich (Stage)</label>
-              <select className="field" value={form.stage} onChange={e => setForm(p => ({ ...p, stage: e.target.value }))}>
-                <option value="foundation">Foundation (2 oy — 24 dars)</option>
-                <option value="frontend">Frontend (6 oy — 72 dars)</option>
-                <option value="backend">Backend (9 oy — 108 dars)</option>
+              <label>Kurs *</label>
+              <select className="field" value={form.course_id} onChange={e => setForm(p => ({ ...p, course_id: e.target.value }))}>
+                <option value="">— Kursni tanlang —</option>
+                {courses.filter(c => c.is_active).map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.duration_months ? ` (${c.duration_months} oy` : ''}{c.duration_months ? `, ${c.total_lessons} dars)` : ` — ${c.total_lessons} dars`}
+                  </option>
+                ))}
               </select>
               <label>Ustoz</label>
               <select className="field" value={form.teacher_id} onChange={e => setForm(p => ({ ...p, teacher_id: e.target.value }))}>

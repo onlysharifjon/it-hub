@@ -8,9 +8,20 @@ from .database import Base
 
 
 class UserRole(str, enum.Enum):
-    admin = "admin"        # superadmin — to'liq nazorat + daromad statistika
-    metodist = "metodist"  # metodist   — dars CRUD + talabalar/guruhlar
-    teacher = "teacher"    # o'qituvchi  — faqat metodika ko'rish
+    admin       = "admin"        # superadmin — to'liq nazorat + daromad statistika
+    metodist    = "metodist"     # metodist   — dars CRUD + talabalar/guruhlar
+    teacher     = "teacher"      # o'qituvchi  — faqat metodika ko'rish
+    call_center = "call_center"  # call center — lidlar holati + talabalar/guruhlar
+    hunter      = "hunter"       # hunter     — lid qo'shish + talabalar/guruhlar
+
+
+class LeadStatus(str, enum.Enum):
+    new       = "new"        # Yangi lid
+    called    = "called"     # Qo'ng'iroq qilindi
+    will_come = "will_come"  # Keladi (vaqt belgilangan)
+    rejected  = "rejected"   # Rad etildi
+    callback  = "callback"   # Qayta qo'ng'iroq (1 soatdan keyin)
+    enrolled  = "enrolled"   # Talabaga o'tkazildi
 
 
 class User(Base):
@@ -22,6 +33,7 @@ class User(Base):
     full_name = Column(String(200), nullable=True)
     role = Column(String(20), nullable=False, default=UserRole.teacher.value)
     is_active = Column(Boolean, nullable=False, default=True)
+    avatar = Column(String(500), nullable=True)
     # Block & expiry
     blocked_reason  = Column(Text, nullable=True)         # sabab matni
     blocked_contact = Column(String(300), nullable=True)  # bog'lanish ma'lumoti
@@ -74,6 +86,20 @@ class AuditLog(Base):
 
 # ── LMS Modellari ─────────────────────────────────────────────────────────────
 
+class Course(Base):
+    __tablename__ = "courses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    total_lessons = Column(Integer, nullable=False, default=24)
+    duration_months = Column(Integer, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    groups = relationship("Group", back_populates="course")
+
+
 class Tariff(Base):
     __tablename__ = "tariffs"
 
@@ -118,6 +144,7 @@ class Group(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False)
     stage = Column(String(20), nullable=False, default='foundation')  # foundation | frontend | backend
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=True)
     teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     course_price = Column(Numeric(12, 2), nullable=False, default=0)
     teacher_pay_per_student = Column(Numeric(12, 2), nullable=False, default=0)
@@ -126,6 +153,7 @@ class Group(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
+    course = relationship("Course", back_populates="groups")
     teacher = relationship("User", back_populates="teaching_groups")
     members = relationship("GroupStudent", back_populates="group")
     payments = relationship("Payment", back_populates="group")
@@ -185,3 +213,22 @@ class Attendance(Base):
 
     group = relationship("Group")
     student = relationship("Student")
+
+
+class Lead(Base):
+    __tablename__ = "leads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    full_name = Column(String(200), nullable=False)
+    phone = Column(String(30), nullable=False)
+    course_interest = Column(String(100), nullable=True)   # foundation/frontend/backend
+    status = Column(String(30), nullable=False, default=LeadStatus.new.value, index=True)
+    callback_at = Column(DateTime, nullable=True)          # will_come yoki callback holati uchun
+    notes = Column(Text, nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=True)
+
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
