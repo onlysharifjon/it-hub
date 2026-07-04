@@ -1,7 +1,8 @@
 # Desktop shortcut yaratish — Minar Camera uchun
 # Ishga tushirish: PowerShell -ExecutionPolicy Bypass -File create_shortcut.ps1
 
-$CameraDir = $PSScriptRoot
+$CameraDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $CameraDir) { $CameraDir = "C:\Users\Administrator\it-hub\camera" }
 $BatFile   = Join-Path $CameraDir "start_camera.bat"
 $IconFile  = Join-Path $CameraDir "icons\minar.ico"
 $Desktop   = [Environment]::GetFolderPath("Desktop")

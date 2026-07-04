@@ -2,8 +2,10 @@
 title Minar Camera Attendance
 cd /d "%~dp0"
 
-if not exist venv\Scripts\python.exe (
-    echo [XATO] Virtual muhit topilmadi.
+set CONDA_PYTHON=%USERPROFILE%\miniconda3\envs\minar\python.exe
+
+if not exist "%CONDA_PYTHON%" (
+    echo [XATO] Conda "minar" muhiti topilmadi.
     echo Birinchi setup.bat ni ishga tushiring.
     pause
     exit /b 1
@@ -19,8 +21,7 @@ if not exist .env (
 :restart
 echo.
 echo [%time%] Minar Camera servisi ishga tushmoqda...
-call venv\Scripts\activate.bat
-python service.py
+"%CONDA_PYTHON%" service.py
 echo.
 echo [%time%] Servis to'xtadi. 5 soniyadan keyin qayta ishga tushadi...
 timeout /t 5 /nobreak >nul
