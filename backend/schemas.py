@@ -205,6 +205,33 @@ class CourseUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
+# ── Discounts ─────────────────────────────────────────────────────────────────
+
+class DiscountRead(BaseModel):
+    id: int
+    name: str
+    discount_type: str
+    value: Decimal
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class DiscountCreate(BaseModel):
+    name: str = Field(..., min_length=2, max_length=200)
+    discount_type: str = Field('percent')   # 'percent' | 'fixed'
+    value: Decimal = Field(..., ge=0)
+
+
+class DiscountUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=2, max_length=200)
+    discount_type: Optional[str] = None
+    value: Optional[Decimal] = Field(None, ge=0)
+    is_active: Optional[bool] = None
+
+
 # ── Tariffs ───────────────────────────────────────────────────────────────────
 
 class TariffRead(BaseModel):
@@ -288,6 +315,11 @@ class GroupStudentRead(BaseModel):
     tariff_id: Optional[int] = None
     tariff_name: Optional[str] = None
     tariff_price: Optional[Decimal] = None
+    discount_id: Optional[int] = None
+    discount_name: Optional[str] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[Decimal] = None
+    effective_price: Optional[Decimal] = None
 
     class Config:
         orm_mode = True
@@ -351,6 +383,10 @@ class GroupUpdate(BaseModel):
 class AddStudentToGroup(BaseModel):
     student_id: int
     tariff_id: Optional[int] = None
+
+
+class ApplyDiscountPayload(BaseModel):
+    discount_id: Optional[int] = None
 
 
 # ── Payments ──────────────────────────────────────────────────────────────────

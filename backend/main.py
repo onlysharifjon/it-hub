@@ -529,12 +529,12 @@ def lesson_audit_logs(lesson_id: int, db: Session = Depends(get_db), _: models.U
 # ── Tariffs endpoints ─────────────────────────────────────────────────────────
 
 @app.get("/tariffs", response_model=List[schemas.TariffRead])
-def list_tariffs(db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
+def list_tariffs(db: Session = Depends(get_db), _: models.User = Depends(require_auth)):
     return db.query(models.Tariff).order_by(models.Tariff.name).all()
 
 
 @app.post("/tariffs", response_model=schemas.TariffRead, status_code=201)
-def create_tariff(payload: schemas.TariffCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+def create_tariff(payload: schemas.TariffCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_hunter)):
     t = models.Tariff(**payload.dict())
     db.add(t)
     db.commit()
@@ -543,7 +543,7 @@ def create_tariff(payload: schemas.TariffCreate, db: Session = Depends(get_db), 
 
 
 @app.put("/tariffs/{tariff_id}", response_model=schemas.TariffRead)
-def update_tariff(tariff_id: int, payload: schemas.TariffUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+def update_tariff(tariff_id: int, payload: schemas.TariffUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_hunter)):
     t = db.query(models.Tariff).filter(models.Tariff.id == tariff_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Tarif topilmadi")
@@ -555,11 +555,52 @@ def update_tariff(tariff_id: int, payload: schemas.TariffUpdate, db: Session = D
 
 
 @app.delete("/tariffs/{tariff_id}", status_code=204)
-def delete_tariff(tariff_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+def delete_tariff(tariff_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_hunter)):
     t = db.query(models.Tariff).filter(models.Tariff.id == tariff_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Tarif topilmadi")
     db.delete(t)
+    db.commit()
+
+
+# ── Discounts endpoints ────────────────────────────────────────────────────────
+
+@app.get("/discounts", response_model=List[schemas.DiscountRead])
+def list_discounts(db: Session = Depends(get_db), _: models.User = Depends(require_auth)):
+    return db.query(models.Discount).order_by(models.Discount.name).all()
+
+
+@app.post("/discounts", response_model=schemas.DiscountRead, status_code=201)
+def create_discount(payload: schemas.DiscountCreate, db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
+    if payload.discount_type not in ('percent', 'fixed'):
+        raise HTTPException(status_code=400, detail="discount_type 'percent' yoki 'fixed' bo'lishi kerak")
+    if payload.discount_type == 'percent' and payload.value > 100:
+        raise HTTPException(status_code=400, detail="Foiz 100 dan oshmasligi kerak")
+    d = models.Discount(**payload.dict())
+    db.add(d)
+    db.commit()
+    db.refresh(d)
+    return d
+
+
+@app.put("/discounts/{discount_id}", response_model=schemas.DiscountRead)
+def update_discount(discount_id: int, payload: schemas.DiscountUpdate, db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
+    d = db.query(models.Discount).filter(models.Discount.id == discount_id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Chegirma topilmadi")
+    for k, v in payload.dict(exclude_unset=True).items():
+        setattr(d, k, v)
+    db.commit()
+    db.refresh(d)
+    return d
+
+
+@app.delete("/discounts/{discount_id}", status_code=204)
+def delete_discount(discount_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
+    d = db.query(models.Discount).filter(models.Discount.id == discount_id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Chegirma topilmadi")
+    db.delete(d)
     db.commit()
 
 
@@ -747,6 +788,19 @@ def _group_read(g: models.Group, db: Session = None) -> schemas.GroupRead:
     )
 
 
+def _calc_effective_price(tariff_price, discount):
+    from decimal import Decimal as D
+    if tariff_price is None:
+        return None
+    price = D(str(tariff_price))
+    if not discount:
+        return price
+    val = D(str(discount.value))
+    if discount.discount_type == 'percent':
+        return (price * (1 - val / 100)).quantize(D('1'))
+    return max(D('0'), price - val).quantize(D('1'))
+
+
 def _group_detail(g: models.Group, db: Session = None) -> schemas.GroupDetail:
     members = [
         schemas.GroupStudentRead(
@@ -757,6 +811,13 @@ def _group_detail(g: models.Group, db: Session = None) -> schemas.GroupDetail:
             tariff_id=m.tariff_id,
             tariff_name=m.tariff.name if m.tariff else None,
             tariff_price=m.tariff.price if m.tariff else None,
+            discount_id=m.discount_id,
+            discount_name=m.discount.name if m.discount else None,
+            discount_type=m.discount.discount_type if m.discount else None,
+            discount_value=m.discount.value if m.discount else None,
+            effective_price=_calc_effective_price(
+                m.tariff.price if m.tariff else None, m.discount
+            ),
         ) for m in g.members
     ]
     base = _group_read(g, db=db)
@@ -815,6 +876,7 @@ def get_group(group_id: int, db: Session = Depends(get_db), actor: models.User =
             joinedload(models.Group.course),
             selectinload(models.Group.members).joinedload(models.GroupStudent.student),
             selectinload(models.Group.members).joinedload(models.GroupStudent.tariff),
+            selectinload(models.Group.members).joinedload(models.GroupStudent.discount),
         )
         .filter(models.Group.id == group_id)
         .first()
@@ -904,6 +966,29 @@ def remove_student_from_group(group_id: int, student_id: int, db: Session = Depe
         raise HTTPException(status_code=404, detail="Topilmadi")
     db.delete(gs)
     db.commit()
+
+
+@app.patch("/groups/{group_id}/students/{student_id}/discount", status_code=200)
+def apply_student_discount(
+    group_id: int,
+    student_id: int,
+    payload: schemas.ApplyDiscountPayload,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_hunter),
+):
+    gs = db.query(models.GroupStudent).filter(
+        models.GroupStudent.group_id == group_id,
+        models.GroupStudent.student_id == student_id,
+    ).first()
+    if not gs:
+        raise HTTPException(status_code=404, detail="Talaba bu guruhda topilmadi")
+    if payload.discount_id is not None:
+        d = db.query(models.Discount).filter(models.Discount.id == payload.discount_id).first()
+        if not d:
+            raise HTTPException(status_code=404, detail="Chegirma topilmadi")
+    gs.discount_id = payload.discount_id
+    db.commit()
+    return {"message": "Chegirma saqlandi"}
 
 
 # ── Payments endpoints ────────────────────────────────────────────────────────

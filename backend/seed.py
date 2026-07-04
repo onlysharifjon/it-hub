@@ -14,13 +14,17 @@ def _hash(plain: str) -> str:
 
 DEFAULT_USERS = [
     # Admin
-    {"username": "admin",    "password": "Admin@2026",    "role": UserRole.admin.value,    "full_name": "Administrator"},
+    {"username": "admin",       "password": "Admin@2026",       "role": UserRole.admin.value,       "full_name": "Administrator"},
     # Metodist
-    {"username": "metodist", "password": "Metodist@2026", "role": UserRole.metodist.value, "full_name": "Metodist"},
+    {"username": "metodist",    "password": "Metodist@2026",    "role": UserRole.metodist.value,    "full_name": "Metodist"},
     # O'qituvchilar
-    {"username": "teacher1", "password": "Teacher@2026",  "role": UserRole.teacher.value,  "full_name": "Sarvar Toshmatov"},
-    {"username": "teacher2", "password": "Teacher@2026",  "role": UserRole.teacher.value,  "full_name": "Malika Yusupova"},
-    {"username": "teacher3", "password": "Teacher@2026",  "role": UserRole.teacher.value,  "full_name": "Jasur Rahimov"},
+    {"username": "teacher1",    "password": "Teacher@2026",     "role": UserRole.teacher.value,     "full_name": "Sarvar Toshmatov"},
+    {"username": "teacher2",    "password": "Teacher@2026",     "role": UserRole.teacher.value,     "full_name": "Malika Yusupova"},
+    {"username": "teacher3",    "password": "Teacher@2026",     "role": UserRole.teacher.value,     "full_name": "Jasur Rahimov"},
+    # Call center
+    {"username": "call_center", "password": "Callcenter@2026",  "role": UserRole.call_center.value, "full_name": "Call Center"},
+    # Hunter
+    {"username": "hunter",      "password": "Hunter@2026",      "role": UserRole.hunter.value,      "full_name": "Hunter"},
 ]
 
 

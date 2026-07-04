@@ -195,6 +195,19 @@ export async function createTariff(p)       { return request('/tariffs', { metho
 export async function updateTariff(id, p)   { return request(`/tariffs/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deleteTariff(id)      { return request(`/tariffs/${id}`, { method: 'DELETE' }) }
 
+// ── Discounts ─────────────────────────────────────────────────────────────────
+
+export async function fetchDiscounts()         { return request('/discounts') }
+export async function createDiscount(p)        { return request('/discounts', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateDiscount(id, p)    { return request(`/discounts/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
+export async function deleteDiscount(id)       { return request(`/discounts/${id}`, { method: 'DELETE' }) }
+export async function applyStudentDiscount(groupId, studentId, discountId) {
+  return request(`/groups/${groupId}/students/${studentId}/discount`, {
+    method: 'PATCH',
+    body: JSON.stringify({ discount_id: discountId }),
+  })
+}
+
 // ── Finance ───────────────────────────────────────────────────────────────────
 
 export async function fetchFinanceMonthly(month, year) {

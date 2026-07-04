@@ -22,6 +22,7 @@ import TeacherSalaries from './components/TeacherSalaries'
 import TeacherDashboard from './components/TeacherDashboard'
 import Expenses from './components/Expenses'
 import Leads from './components/Leads'
+import Discounts from './components/Discounts'
 import { fetchMe, login as apiLogin, setToken } from './api'
 
 function readHash() {
@@ -169,6 +170,7 @@ function App() {
             }} />
           )}
           {activePage === 'leads' && <Leads currentUser={currentUser} />}
+          {activePage === 'discounts' && <Discounts />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
         </div>
       </main>
