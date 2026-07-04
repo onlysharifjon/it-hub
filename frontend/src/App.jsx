@@ -30,6 +30,27 @@ function readHash() {
   return raw || 'lessons'
 }
 
+function ScrollToTop() {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const el = document.querySelector('.content')
+    if (!el) return
+    const onScroll = () => setVisible(el.scrollTop > 300)
+    el.addEventListener('scroll', onScroll)
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+  if (!visible) return null
+  return (
+    <button
+      className="scroll-top-btn"
+      onClick={() => document.querySelector('.content')?.scrollTo({ top: 0, behavior: 'smooth' })}
+      title="Tepaga"
+    >
+      ↑
+    </button>
+  )
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [isAuthed, setIsAuthed] = useState(Boolean(localStorage.getItem('token')))
@@ -111,6 +132,7 @@ function App() {
         isOpen={sidebarOpen}
       />
 
+      <ScrollToTop />
       <main className="content">
         <div className="content-watermark">
           <MinarWatermark size={380} />

@@ -2505,3 +2505,29 @@ body,
 [data-theme="ocean"] .finance-stat-expected { color: #0369a1; }
 [data-theme="ocean"] .tab-btn.active    { color: #0369a1; border-bottom-color: #0369a1; }
 [data-theme="ocean"] .kpi-card-link:hover { box-shadow: 0 6px 20px rgba(3,105,161,.15); border-color: #7dd3fc; }
+
+/* ── Scroll to top button ── */
+.scroll-top-btn {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #ef4444;
+  color: #fff;
+  font-size: 20px;
+  font-weight: bold;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(239,68,68,.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  transition: transform .2s, box-shadow .2s;
+}
+.scroll-top-btn:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 20px rgba(239,68,68,.55);
+}
