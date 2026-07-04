@@ -6,7 +6,7 @@ import {
   faChartBar, faRightFromBracket, faChevronDown,
   faCalendarCheck, faTag, faWallet, faUserShield,
   faChalkboardTeacher, faReceipt, faCamera,
-  faHeadset, faBullseye, faGraduationCap,
+  faHeadset, faBullseye, faGraduationCap, faPercent,
 } from '@fortawesome/free-solid-svg-icons'
 import { toast } from 'react-hot-toast'
 import { uploadAvatar, API_BASE } from '../api'
@@ -80,41 +80,64 @@ function Sidebar({
       </div>
 
       <nav className="sidebar-nav">
-        {/* Darslar */}
-        <div className="nav-section-label">Metodika</div>
-        {isMetodist && (
-          <button
-            className={`nav-page-btn ${activePage === 'courses' ? 'active' : ''}`}
-            onClick={() => onNavigate('courses')}
-          >
-            <FontAwesomeIcon icon={faGraduationCap} fixedWidth /> Kurslar
-          </button>
-        )}
-        <button
-          className={`nav-page-btn ${activePage === 'lessons' ? 'active' : ''}`}
-          onClick={handleLessonsClick}
-        >
-          <FontAwesomeIcon icon={faBook} fixedWidth />
-          <span style={{ flex: 1 }}>Dars rejalari</span>
-          <span className={`cat-chevron${catOpen && activePage === 'lessons' ? ' open' : ''}`}>
-            <FontAwesomeIcon icon={faChevronDown} />
-          </span>
-        </button>
-
-        <div className={`category-list-wrap${catOpen && activePage === 'lessons' ? ' open' : ''}`}>
-          <div className="category-list">
-            {CATEGORIES.map((c, i) => (
+        {/* Metodika — metodist, teacher, admin (Hunter ko'rmaydi) */}
+        {!isHunter && (
+          <>
+            <div className="nav-section-label">Metodika</div>
+            {isMetodist && (
               <button
-                key={c.key}
-                className={`category-btn ${selectedCategory === c.key ? 'active' : ''}`}
-                onClick={() => handleCategoryClick(c.key)}
-                style={{ animationDelay: `${i * 40}ms` }}
+                className={`nav-page-btn ${activePage === 'courses' ? 'active' : ''}`}
+                onClick={() => onNavigate('courses')}
               >
-                {c.label}
+                <FontAwesomeIcon icon={faGraduationCap} fixedWidth /> Kurslar
               </button>
-            ))}
-          </div>
-        </div>
+            )}
+            <button
+              className={`nav-page-btn ${activePage === 'lessons' ? 'active' : ''}`}
+              onClick={handleLessonsClick}
+            >
+              <FontAwesomeIcon icon={faBook} fixedWidth />
+              <span style={{ flex: 1 }}>Dars rejalari</span>
+              <span className={`cat-chevron${catOpen && activePage === 'lessons' ? ' open' : ''}`}>
+                <FontAwesomeIcon icon={faChevronDown} />
+              </span>
+            </button>
+
+            <div className={`category-list-wrap${catOpen && activePage === 'lessons' ? ' open' : ''}`}>
+              <div className="category-list">
+                {CATEGORIES.map((c, i) => (
+                  <button
+                    key={c.key}
+                    className={`category-btn ${selectedCategory === c.key ? 'active' : ''}`}
+                    onClick={() => handleCategoryClick(c.key)}
+                    style={{ animationDelay: `${i * 40}ms` }}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Hunter — Tariflar va Chegirmalar */}
+        {isHunter && (
+          <>
+            <div className="nav-section-label">Narxlar</div>
+            <button
+              className={`nav-page-btn ${activePage === 'tariffs' ? 'active' : ''}`}
+              onClick={() => onNavigate('tariffs')}
+            >
+              <FontAwesomeIcon icon={faTag} fixedWidth /> Kurs tariflari
+            </button>
+            <button
+              className={`nav-page-btn ${activePage === 'discounts' ? 'active' : ''}`}
+              onClick={() => onNavigate('discounts')}
+            >
+              <FontAwesomeIcon icon={faPercent} fixedWidth /> Chegirmalar
+            </button>
+          </>
+        )}
 
         {/* Teacher only — My dashboard */}
         {isTeacher && (

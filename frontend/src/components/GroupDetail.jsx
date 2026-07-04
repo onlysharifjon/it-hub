@@ -4,9 +4,9 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowLeft, faChalkboardTeacher, faCalendarDay,
   faPlus, faTrash, faCheck, faXmark, faMinus,
-  faUserGraduate, faChartBar,
+  faUserGraduate, faChartBar, faPercent,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup } from '../api'
+import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchDiscounts, applyStudentDiscount } from '../api'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
@@ -19,7 +19,8 @@ const STAGE_COLORS = {
 const STAGE_LABELS = { foundation: 'Foundation', frontend: 'Frontend', backend: 'Backend' }
 
 export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'metodist'
+  const isAdmin   = currentUser?.role === 'admin' || currentUser?.role === 'metodist'
+  const isHunter  = currentUser?.role === 'hunter' || currentUser?.role === 'admin'
   const [month, setMonth] = useState(NOW.getMonth() + 1)
   const [year, setYear] = useState(NOW.getFullYear())
   const [group, setGroup] = useState(groupProp)
@@ -28,8 +29,15 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   const [newDate, setNewDate] = useState('')
   const [addingDate, setAddingDate] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [discounts, setDiscounts] = useState([])
+  const [discountModal, setDiscountModal] = useState(null)  // { member }
+  const [selectedDiscount, setSelectedDiscount] = useState('')
+  const [applyingSave, setApplyingSave] = useState(false)
 
   useEffect(() => { load() }, [month, year, groupProp.id])
+  useEffect(() => {
+    if (isHunter) fetchDiscounts().then(setDiscounts).catch(() => {})
+  }, [])
 
   async function load() {
     setLoading(true)
@@ -101,6 +109,26 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
       toast.success("O'chirildi")
       await load()
     } catch (e) { toast.error(e.message) }
+  }
+
+  function openDiscountModal(member) {
+    setSelectedDiscount(member.discount_id ? String(member.discount_id) : '')
+    setDiscountModal(member)
+  }
+
+  async function handleApplyDiscount() {
+    setApplyingSave(true)
+    try {
+      await applyStudentDiscount(
+        group.id,
+        discountModal.student_id,
+        selectedDiscount ? parseInt(selectedDiscount) : null,
+      )
+      toast.success('Chegirma saqlandi')
+      setDiscountModal(null)
+      await load()
+    } catch (e) { toast.error(e.message) }
+    finally { setApplyingSave(false) }
   }
 
   function formatDate(d) {
@@ -238,6 +266,51 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
               {students.length === 0 && <div className="muted">O'quvchilar yo'q</div>}
             </div>
           </div>
+
+          {/* Hunter: per-student tariff & discount */}
+          {isHunter && (group.members || []).length > 0 && (
+            <div className="info-card" style={{ flex: 'none' }}>
+              <div className="info-card-title">
+                <FontAwesomeIcon icon={faPercent} /> Tarif / Chegirma
+              </div>
+              {(group.members || []).map(m => {
+                const base = m.tariff_price ? Number(m.tariff_price) : null
+                const eff  = m.effective_price != null ? Number(m.effective_price) : base
+                return (
+                  <div key={m.student_id} className="student-summary-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                      <span className="student-summary-name">{m.student_name}</span>
+                      <button
+                        className="btn-icon"
+                        style={{ fontSize: 11 }}
+                        onClick={() => openDiscountModal(m)}
+                        title="Chegirma belgilash"
+                      >
+                        <FontAwesomeIcon icon={faPercent} />
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                      {m.tariff_name
+                        ? <>
+                            <span>{m.tariff_name}: </span>
+                            {m.discount_name
+                              ? <>
+                                  <s style={{ color: '#ef4444' }}>{base?.toLocaleString()} so'm</s>
+                                  {' → '}
+                                  <strong style={{ color: '#22c55e' }}>{eff?.toLocaleString()} so'm</strong>
+                                  <span style={{ marginLeft: 4, color: 'var(--text-muted)' }}>({m.discount_name})</span>
+                                </>
+                              : <strong>{base?.toLocaleString()} so'm</strong>
+                            }
+                          </>
+                        : <span>Tarif yo'q</span>
+                      }
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* ── Right Panel: Attendance Grid ── */}
@@ -364,6 +437,59 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
           )}
         </div>
       </div>
+
+      {/* Discount modal */}
+      {discountModal && (
+        <div className="modal-overlay" onClick={() => setDiscountModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><FontAwesomeIcon icon={faPercent} /> {discountModal.student_name} — Chegirma</h3>
+              <button className="modal-close" onClick={() => setDiscountModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {discountModal.tariff_name && (
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 13 }}>
+                  Asosiy tarif: <strong>{discountModal.tariff_name}</strong> —{' '}
+                  {Number(discountModal.tariff_price).toLocaleString()} so'm/oy
+                </div>
+              )}
+              <label>Chegirma tanlang</label>
+              <select
+                className="field"
+                value={selectedDiscount}
+                onChange={e => setSelectedDiscount(e.target.value)}
+              >
+                <option value="">— Chegirmasiz —</option>
+                {discounts.filter(d => d.is_active).map(d => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} ({d.discount_type === 'percent' ? `${Number(d.value)}%` : `${Number(d.value).toLocaleString()} so'm`})
+                  </option>
+                ))}
+              </select>
+              {selectedDiscount && discountModal.tariff_price && (() => {
+                const d = discounts.find(x => x.id === parseInt(selectedDiscount))
+                if (!d) return null
+                const base = Number(discountModal.tariff_price)
+                const eff  = d.discount_type === 'percent'
+                  ? Math.round(base * (1 - Number(d.value) / 100))
+                  : Math.max(0, base - Number(d.value))
+                return (
+                  <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 13 }}>
+                    Chegirmadan keyin: <s style={{ color: '#ef4444' }}>{base.toLocaleString()} so'm</s>
+                    {' → '}<strong style={{ color: '#22c55e' }}>{eff.toLocaleString()} so'm</strong>
+                  </div>
+                )
+              })()}
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setDiscountModal(null)}>Bekor</button>
+              <button className="button primary" onClick={handleApplyDiscount} disabled={applyingSave}>
+                {applyingSave ? 'Saqlanmoqda...' : 'Saqlash'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

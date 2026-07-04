@@ -166,11 +166,13 @@ class GroupStudent(Base):
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
     tariff_id = Column(Integer, ForeignKey("tariffs.id"), nullable=True)
+    discount_id = Column(Integer, ForeignKey("discounts.id"), nullable=True)
     joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     group = relationship("Group", back_populates="members")
     student = relationship("Student", back_populates="group_memberships")
     tariff = relationship("Tariff")
+    discount = relationship("Discount")
 
 
 class Payment(Base):
@@ -213,6 +215,17 @@ class Attendance(Base):
 
     group = relationship("Group")
     student = relationship("Student")
+
+
+class Discount(Base):
+    __tablename__ = "discounts"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    name           = Column(String(200), nullable=False)
+    discount_type  = Column(String(10),  nullable=False, default='percent')  # 'percent' | 'fixed'
+    value          = Column(Numeric(12, 2), nullable=False)                  # % yoki so'm
+    is_active      = Column(Boolean, nullable=False, default=True)
+    created_at     = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class Lead(Base):
