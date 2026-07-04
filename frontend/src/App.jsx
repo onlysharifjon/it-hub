@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { Toaster } from 'react-hot-toast'
 import MinaretLogo from './components/MinaretLogo'
 import MinarWatermark from './components/MinarWatermark'
@@ -35,7 +35,7 @@ function ScrollToTop() {
   useEffect(() => {
     const el = document.querySelector('.content')
     if (!el) return
-    const onScroll = () => setVisible(el.scrollTop > 300)
+    const onScroll = () => setVisible(el.scrollTop > 50)
     el.addEventListener('scroll', onScroll)
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
