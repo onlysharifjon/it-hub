@@ -31,6 +31,7 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-525600}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5373}
+      CAMERA_API_KEY: ${CAMERA_API_KEY:-minar-camera-secret-2026}
     volumes:
       - uploads_data:/app/uploads
     depends_on:

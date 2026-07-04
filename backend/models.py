@@ -34,6 +34,7 @@ class User(Base):
     role = Column(String(20), nullable=False, default=UserRole.teacher.value)
     is_active = Column(Boolean, nullable=False, default=True)
     avatar = Column(String(500), nullable=True)
+    face_photo_path = Column(String(500), nullable=True)
     # Block & expiry
     blocked_reason  = Column(Text, nullable=True)         # sabab matni
     blocked_contact = Column(String(300), nullable=True)  # bog'lanish ma'lumoti
@@ -122,6 +123,7 @@ class Student(Base):
     mother_name  = Column(String(200), nullable=True)
     mother_phone = Column(String(20),  nullable=True)
     telegram_id  = Column(String(50),  nullable=True)
+    photo_path   = Column(String(500), nullable=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     is_archived = Column(Boolean, nullable=False, default=False)

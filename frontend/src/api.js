@@ -188,6 +188,21 @@ export async function createCourse(p)       { return request('/courses', { metho
 export async function updateCourse(id, p)   { return request(`/courses/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deleteCourse(id)      { return request(`/courses/${id}`, { method: 'DELETE' }) }
 
+export async function uploadStudentPhoto(studentId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE}/students/${studentId}/photo`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(typeof err.detail === 'string' ? err.detail : 'Yuklash xatosi')
+  }
+  return res.json()
+}
+
 // ── Tariffs ───────────────────────────────────────────────────────────────────
 
 export async function fetchTariffs()        { return request('/tariffs') }
