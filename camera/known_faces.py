@@ -1,4 +1,10 @@
-"""faces/ katalogidan o'quvchilarning yuz encodinglarini yuklaydi va keshlaydi."""
+"""
+O'quvchilar va xodimlarning yuz encodinglarini yuklaydi va keshlaydi.
+
+Papka tuzilmasi:
+  faces/students/{id}/*.jpg  — o'quvchilar
+  faces/staff/{id}/*.jpg     — xodimlar (users)
+"""
 import os
 import pickle
 import logging
@@ -12,42 +18,69 @@ log = logging.getLogger("camera.faces")
 
 
 class FaceDB:
-    """Ma'lum yuzlar to'plami: encodinglar va ularga mos student_id lar."""
+    """Ma'lum yuzlar to'plami: encodinglar va ularga mos shaxs ma'lumotlari."""
 
     def __init__(self):
         self.encodings: list[np.ndarray] = []
-        self.student_ids: list[int] = []
+        # Har bir encoding uchun {'id': int, 'type': 'student'|'staff'}
+        self.persons: list[dict] = []
 
     def load(self) -> None:
-        """Keshdan yoki rasm fayllaridan encodinglarni yuklaydi."""
         if self._load_cache():
             log.info("Kesh yuklandi: %d ta yuz encodingi", len(self.encodings))
             return
         self._build_from_images()
         self._save_cache()
 
-    def _build_from_images(self) -> None:
-        faces_dir = config.FACES_DIR
-        if not os.path.isdir(faces_dir):
-            log.warning("faces/ katalogi topilmadi: %s", faces_dir)
-            return
-
-        for entry in sorted(os.listdir(faces_dir)):
-            student_path = os.path.join(faces_dir, entry)
-            if not os.path.isdir(student_path):
-                continue
-            # Katalog nomi = student_id (masalan "42" yoki "42_Ali").
+    def reload(self) -> None:
+        """Keshni o'chirib, rasmlardan encodinglarni qayta yuklaydi."""
+        cache_path = config.ENCODINGS_CACHE
+        if os.path.exists(cache_path):
             try:
-                student_id = int(entry.split("_")[0])
+                os.remove(cache_path)
+            except Exception:
+                pass
+        self.encodings = []
+        self.persons = []
+        self._build_from_images()
+        self._save_cache()
+        log.info("Encodinglar qayta yuklandi: %d ta yuz", len(self.encodings))
+
+    def match(self, encoding: np.ndarray) -> dict | None:
+        """Berilgan encodingga mos shaxs info'sini qaytaradi yoki None."""
+        if not self.encodings:
+            return None
+        distances = face_recognition.face_distance(self.encodings, encoding)
+        best = int(np.argmin(distances))
+        if distances[best] <= config.RECOGNITION_TOLERANCE:
+            return self.persons[best]
+        return None
+
+    # ── private ───────────────────────────────────────────────────────────────
+
+    def _build_from_images(self) -> None:
+        self._scan_dir(os.path.join(config.FACES_DIR, "students"), "student")
+        self._scan_dir(os.path.join(config.FACES_DIR, "staff"),    "staff")
+        log.info("Jami %d ta encoding yuklandi", len(self.encodings))
+
+    def _scan_dir(self, base_dir: str, person_type: str) -> None:
+        if not os.path.isdir(base_dir):
+            return
+        for entry in sorted(os.listdir(base_dir)):
+            person_path = os.path.join(base_dir, entry)
+            if not os.path.isdir(person_path):
+                continue
+            try:
+                person_id = int(entry.split("_")[0])
             except ValueError:
-                log.warning("Katalog nomidan student_id ajratilmadi: %s", entry)
+                log.warning("Katalog nomidan ID ajratilmadi: %s", entry)
                 continue
 
             count = 0
-            for fname in os.listdir(student_path):
+            for fname in os.listdir(person_path):
                 if not fname.lower().endswith((".jpg", ".jpeg", ".png")):
                     continue
-                img_path = os.path.join(student_path, fname)
+                img_path = os.path.join(person_path, fname)
                 try:
                     image = face_recognition.load_image_file(img_path)
                     encs = face_recognition.face_encodings(image)
@@ -58,11 +91,10 @@ class FaceDB:
                     log.warning("Yuz topilmadi: %s", img_path)
                     continue
                 self.encodings.append(encs[0])
-                self.student_ids.append(student_id)
+                self.persons.append({"id": person_id, "type": person_type})
                 count += 1
-            log.info("student_id=%s uchun %d ta yuz yuklandi", student_id, count)
-
-        log.info("Jami %d ta encoding yuklandi", len(self.encodings))
+            if count:
+                log.info("%s id=%s uchun %d ta yuz yuklandi", person_type, person_id, count)
 
     def _load_cache(self) -> bool:
         path = config.ENCODINGS_CACHE
@@ -72,7 +104,10 @@ class FaceDB:
             with open(path, "rb") as f:
                 data = pickle.load(f)
             self.encodings = data["encodings"]
-            self.student_ids = data["student_ids"]
+            self.persons = data.get("persons", [])
+            # Eski format (student_ids) bilan muvofiqlik
+            if not self.persons and "student_ids" in data:
+                self.persons = [{"id": sid, "type": "student"} for sid in data["student_ids"]]
             return len(self.encodings) > 0
         except Exception as exc:
             log.warning("Keshni o'qib bo'lmadi: %s", exc)
@@ -81,16 +116,6 @@ class FaceDB:
     def _save_cache(self) -> None:
         try:
             with open(config.ENCODINGS_CACHE, "wb") as f:
-                pickle.dump({"encodings": self.encodings, "student_ids": self.student_ids}, f)
+                pickle.dump({"encodings": self.encodings, "persons": self.persons}, f)
         except Exception as exc:
             log.warning("Keshni saqlab bo'lmadi: %s", exc)
-
-    def match(self, encoding: np.ndarray) -> int | None:
-        """Berilgan encodingga mos student_id ni qaytaradi yoki None."""
-        if not self.encodings:
-            return None
-        distances = face_recognition.face_distance(self.encodings, encoding)
-        best = int(np.argmin(distances))
-        if distances[best] <= config.RECOGNITION_TOLERANCE:
-            return self.student_ids[best]
-        return None

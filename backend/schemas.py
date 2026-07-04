@@ -270,6 +270,7 @@ class StudentRead(BaseModel):
     mother_name:  Optional[str] = None
     mother_phone: Optional[str] = None
     telegram_id: Optional[str] = None
+    photo_url:   Optional[str] = None
     notes: Optional[str] = None
     is_active: bool
     is_archived: bool = False
@@ -278,6 +279,12 @@ class StudentRead(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class CameraCheckin(BaseModel):
+    student_id: int
+    event: str          # "arrival" | "departure"
+    detected_at: Optional[datetime] = None
 
 
 class StudentCreate(BaseModel):

@@ -32,11 +32,19 @@ NOTIFY_COOLDOWN = int(_get("NOTIFY_COOLDOWN", "300"))
 TELEGRAM_TOKEN = _get("TELEGRAM_TOKEN")
 # Ma'muriyat/qabulxona chat_id — barcha kelgan-ketganlar shu yerga tushadi.
 NOTIFY_CHAT_ID = _get("NOTIFY_CHAT_ID")
-# True bo'lsa, bolaning o'z telegram_id siga ham xabar yuboriladi.
-NOTIFY_STUDENT = _get("NOTIFY_STUDENT", "false").lower() == "true"
+# True bo'lsa, ota-onaning telegram_id siga shaxsiy xabar yuboriladi.
+NOTIFY_PARENT = _get("NOTIFY_PARENT", "true").lower() == "true"
+
+# ── CRM server ────────────────────────────────────────────────────────────────
+# CRM API manzili (masalan: http://192.168.1.100:8000)
+CRM_URL = _get("CRM_URL")
+# Camera servis uchun alohida API kalit (backend .env dagi CAMERA_API_KEY bilan bir xil)
+CAMERA_API_KEY = _get("CAMERA_API_KEY")
+# O'quvchilar ro'yxatini qancha vaqtda bir yangilash (soniya). Standart: 1 soat.
+SYNC_INTERVAL = int(_get("SYNC_INTERVAL", "3600"))
 
 # ── Ma'lumotlar bazasi (backend bilan bir xil) ────────────────────────────────
-DATABASE_URL = _get("DATABASE_URL")  # .env da beriladi; bo'sh bo'lsa DB'siz (faqat log/telegram) ishlaydi
+DATABASE_URL = _get("DATABASE_URL")  # bo'sh bo'lsa DB'siz (faqat log/telegram) ishlaydi
 
 # ── Yuzlar bazasi ─────────────────────────────────────────────────────────────
 # faces/<student_id>/*.jpg  ko'rinishida saqlanadi.
@@ -44,3 +52,9 @@ FACES_DIR = _get("FACES_DIR", os.path.join(os.path.dirname(__file__), "faces"))
 
 # Encodinglar keshini saqlash fayli (qayta ishga tushirishda tezlashtiradi).
 ENCODINGS_CACHE = _get("ENCODINGS_CACHE", os.path.join(os.path.dirname(__file__), "encodings.pkl"))
+
+# Vaqtinchalik yuz rasmlari saqlanadigan papka (Telegramga yuborilgandan so'ng o'chiriladi).
+TEMP_DIR = _get("TEMP_DIR", os.path.join(os.path.dirname(__file__), "temp"))
+
+# ── Hisobot (XLSX) ────────────────────────────────────────────────────────────
+EXCEL_LOG = _get("EXCEL_LOG", os.path.join(os.path.dirname(__file__), "davomat_log.xlsx"))
