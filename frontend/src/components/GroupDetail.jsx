@@ -4,9 +4,9 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowLeft, faChalkboardTeacher, faCalendarDay,
   faPlus, faTrash, faCheck, faXmark, faMinus,
-  faUserGraduate, faChartBar, faPercent,
+  faUserGraduate, faChartBar, faTag, faBookOpen, faPaperPlane,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchDiscounts, applyStudentDiscount } from '../api'
+import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework } from '../api'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
@@ -18,9 +18,39 @@ const STAGE_COLORS = {
 }
 const STAGE_LABELS = { foundation: 'Foundation', frontend: 'Frontend', backend: 'Backend' }
 
+// JS getDay(): Yak=0, Du=1, Se=2, Chor=3, Pay=4, Ju=5, Shan=6
+const DOW_SHORT = ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh']
+const dowLabel = (d) => DOW_SHORT[new Date(`${d}T00:00:00`).getDay()]
+
+const DAY_WORDS_JS = {
+  du: 1, dush: 1, dushanba: 1,
+  se: 2, sesh: 2, seshanba: 2,
+  chor: 3, chorshanba: 3,
+  pay: 4, payshanba: 4,
+  ju: 5, jum: 5, juma: 5,
+  shan: 6, shanba: 6,
+  yak: 0, yakshanba: 0,
+}
+
+// Guruh jadvalidan dars bo'ladigan hafta kunlarini (getDay qiymatlari) aniqlaydi.
+// null => jadval noma'lum (cheklovsiz).
+function scheduledWeekdays(schedule) {
+  if (!schedule) return null
+  const s = schedule.toLowerCase()
+  if (s.includes('toq'))  return new Set([1, 3, 5])   // Du, Chor, Ju
+  if (s.includes('juft')) return new Set([2, 4, 6])   // Se, Pay, Shan
+  const set = new Set()
+  for (const t of s.split(/[\s,\-/]+/)) {
+    if (DAY_WORDS_JS[t] != null) set.add(DAY_WORDS_JS[t])
+  }
+  return set.size ? set : null
+}
+
 export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   const isAdmin   = currentUser?.role === 'admin' || currentUser?.role === 'metodist'
   const isHunter  = currentUser?.role === 'hunter' || currentUser?.role === 'admin'
+  // Yo'qlama qilish (sana qo'shish/o'chirish): admin, metodist, hunter, teacher
+  const canEditAttendance = isAdmin || currentUser?.role === 'hunter' || currentUser?.role === 'teacher'
   const [month, setMonth] = useState(NOW.getMonth() + 1)
   const [year, setYear] = useState(NOW.getFullYear())
   const [group, setGroup] = useState(groupProp)
@@ -29,15 +59,43 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   const [newDate, setNewDate] = useState('')
   const [addingDate, setAddingDate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [discounts, setDiscounts] = useState([])
-  const [discountModal, setDiscountModal] = useState(null)  // { member }
-  const [selectedDiscount, setSelectedDiscount] = useState('')
-  const [applyingSave, setApplyingSave] = useState(false)
+
+  // Metodika bo'yicha navbatdagi dars + uy vazifasi
+  const [nextLesson, setNextLesson] = useState(null)
+  const [homeworks, setHomeworks] = useState([])
+  const [hwModal, setHwModal] = useState(false)
+  const [hwText, setHwText] = useState('')
+  const [hwSending, setHwSending] = useState(false)
 
   useEffect(() => { load() }, [month, year, groupProp.id])
   useEffect(() => {
-    if (isHunter) fetchDiscounts().then(setDiscounts).catch(() => {})
-  }, [])
+    if (!canEditAttendance) return
+    fetchNextLesson(groupProp.id).then(setNextLesson).catch(() => {})
+    fetchHomeworks(groupProp.id).then(setHomeworks).catch(() => {})
+  }, [groupProp.id])
+
+  function openHwModal() {
+    setHwText(nextLesson?.homework || '')
+    setHwModal(true)
+  }
+
+  async function handleSendHomework() {
+    if (!hwText.trim()) return toast.error("Uy vazifasi matnini kiriting")
+    setHwSending(true)
+    try {
+      const hw = await createHomework(group.id, {
+        text: hwText,
+        lesson_id: nextLesson?.lesson_id || null,
+        lesson_number: nextLesson?.lesson_number || null,
+        lesson_title: nextLesson?.lesson_title || null,
+      })
+      if (hw.telegram_sent) toast.success("Saqlandi va Telegramga yuborildi ✓")
+      else toast(`Saqlandi. Telegram: ${hw.telegram_error || 'yuborilmadi'}`, { icon: '⚠️' })
+      setHwModal(false)
+      fetchHomeworks(group.id).then(setHomeworks).catch(() => {})
+    } catch (e) { toast.error(e.message) }
+    finally { setHwSending(false) }
+  }
 
   async function load() {
     setLoading(true)
@@ -111,37 +169,14 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
     } catch (e) { toast.error(e.message) }
   }
 
-  function openDiscountModal(member) {
-    setSelectedDiscount(member.discount_id ? String(member.discount_id) : '')
-    setDiscountModal(member)
-  }
-
-  async function handleApplyDiscount() {
-    setApplyingSave(true)
-    try {
-      await applyStudentDiscount(
-        group.id,
-        discountModal.student_id,
-        selectedDiscount ? parseInt(selectedDiscount) : null,
-      )
-      toast.success('Chegirma saqlandi')
-      setDiscountModal(null)
-      await load()
-    } catch (e) { toast.error(e.message) }
-    finally { setApplyingSave(false) }
-  }
-
-  function formatDate(d) {
-    const [, m, day] = d.split('-')
-    return `${day}/${m}`
-  }
-
   const dates = data?.dates || []
   const students = data?.students || []
   const totalLessons = dates.length
 
   const TODAY_STR = NOW.toISOString().slice(0, 10)
   const attendanceDatesSet = new Set(dates)
+  const schedSet = scheduledWeekdays(group.schedule)
+  const isScheduledDay = (d) => !!schedSet && schedSet.has(new Date(`${d}T00:00:00`).getDay())
   const allDaysInMonth = (() => {
     const days = []
     const count = new Date(year, month, 0).getDate()
@@ -230,6 +265,46 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
             </div>
           )}
 
+          {/* Bugungi dars — metodika bo'yicha */}
+          {canEditAttendance && nextLesson && (
+            <div className="info-card">
+              <div className="info-card-title">
+                <FontAwesomeIcon icon={faBookOpen} /> Bugungi dars (metodika)
+              </div>
+              <div className="stat-row">
+                <span>Dars</span>
+                <strong>#{nextLesson.lesson_number} / {nextLesson.total_lessons}</strong>
+              </div>
+              {nextLesson.lesson_title ? (
+                <div style={{ fontSize: 13, fontWeight: 600, margin: '6px 0' }}>{nextLesson.lesson_title}</div>
+              ) : (
+                <div className="text-muted" style={{ fontSize: 12, margin: '6px 0' }}>
+                  Metodikada bu dars kiritilmagan
+                </div>
+              )}
+              {nextLesson.homework && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', maxHeight: 60, overflow: 'hidden' }}>
+                  📝 {nextLesson.homework}
+                </div>
+              )}
+              <button className="button primary small" style={{ width: '100%', marginTop: 10 }} onClick={openHwModal}>
+                <FontAwesomeIcon icon={faPaperPlane} /> Uy vazifasi yuborish
+              </button>
+              {homeworks.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  {homeworks.slice(0, 3).map(hw => (
+                    <div key={hw.id} style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', gap: 6, padding: '3px 0' }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {new Date(hw.lesson_date + 'T00:00:00').toLocaleDateString('uz')}{hw.lesson_number ? ` · ${hw.lesson_number}-dars` : ''}
+                      </span>
+                      <span title={hw.telegram_error || ''}>{hw.telegram_sent ? '✅' : '⚠️'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* This month stats */}
           <div className="info-card">
             <div className="info-card-title">
@@ -267,42 +342,20 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
             </div>
           </div>
 
-          {/* Hunter: per-student tariff & discount */}
+          {/* Hunter: per-student tariff */}
           {isHunter && (group.members || []).length > 0 && (
             <div className="info-card" style={{ flex: 'none' }}>
               <div className="info-card-title">
-                <FontAwesomeIcon icon={faPercent} /> Tarif / Chegirma
+                <FontAwesomeIcon icon={faTag} /> Tarif
               </div>
               {(group.members || []).map(m => {
                 const base = m.tariff_price ? Number(m.tariff_price) : null
-                const eff  = m.effective_price != null ? Number(m.effective_price) : base
                 return (
                   <div key={m.student_id} className="student-summary-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                      <span className="student-summary-name">{m.student_name}</span>
-                      <button
-                        className="btn-icon"
-                        style={{ fontSize: 11 }}
-                        onClick={() => openDiscountModal(m)}
-                        title="Chegirma belgilash"
-                      >
-                        <FontAwesomeIcon icon={faPercent} />
-                      </button>
-                    </div>
+                    <span className="student-summary-name">{m.student_name}</span>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                       {m.tariff_name
-                        ? <>
-                            <span>{m.tariff_name}: </span>
-                            {m.discount_name
-                              ? <>
-                                  <s style={{ color: '#ef4444' }}>{base?.toLocaleString()} so'm</s>
-                                  {' → '}
-                                  <strong style={{ color: '#22c55e' }}>{eff?.toLocaleString()} so'm</strong>
-                                  <span style={{ marginLeft: 4, color: 'var(--text-muted)' }}>({m.discount_name})</span>
-                                </>
-                              : <strong>{base?.toLocaleString()} so'm</strong>
-                            }
-                          </>
+                        ? <><span>{m.tariff_name}: </span><strong>{base?.toLocaleString()} so'm</strong></>
                         : <span>Tarif yo'q</span>
                       }
                     </div>
@@ -347,6 +400,13 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
             )}
           </div>
 
+          <div className="att-legend">
+            <span className="att-legend-item"><span className="att-mark att-legend-present"><FontAwesomeIcon icon={faCheck} /></span> Keldi</span>
+            <span className="att-legend-item"><span className="att-mark att-legend-absent"><FontAwesomeIcon icon={faXmark} /></span> Kelmadi</span>
+            <span className="att-legend-item"><span className="att-mark att-legend-empty"><FontAwesomeIcon icon={faMinus} /></span> Belgilanmagan</span>
+            <span className="att-legend-item"><span className="att-legend-swatch" /> Dars kuni (jadval bo'yicha)</span>
+          </div>
+
           {loading ? (
             <div className="muted center">Yuklanmoqda...</div>
           ) : (
@@ -358,20 +418,23 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                     {allDaysInMonth.map(d => {
                       const isToday = d === TODAY_STR
                       const hasLesson = attendanceDatesSet.has(d)
+                      const scheduled = isScheduledDay(d)
+                      const fillable = hasLesson || scheduled
                       return (
                         <th
                           key={d}
-                          className={`att-date-col${isToday ? ' att-col-today' : ''}${!hasLesson ? ' att-col-nolesson' : ''}`}
-                          onClick={!hasLesson && isAdmin ? () => handleAddDate(d) : undefined}
-                          title={!hasLesson && isAdmin ? "Bosing: bu kunga dars qo'shish" : undefined}
-                          style={!hasLesson && isAdmin ? { cursor: 'pointer' } : undefined}
+                          className={`att-date-col${isToday ? ' att-col-today' : ''}${scheduled ? ' att-col-scheduled' : ''}${!fillable ? ' att-col-nolesson' : ''}`}
+                          onClick={!fillable && canEditAttendance ? () => handleAddDate(d) : undefined}
+                          title={!fillable && canEditAttendance ? "Bosing: bu kunga dars qo'shish" : undefined}
+                          style={!fillable && canEditAttendance ? { cursor: 'pointer' } : undefined}
                         >
                           <div className="att-date-header">
-                            <span>{formatDate(d)}</span>
+                            <span className="att-dow">{dowLabel(d)}</span>
+                            <span className="att-daynum">{Number(d.slice(8, 10))}</span>
                             {hasLesson && (
                               <button
                                 className="att-delete-date"
-                                onClick={() => handleDeleteDate(d)}
+                                onClick={(e) => { e.stopPropagation(); handleDeleteDate(d) }}
                                 title="Sanani o'chirish"
                               >
                                 <FontAwesomeIcon icon={faTrash} />
@@ -394,33 +457,39 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                       {allDaysInMonth.map(d => {
                         const isToday = d === TODAY_STR
                         const hasLesson = attendanceDatesSet.has(d)
+                        const scheduled = isScheduledDay(d)
+                        const fillable = hasLesson || scheduled
                         const val = s.dates[d]
-                        if (!hasLesson) {
+                        if (!fillable) {
                           return (
                             <td
                               key={d}
-                              className={`att-cell-nolesson${isToday ? ' att-cell-today' : ''}${isAdmin ? ' att-cell-nolesson-admin' : ''}`}
-                              onClick={isAdmin ? () => handleAddDate(d) : undefined}
-                              title={isAdmin ? "Bosing: bu kunga dars qo'shish" : undefined}
+                              className={`att-cell-nolesson${isToday ? ' att-cell-today' : ''}${canEditAttendance ? ' att-cell-nolesson-admin' : ''}`}
+                              onClick={canEditAttendance ? () => handleAddDate(d) : undefined}
+                              title={canEditAttendance ? "Bosing: bu kunga dars qo'shish" : undefined}
                             />
                           )
                         }
                         return (
                           <td
                             key={d}
-                            className={`att-cell${isToday ? ' att-cell-today' : ''} ${val === true ? 'att-present' : val === false ? 'att-absent' : 'att-empty'}`}
+                            className={`att-cell${isToday ? ' att-cell-today' : ''}${scheduled ? ' att-col-scheduled' : ''} ${val === true ? 'att-present' : val === false ? 'att-absent' : 'att-empty'}`}
                             onClick={() => handleToggle(s.student_id, d, val)}
                             title="Bosing: Keldi → Kelmadi → Belgilanmagan"
                           >
-                            {val === true && <FontAwesomeIcon icon={faCheck} />}
-                            {val === false && <FontAwesomeIcon icon={faXmark} />}
-                            {(val === null || val === undefined) && <FontAwesomeIcon icon={faMinus} className="text-muted" />}
+                            <span className="att-mark">
+                              {val === true && <FontAwesomeIcon icon={faCheck} />}
+                              {val === false && <FontAwesomeIcon icon={faXmark} />}
+                              {(val === null || val === undefined) && <FontAwesomeIcon icon={faMinus} />}
+                            </span>
                           </td>
                         )
                       })}
                       <td className="att-total-col">
-                        <span style={{ color: '#22c55e', fontWeight: 600 }}>{s.present_count}</span>
-                        <span className="text-muted">/{totalLessons}</span>
+                        <span className="att-total-pill">
+                          <span style={{ color: 'var(--success)', fontWeight: 700 }}>{s.present_count}</span>
+                          <span className="text-muted">/{totalLessons}</span>
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -438,53 +507,40 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
         </div>
       </div>
 
-      {/* Discount modal */}
-      {discountModal && (
-        <div className="modal-overlay" onClick={() => setDiscountModal(null)}>
+      {/* Uy vazifasi modal */}
+      {hwModal && (
+        <div className="modal-overlay" onClick={() => setHwModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3><FontAwesomeIcon icon={faPercent} /> {discountModal.student_name} — Chegirma</h3>
-              <button className="modal-close" onClick={() => setDiscountModal(null)}>✕</button>
+              <h3><FontAwesomeIcon icon={faPaperPlane} /> Uy vazifasi — {group.name}</h3>
+              <button className="modal-close" onClick={() => setHwModal(false)}>✕</button>
             </div>
             <div className="modal-body">
-              {discountModal.tariff_name && (
-                <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 13 }}>
-                  Asosiy tarif: <strong>{discountModal.tariff_name}</strong> —{' '}
-                  {Number(discountModal.tariff_price).toLocaleString()} so'm/oy
+              {nextLesson && (
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--bg-secondary, #f5f5f5)', borderRadius: 8, fontSize: 13 }}>
+                  <div><strong>#{nextLesson.lesson_number}-dars</strong> (metodika bo'yicha)</div>
+                  {nextLesson.lesson_title && <div>{nextLesson.lesson_title}</div>}
                 </div>
               )}
-              <label>Chegirma tanlang</label>
-              <select
+              <label>Uy vazifasi matni *</label>
+              <textarea
                 className="field"
-                value={selectedDiscount}
-                onChange={e => setSelectedDiscount(e.target.value)}
-              >
-                <option value="">— Chegirmasiz —</option>
-                {discounts.filter(d => d.is_active).map(d => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} ({d.discount_type === 'percent' ? `${Number(d.value)}%` : `${Number(d.value).toLocaleString()} so'm`})
-                  </option>
-                ))}
-              </select>
-              {selectedDiscount && discountModal.tariff_price && (() => {
-                const d = discounts.find(x => x.id === parseInt(selectedDiscount))
-                if (!d) return null
-                const base = Number(discountModal.tariff_price)
-                const eff  = d.discount_type === 'percent'
-                  ? Math.round(base * (1 - Number(d.value) / 100))
-                  : Math.max(0, base - Number(d.value))
-                return (
-                  <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 13 }}>
-                    Chegirmadan keyin: <s style={{ color: '#ef4444' }}>{base.toLocaleString()} so'm</s>
-                    {' → '}<strong style={{ color: '#22c55e' }}>{eff.toLocaleString()} so'm</strong>
-                  </div>
-                )
-              })()}
+                rows={6}
+                value={hwText}
+                onChange={e => setHwText(e.target.value)}
+                placeholder="Uy vazifasini yozing..."
+                style={{ resize: 'vertical', minHeight: 100 }}
+              />
+              <div className="text-muted" style={{ fontSize: 12, marginTop: 6 }}>
+                {group.telegram_chat_id
+                  ? <>Saqlanadi va guruh Telegram chatiga yuboriladi ✓</>
+                  : <>⚠️ Guruhga Telegram chat ID biriktirilmagan — faqat bazaga saqlanadi. Guruhni tahrirlashda chat ID kiriting.</>}
+              </div>
             </div>
             <div className="modal-footer">
-              <button className="button secondary" onClick={() => setDiscountModal(null)}>Bekor</button>
-              <button className="button primary" onClick={handleApplyDiscount} disabled={applyingSave}>
-                {applyingSave ? 'Saqlanmoqda...' : 'Saqlash'}
+              <button className="button secondary" onClick={() => setHwModal(false)}>Bekor</button>
+              <button className="button primary" onClick={handleSendHomework} disabled={hwSending}>
+                <FontAwesomeIcon icon={faPaperPlane} /> {hwSending ? 'Yuborilmoqda...' : 'Saqlash va yuborish'}
               </button>
             </div>
           </div>

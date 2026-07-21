@@ -34,6 +34,17 @@ def setup_db():
     Base.metadata.drop_all(bind=engine)
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiters():
+    """Login rate-limiterlar modul-global — testlar bir xil IP'dan kelgani uchun
+    har testdan oldin tozalanadi (aks holda 429 ga uriladi)."""
+    from backend import main as _main
+    from backend import security as _security
+    _main._rate_hits.clear()
+    _security._hits.clear()
+    yield
+
+
 @pytest.fixture
 def db():
     session = TestSessionLocal()

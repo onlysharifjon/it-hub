@@ -5,7 +5,7 @@ import {
   faWallet, faChevronDown, faChevronRight,
   faCircleCheck, faCircleXmark, faFileExcel,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchFinanceMonthly, exportExcelUrl } from '../api'
+import { fetchFinanceMonthly, exportExcelUrl, openDownload } from '../api'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
@@ -40,7 +40,7 @@ export default function Finance() {
     <div className="page">
       <div className="page-header">
         <h1><FontAwesomeIcon icon={faWallet} className="page-icon" /> Moliya</h1>
-        <button className="button secondary" onClick={() => window.open(exportExcelUrl(month, year), '_blank')}>
+        <button className="button secondary" onClick={() => openDownload(exportExcelUrl(month, year))}>
           <FontAwesomeIcon icon={faFileExcel} /> Excel
         </button>
       </div>

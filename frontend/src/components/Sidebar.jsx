@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import MinaretLogo from './MinaretLogo'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -6,10 +6,11 @@ import {
   faChartBar, faRightFromBracket, faChevronDown,
   faCalendarCheck, faTag, faWallet, faUserShield,
   faChalkboardTeacher, faReceipt, faCamera,
-  faHeadset, faBullseye, faGraduationCap, faPercent,
+  faHeadset, faBullseye, faStar, faBell,
+  faPen, faGraduationCap, faCommentDots, faPeopleRoof,
 } from '@fortawesome/free-solid-svg-icons'
 import { toast } from 'react-hot-toast'
-import { uploadAvatar, API_BASE } from '../api'
+import { uploadAvatar, updateProfile, fetchFeedbackNewCount, API_BASE } from '../api'
 import { useTheme } from '../ThemeContext'
 
 const CATEGORIES = [
@@ -27,19 +28,71 @@ function Sidebar({
   const isMetodist   = currentUser?.role === 'metodist' || isAdmin
   const isTeacher    = currentUser?.role === 'teacher'
   const isHunter     = currentUser?.role === 'hunter'
+  const isSales      = currentUser?.role === 'sales'
   const isCallCenter = currentUser?.role === 'call_center'
-  const hasCrmAccess = isHunter || isCallCenter || isAdmin
+  const hasCrmAccess = isHunter || isSales || isCallCenter || isAdmin
 
   const [catOpen, setCatOpen] = useState(activePage === 'lessons')
   const [uploading, setUploading] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [profileForm, setProfileForm] = useState({ full_name: '', current_password: '', password: '', password2: '' })
+  const [savingProfile, setSavingProfile] = useState(false)
   const { theme, setTheme } = useTheme()
   const fileInputRef = useRef(null)
+
+  // Yangi (hal qilinmagan) o'quvchi izohlari soni — qizil badge (hunter/call_center/admin)
+  const canSeeFeedbacks = isHunter || isCallCenter || isAdmin
+  const [feedbackCount, setFeedbackCount] = useState(0)
+  useEffect(() => {
+    if (!canSeeFeedbacks) return
+    let alive = true
+    async function refresh() {
+      try {
+        const r = await fetchFeedbackNewCount()
+        if (alive) setFeedbackCount(r.count || 0)
+      } catch { /* jim — badge ikkilamchi */ }
+    }
+    refresh()
+    const t = setInterval(refresh, 60000)
+    window.addEventListener('feedbacks-changed', refresh)
+    return () => { alive = false; clearInterval(t); window.removeEventListener('feedbacks-changed', refresh) }
+  }, [canSeeFeedbacks])
+
+  function openProfile() {
+    setProfileForm({ full_name: currentUser?.full_name || '', current_password: '', password: '', password2: '' })
+    setProfileOpen(true)
+  }
+
+  async function handleProfileSave() {
+    const payload = {}
+    const name = profileForm.full_name.trim()
+    if (name !== (currentUser?.full_name || '')) payload.full_name = name
+    if (profileForm.password) {
+      if (profileForm.password.length < 8) { toast.error("Yangi parol kamida 8 belgi bo'lsin"); return }
+      if (profileForm.password !== profileForm.password2) { toast.error('Parollar mos kelmadi'); return }
+      if (!profileForm.current_password) { toast.error('Joriy parolni kiriting'); return }
+      payload.password = profileForm.password
+      payload.current_password = profileForm.current_password
+    }
+    if (Object.keys(payload).length === 0) { setProfileOpen(false); return }
+    setSavingProfile(true)
+    try {
+      const updated = await updateProfile(payload)
+      onAvatarUpdate?.(updated)
+      toast.success('Profil yangilandi')
+      setProfileOpen(false)
+    } catch (err) {
+      toast.error(err.message || 'Xatolik')
+    } finally {
+      setSavingProfile(false)
+    }
+  }
 
   const avatarLetter = (currentUser?.full_name || currentUser?.username)?.[0]?.toUpperCase() ?? '?'
   const avatarUrl    = currentUser?.avatar ? `${API_BASE}/uploads/${currentUser.avatar}` : null
   const roleLabels   = {
     admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi",
-    hunter: 'Hunter', call_center: 'Call Center',
+    hunter: 'Hunter', call_center: 'Call Center', sales: 'Sales',
   }
 
   async function handleAvatarFile(e) {
@@ -80,18 +133,10 @@ function Sidebar({
       </div>
 
       <nav className="sidebar-nav">
-        {/* Metodika — metodist, teacher, admin (Hunter ko'rmaydi) */}
-        {!isHunter && (
+        {/* Metodika — metodist, teacher, admin (Hunter, Sales va Call Center ko'rmaydi) */}
+        {!isHunter && !isSales && !isCallCenter && (
           <>
             <div className="nav-section-label">Metodika</div>
-            {isMetodist && (
-              <button
-                className={`nav-page-btn ${activePage === 'courses' ? 'active' : ''}`}
-                onClick={() => onNavigate('courses')}
-              >
-                <FontAwesomeIcon icon={faGraduationCap} fixedWidth /> Kurslar
-              </button>
-            )}
             <button
               className={`nav-page-btn ${activePage === 'lessons' ? 'active' : ''}`}
               onClick={handleLessonsClick}
@@ -120,7 +165,7 @@ function Sidebar({
           </>
         )}
 
-        {/* Hunter — Tariflar va Chegirmalar */}
+        {/* Hunter — Tariflar va Special */}
         {isHunter && (
           <>
             <div className="nav-section-label">Narxlar</div>
@@ -131,10 +176,10 @@ function Sidebar({
               <FontAwesomeIcon icon={faTag} fixedWidth /> Kurs tariflari
             </button>
             <button
-              className={`nav-page-btn ${activePage === 'discounts' ? 'active' : ''}`}
-              onClick={() => onNavigate('discounts')}
+              className={`nav-page-btn ${activePage === 'special' ? 'active' : ''}`}
+              onClick={() => onNavigate('special')}
             >
-              <FontAwesomeIcon icon={faPercent} fixedWidth /> Chegirmalar
+              <FontAwesomeIcon icon={faStar} fixedWidth /> Special
             </button>
           </>
         )}
@@ -161,7 +206,44 @@ function Sidebar({
               onClick={() => onNavigate('leads')}
             >
               <FontAwesomeIcon icon={isHunter ? faBullseye : faHeadset} fixedWidth />
-              {isHunter ? ' Mening lidlarim' : ' Lidlar'}
+              {' Lidlar'}
+            </button>
+            <button
+              className={`nav-page-btn ${activePage === 'notifications' ? 'active' : ''}`}
+              onClick={() => onNavigate('notifications')}
+            >
+              <FontAwesomeIcon icon={faBell} fixedWidth /> Notifications
+            </button>
+            {canSeeFeedbacks && (
+              <button
+                className={`nav-page-btn ${activePage === 'feedbacks' ? 'active' : ''}`}
+                onClick={() => onNavigate('feedbacks')}
+              >
+                <FontAwesomeIcon icon={faCommentDots} fixedWidth />
+                <span style={{ flex: 1 }}>Izohlar</span>
+                {feedbackCount > 0 && <span className="nav-badge">{feedbackCount > 99 ? '99+' : feedbackCount}</span>}
+              </button>
+            )}
+            {(isHunter || isAdmin) && (
+              <button
+                className={`nav-page-btn ${activePage === 'parents' ? 'active' : ''}`}
+                onClick={() => onNavigate('parents')}
+              >
+                <FontAwesomeIcon icon={faPeopleRoof} fixedWidth /> Ota-onalar
+              </button>
+            )}
+          </>
+        )}
+
+        {/* Akademik — teacher + metodist + hunter + admin (baholar, izohlar, sertifikatlar, tadbirlar) */}
+        {!isCallCenter && !isSales && (
+          <>
+            <div className="nav-section-label mt-3">Akademik</div>
+            <button
+              className={`nav-page-btn ${activePage === 'academic' ? 'active' : ''}`}
+              onClick={() => onNavigate('academic')}
+            >
+              <FontAwesomeIcon icon={faGraduationCap} fixedWidth /> Baholar va izohlar
             </button>
           </>
         )}
@@ -176,7 +258,7 @@ function Sidebar({
         </button>
 
         {/* LMS */}
-        {(isMetodist || isHunter || isCallCenter) && (
+        {(isMetodist || isHunter || isSales || isCallCenter) && (
           <>
             <div className="nav-section-label mt-3">LMS</div>
             <button
@@ -191,14 +273,6 @@ function Sidebar({
             >
               <FontAwesomeIcon icon={faUsers} fixedWidth /> Guruhlar
             </button>
-            {(isCallCenter) && (
-              <button
-                className={`nav-page-btn ${activePage === 'payments' ? 'active' : ''}`}
-                onClick={() => onNavigate('payments')}
-              >
-                <FontAwesomeIcon icon={faCreditCard} fixedWidth /> To'lovlar
-              </button>
-            )}
           </>
         )}
 
@@ -223,6 +297,12 @@ function Sidebar({
               onClick={() => onNavigate('tariffs')}
             >
               <FontAwesomeIcon icon={faTag} fixedWidth /> Tariflar
+            </button>
+            <button
+              className={`nav-page-btn ${activePage === 'special' ? 'active' : ''}`}
+              onClick={() => onNavigate('special')}
+            >
+              <FontAwesomeIcon icon={faStar} fixedWidth /> Special
             </button>
             <button
               className={`nav-page-btn ${activePage === 'teacher_salaries' ? 'active' : ''}`}
@@ -280,6 +360,9 @@ function Sidebar({
               <span className="user-name">{currentUser.full_name || currentUser.username}</span>
               <span className="role-badge">{roleLabels[currentUser.role] || currentUser.role}</span>
             </div>
+            <button className="profile-edit-btn" onClick={openProfile} title="Profilni tahrirlash">
+              <FontAwesomeIcon icon={faPen} />
+            </button>
           </div>
         )}
 
@@ -308,6 +391,63 @@ function Sidebar({
           <FontAwesomeIcon icon={faRightFromBracket} /> Chiqish
         </button>
       </div>
+
+      {profileOpen && (
+        <div className="modal-overlay" onClick={() => setProfileOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Profilni tahrirlash</h3>
+              <button className="modal-close" onClick={() => setProfileOpen(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <label>Login</label>
+              <input className="field" value={currentUser?.username || ''} disabled />
+              <label>To'liq ism</label>
+              <input
+                className="field"
+                value={profileForm.full_name}
+                onChange={e => setProfileForm(p => ({ ...p, full_name: e.target.value }))}
+                placeholder="Ism Familiya"
+              />
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border, #e5e7eb)', margin: '16px 0' }} />
+              <p style={{ fontSize: 13, opacity: 0.7, margin: '0 0 8px' }}>Parolni o'zgartirish (ixtiyoriy)</p>
+              <label>Joriy parol</label>
+              <input
+                className="field"
+                type="password"
+                value={profileForm.current_password}
+                onChange={e => setProfileForm(p => ({ ...p, current_password: e.target.value }))}
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
+              <label>Yangi parol</label>
+              <input
+                className="field"
+                type="password"
+                value={profileForm.password}
+                onChange={e => setProfileForm(p => ({ ...p, password: e.target.value }))}
+                placeholder="Kamida 8 belgi"
+                autoComplete="new-password"
+              />
+              <label>Yangi parolni takrorlang</label>
+              <input
+                className="field"
+                type="password"
+                value={profileForm.password2}
+                onChange={e => setProfileForm(p => ({ ...p, password2: e.target.value }))}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setProfileOpen(false)}>Bekor</button>
+              <button className="button primary" onClick={handleProfileSave} disabled={savingProfile}>
+                {savingProfile ? 'Saqlanmoqda...' : 'Saqlash'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   )
 }

@@ -3,9 +3,9 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faTrash, faFileExcel, faCreditCard,
-  faChevronDown, faFilter, faPrint,
+  faChevronDown, faFilter, faPrint, faMoneyBillWave, faPen,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchPayments, createPayment, deletePayment, fetchStudents, fetchGroups, exportExcelUrl, receiptUrl } from '../api'
+import { fetchPayments, createPayment, updatePayment, deletePayment, fetchStudents, fetchGroups, exportExcelUrl, receiptUrl, openDownload, fetchPaymentExpected } from '../api'
 import Pagination from './Pagination'
 import DateFilter from './DateFilter'
 
@@ -13,14 +13,17 @@ const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','S
 const NOW = new Date()
 const EMPTY = { student_id: '', group_id: '', amount: '', month: NOW.getMonth() + 1, year: NOW.getFullYear(), notes: '' }
 
-export default function Payments() {
+export default function Payments({ currentUser }) {
+  const isAdmin = currentUser?.role === 'admin'
   const [data, setData] = useState({ items: [], meta: null })
   const [students, setStudents] = useState([])
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(false)
   const [modal, setModal] = useState(false)
+  const [editing, setEditing] = useState(null)   // tahrirlanayotgan to'lov id'si
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
+  const [expected, setExpected] = useState(null)   // { expected, paid, remaining }
   const [page, setPage] = useState(1)
   const [filter, setFilter] = useState({ month: NOW.getMonth() + 1, year: NOW.getFullYear() })
   const [dateFilter, setDateFilter] = useState({ preset: 'all', date_from: '', date_to: '' })
@@ -30,6 +33,17 @@ export default function Payments() {
     fetchGroups({ page_size: 100 }).then(r => setGroups(r.items || []))
     load(filter, dateFilter, 1)
   }, [])
+
+  useEffect(() => {
+    const { student_id, group_id, month, year } = form
+    if (modal && student_id && group_id && month && year) {
+      fetchPaymentExpected({ student_id, group_id, month, year })
+        .then(setExpected)
+        .catch(() => setExpected(null))
+    } else {
+      setExpected(null)
+    }
+  }, [modal, form.student_id, form.group_id, form.month, form.year])
 
   async function load(f = filter, df = dateFilter, p = page) {
     setLoading(true)
@@ -65,27 +79,51 @@ export default function Payments() {
     if (!form.student_id || !form.group_id || !form.amount) return toast.error("Barcha maydonlarni to'ldiring")
     setSaving(true)
     try {
-      await createPayment({
-        student_id: parseInt(form.student_id),
-        group_id: parseInt(form.group_id),
-        amount: parseFloat(form.amount),
-        month: parseInt(form.month),
-        year: parseInt(form.year),
-        notes: form.notes || null,
-      })
+      if (editing) {
+        await updatePayment(editing, {
+          amount: parseFloat(form.amount),
+          month: parseInt(form.month),
+          year: parseInt(form.year),
+          notes: form.notes || null,
+        })
+        toast.success("To'lov yangilandi")
+      } else {
+        await createPayment({
+          student_id: parseInt(form.student_id),
+          group_id: parseInt(form.group_id),
+          amount: parseFloat(form.amount),
+          month: parseInt(form.month),
+          year: parseInt(form.year),
+          notes: form.notes || null,
+        })
+        toast.success("To'lov qo'shildi")
+      }
       setModal(false)
+      setEditing(null)
       setForm(EMPTY)
-      toast.success("To'lov qo'shildi")
       load(filter, page)
     } catch (e) { toast.error(e.message) }
     finally { setSaving(false) }
   }
 
+  function handleEdit(p) {
+    setEditing(p.id)
+    setForm({
+      student_id: String(p.student_id),
+      group_id: String(p.group_id),
+      amount: String(p.amount),
+      month: p.month,
+      year: p.year,
+      notes: p.notes || '',
+    })
+    setModal(true)
+  }
+
   async function handleDelete(id) {
-    if (!confirm("To'lovni o'chirishni tasdiqlaysizmi?")) return
+    if (!confirm("To'lov bekor qilinadi va talaba yana to'lanmagan holatga qaytadi. Tasdiqlaysizmi?")) return
     try {
       await deletePayment(id)
-      toast.success("O'chirildi")
+      toast.success("To'lov bekor qilindi")
       load(filter, page)
     } catch (e) { toast.error(e.message) }
   }
@@ -102,10 +140,10 @@ export default function Payments() {
           To'lovlar
         </h1>
         <div className="header-actions">
-          <button className="button secondary" onClick={() => window.open(exportExcelUrl(filter.month, filter.year), '_blank')}>
+          <button className="button secondary" onClick={() => openDownload(exportExcelUrl(filter.month, filter.year))}>
             <FontAwesomeIcon icon={faFileExcel} /> Excel
           </button>
-          <button className="button primary" onClick={() => { setForm(EMPTY); setModal(true) }}>
+          <button className="button primary" onClick={() => { setEditing(null); setForm(EMPTY); setModal(true) }}>
             <FontAwesomeIcon icon={faPlus} /> To'lov qo'shish
           </button>
         </div>
@@ -141,6 +179,7 @@ export default function Payments() {
                   <th>Talaba</th>
                   <th>Guruh</th>
                   <th>Miqdor</th>
+                  <th>Holat</th>
                   <th>Oy / Yil</th>
                   <th>Sana</th>
                   <th>Izoh</th>
@@ -154,6 +193,13 @@ export default function Payments() {
                     <td>{p.student_name}</td>
                     <td>{p.group_name}</td>
                     <td className="amount">{Number(p.amount).toLocaleString()} so'm</td>
+                    <td>
+                      {p.status === 'paid'
+                        ? <span className="badge" style={{ background: '#dcfce7', color: '#16a34a' }}>To'landi</span>
+                        : p.status === 'partial'
+                          ? <span className="badge" style={{ background: '#fef3c7', color: '#d97706' }}>Qoldi: {Number(p.remaining || 0).toLocaleString()}</span>
+                          : <span className="text-muted">—</span>}
+                    </td>
                     <td>{MONTHS[p.month - 1]} {p.year}</td>
                     <td>{new Date(p.paid_at).toLocaleDateString('uz')}</td>
                     <td>{p.notes || <span className="text-muted">—</span>}</td>
@@ -161,18 +207,25 @@ export default function Payments() {
                       <button
                         className="btn-icon"
                         title="Chek ko'rish"
-                        onClick={() => window.open(receiptUrl(p.id), '_blank')}
+                        onClick={() => openDownload(receiptUrl(p.id))}
                       >
                         <FontAwesomeIcon icon={faPrint} />
                       </button>
-                      <button className="btn-icon danger" onClick={() => handleDelete(p.id)}>
-                        <FontAwesomeIcon icon={faTrash} />
-                      </button>
+                      {isAdmin && (
+                        <>
+                          <button className="btn-icon" title="Tahrirlash" onClick={() => handleEdit(p)}>
+                            <FontAwesomeIcon icon={faPen} />
+                          </button>
+                          <button className="btn-icon danger" title="To'lovni bekor qilish" onClick={() => handleDelete(p.id)}>
+                            <FontAwesomeIcon icon={faTrash} />
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
                 {payments.length === 0 && (
-                  <tr><td colSpan={8} className="muted center py-4">To'lovlar yo'q</td></tr>
+                  <tr><td colSpan={9} className="muted center py-4">To'lovlar yo'q</td></tr>
                 )}
               </tbody>
             </table>
@@ -182,25 +235,46 @@ export default function Payments() {
       )}
 
       {modal && (
-        <div className="modal-overlay" onClick={() => setModal(false)}>
+        <div className="modal-overlay" onClick={() => { setModal(false); setEditing(null) }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3><FontAwesomeIcon icon={faCreditCard} /> Yangi to'lov</h3>
-              <button className="modal-close" onClick={() => setModal(false)}>✕</button>
+              <h3><FontAwesomeIcon icon={faCreditCard} /> {editing ? "To'lovni tahrirlash" : "Yangi to'lov"}</h3>
+              <button className="modal-close" onClick={() => { setModal(false); setEditing(null) }}>✕</button>
             </div>
             <div className="modal-body">
               <label>Talaba *</label>
-              <select className="field" value={form.student_id} onChange={e => setForm(p => ({ ...p, student_id: e.target.value }))}>
+              <select className="field" value={form.student_id} disabled={!!editing} onChange={e => setForm(p => ({ ...p, student_id: e.target.value }))}>
                 <option value="">— Tanlang —</option>
                 {students.map(s => <option key={s.id} value={s.id}>{s.full_name} ({s.phone1})</option>)}
               </select>
               <label>Guruh *</label>
-              <select className="field" value={form.group_id} onChange={e => setForm(p => ({ ...p, group_id: e.target.value }))}>
+              <select className="field" value={form.group_id} disabled={!!editing} onChange={e => setForm(p => ({ ...p, group_id: e.target.value }))}>
                 <option value="">— Tanlang —</option>
                 {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
               <label>Miqdor (so'm) *</label>
-              <input className="field" type="number" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} placeholder="500000" />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input className="field" style={{ flex: 1 }} type="number" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} placeholder="500000" />
+                {expected && expected.remaining > 0 && (
+                  <button type="button" className="button secondary" title="To'liq summani yozish"
+                    onClick={() => setForm(p => ({ ...p, amount: String(expected.remaining) }))}>
+                    <FontAwesomeIcon icon={faMoneyBillWave} /> To'liq
+                  </button>
+                )}
+              </div>
+              {expected && expected.expected > 0 && (() => {
+                const entered = parseFloat(form.amount) || 0
+                const left = Math.max(0, expected.remaining - entered)
+                return (
+                  <div style={{ margin: '8px 0 2px', fontSize: 13, lineHeight: 1.7 }}>
+                    <div>To'liq oylik: <strong>{expected.expected.toLocaleString()} so'm</strong></div>
+                    <div>Avval to'langan: <strong>{expected.paid.toLocaleString()} so'm</strong></div>
+                    <div style={{ color: left > 0 ? '#d97706' : '#16a34a', fontWeight: 700 }}>
+                      {left > 0 ? `Qoladi: ${left.toLocaleString()} so'm` : "To'liq to'lanadi ✓"}
+                    </div>
+                  </div>
+                )
+              })()}
               <div className="row-2">
                 <div>
                   <label>Oy *</label>
@@ -219,7 +293,7 @@ export default function Payments() {
               <input className="field" value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Ixtiyoriy" />
             </div>
             <div className="modal-footer">
-              <button className="button secondary" onClick={() => setModal(false)}>Bekor</button>
+              <button className="button secondary" onClick={() => { setModal(false); setEditing(null) }}>Bekor</button>
               <button className="button primary" onClick={handleSave} disabled={saving}>
                 {saving ? 'Saqlanmoqda...' : 'Saqlash'}
               </button>

@@ -7,7 +7,7 @@ import {
   faPlus, faPen, faTrash, faXmark,
 } from '@fortawesome/free-solid-svg-icons'
 import {
-  fetchStatsOverview, exportExcelUrl,
+  fetchStatsOverview, exportExcelUrl, openDownload,
   fetchExpenses, createExpense, updateExpense, deleteExpense,
 } from '../api'
 
@@ -113,7 +113,7 @@ export default function Dashboard({ onNavigate }) {
           <select className="field-sm" value={year} onChange={e => setYear(parseInt(e.target.value))}>
             {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-          <button className="button secondary" onClick={() => window.open(exportExcelUrl(), '_blank')}>
+          <button className="button secondary" onClick={() => openDownload(exportExcelUrl())}>
             <FontAwesomeIcon icon={faFileExcel} /> Excel
           </button>
         </div>

@@ -14,6 +14,11 @@ export function ThemeProvider({ children }) {
     localStorage.setItem('theme', theme)
   }, [theme])
 
+  // Yangi dizayn — asosiy (main) UI. Doimo yoqiq.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-ui', 'beta')
+  }, [])
+
   return (
     <ThemeContext.Provider value={{ theme, setTheme }}>
       {children}

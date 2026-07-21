@@ -7,8 +7,14 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { fetchUsers, createUser, updateUser, blockUser, unblockUser } from '../api'
 
-const ROLE_LABELS = { admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi" }
-const ROLE_COLORS = { admin: '#2563eb', metodist: '#7c3aed', teacher: '#374151' }
+const ROLE_LABELS = {
+  admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi",
+  hunter: 'Hunter', call_center: 'Call Center', sales: 'Sales',
+}
+const ROLE_COLORS = {
+  admin: '#2563eb', metodist: '#7c3aed', teacher: '#374151',
+  hunter: '#ea580c', call_center: '#0d9488', sales: '#16a34a',
+}
 
 function statusLabel(u) {
   if (u.blocked_at) return 'blocked'
@@ -267,6 +273,9 @@ export default function Users() {
                   onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
                   <option value="teacher">O'qituvchi</option>
                   <option value="metodist">Metodist</option>
+                  <option value="hunter">Hunter</option>
+                  <option value="sales">Sales</option>
+                  <option value="call_center">Call Center</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>

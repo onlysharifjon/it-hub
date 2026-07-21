@@ -4,8 +4,9 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faCalendarCheck, faCheck, faXmark,
   faArrowLeft, faUsers, faChalkboardTeacher, faCalendarDay,
+  faUmbrellaBeach, faPlus, faTrash,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchTodayGroups, fetchAttendance, saveAttendance } from '../api'
+import { fetchTodayGroups, fetchAttendance, saveAttendance, fetchHolidays, createHoliday, deleteHoliday } from '../api'
 
 const TODAY_STR = new Date().toISOString().slice(0, 10)
 const DAY_NAMES = ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba']
@@ -17,6 +18,7 @@ function formatDateLabel(dateStr) {
 
 export default function TodayAttendance({ currentUser }) {
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'metodist'
+  const isSuperAdmin = currentUser?.role === 'admin'
 
   const [selectedDate, setSelectedDate] = useState(TODAY_STR)
   const [groups, setGroups] = useState([])
@@ -29,7 +31,44 @@ export default function TodayAttendance({ currentUser }) {
   const [saving, setSaving] = useState(false)
   const [attLoading, setAttLoading] = useState(false)
 
+  // Holidays (dam olish kunlari)
+  const [holidays, setHolidays] = useState([])
+  const [holidayModal, setHolidayModal] = useState(false)
+  const [hForm, setHForm] = useState({ name: '', start_date: TODAY_STR, end_date: TODAY_STR })
+  const [hSaving, setHSaving] = useState(false)
+
   useEffect(() => { load(selectedDate) }, [selectedDate])
+  useEffect(() => { loadHolidays() }, [selectedDate.slice(0, 4)])
+
+  async function loadHolidays() {
+    try { setHolidays(await fetchHolidays(parseInt(selectedDate.slice(0, 4)))) }
+    catch { /* jim — banner shart emas */ }
+  }
+
+  const activeHoliday = holidays.find(h => selectedDate >= h.start_date && selectedDate <= h.end_date)
+
+  async function handleHolidaySave() {
+    if (!hForm.name.trim()) return toast.error("Nomini kiriting")
+    if (!hForm.start_date || !hForm.end_date) return toast.error("Sanalarni kiriting")
+    if (hForm.end_date < hForm.start_date) return toast.error("Tugash sanasi boshlanishdan oldin bo'lmasin")
+    setHSaving(true)
+    try {
+      await createHoliday(hForm)
+      toast.success("Dam olish kuni belgilandi")
+      setHForm({ name: '', start_date: TODAY_STR, end_date: TODAY_STR })
+      await loadHolidays()
+    } catch (e) { toast.error(e.message) }
+    finally { setHSaving(false) }
+  }
+
+  async function handleHolidayDelete(id) {
+    if (!confirm("Dam olish kunini o'chirishni tasdiqlaysizmi?")) return
+    try {
+      await deleteHoliday(id)
+      toast.success("O'chirildi")
+      await loadHolidays()
+    } catch (e) { toast.error(e.message) }
+  }
 
   async function load(d = selectedDate) {
     setLoading(true)
@@ -193,7 +232,29 @@ export default function TodayAttendance({ currentUser }) {
         ) : (
           <span style={{ fontSize: 13, fontWeight: 500 }}>{formatDateLabel(selectedDate)}</span>
         )}
+        {isSuperAdmin && (
+          <button className="button secondary small" style={{ marginLeft: 'auto' }} onClick={() => setHolidayModal(true)}>
+            <FontAwesomeIcon icon={faUmbrellaBeach} /> Dam olish kunlari
+          </button>
+        )}
       </div>
+
+      {activeHoliday && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '12px 16px', marginBottom: 16, borderRadius: 10,
+          background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d',
+          fontWeight: 600, fontSize: 14,
+        }}>
+          <FontAwesomeIcon icon={faUmbrellaBeach} style={{ fontSize: 20 }} />
+          <div>
+            Dam olish kuni: {activeHoliday.name}
+            <div style={{ fontWeight: 400, fontSize: 12, marginTop: 2 }}>
+              {new Date(activeHoliday.start_date + 'T00:00:00').toLocaleDateString('uz')} — {new Date(activeHoliday.end_date + 'T00:00:00').toLocaleDateString('uz')}
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="muted center py-8">Yuklanmoqda...</div>
@@ -236,6 +297,57 @@ export default function TodayAttendance({ currentUser }) {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Holiday manage modal (faqat superadmin) */}
+      {holidayModal && (
+        <div className="modal-overlay" onClick={() => setHolidayModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><FontAwesomeIcon icon={faUmbrellaBeach} /> Dam olish kunlari</h3>
+              <button className="modal-close" onClick={() => setHolidayModal(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <label>Nomi / sababi *</label>
+              <input className="field" value={hForm.name} placeholder="Masalan: Navro'z bayrami"
+                onChange={e => setHForm(p => ({ ...p, name: e.target.value }))} />
+              <div className="row-2">
+                <div>
+                  <label>Boshlanish sanasi *</label>
+                  <input className="field" type="date" value={hForm.start_date}
+                    onChange={e => setHForm(p => ({ ...p, start_date: e.target.value, end_date: p.end_date < e.target.value ? e.target.value : p.end_date }))} />
+                </div>
+                <div>
+                  <label>Tugash sanasi *</label>
+                  <input className="field" type="date" value={hForm.end_date} min={hForm.start_date}
+                    onChange={e => setHForm(p => ({ ...p, end_date: e.target.value }))} />
+                </div>
+              </div>
+              <button className="button primary" style={{ marginTop: 10 }} onClick={handleHolidaySave} disabled={hSaving}>
+                <FontAwesomeIcon icon={faPlus} /> {hSaving ? 'Saqlanmoqda...' : "Qo'shish"}
+              </button>
+
+              {holidays.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <label>Belgilangan kunlar ({selectedDate.slice(0, 4)})</label>
+                  {holidays.map(h => (
+                    <div key={h.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 8, background: 'var(--bg-secondary, #f5f5f5)', marginBottom: 6 }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{h.name}</div>
+                        <div className="text-muted" style={{ fontSize: 12 }}>
+                          {new Date(h.start_date + 'T00:00:00').toLocaleDateString('uz')} — {new Date(h.end_date + 'T00:00:00').toLocaleDateString('uz')}
+                        </div>
+                      </div>
+                      <button className="btn-icon danger" onClick={() => handleHolidayDelete(h.id)}>
+                        <FontAwesomeIcon icon={faTrash} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

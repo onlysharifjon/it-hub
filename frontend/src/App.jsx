@@ -12,9 +12,10 @@ import Students from './components/Students'
 import Groups from './components/Groups'
 import GroupDetail from './components/GroupDetail'
 import Payments from './components/Payments'
+import Special from './components/Special'
+import Notifications from './components/Notifications'
 import Dashboard from './components/Dashboard'
 import Tariffs from './components/Tariffs'
-import Courses from './components/Courses'
 import Finance from './components/Finance'
 import TodayAttendance from './components/TodayAttendance'
 import Users from './components/Users'
@@ -22,12 +23,22 @@ import TeacherSalaries from './components/TeacherSalaries'
 import TeacherDashboard from './components/TeacherDashboard'
 import Expenses from './components/Expenses'
 import Leads from './components/Leads'
-import Discounts from './components/Discounts'
+import Parents from './components/Parents'
+import FeedbackInbox from './components/FeedbackInbox'
+import Academic from './components/Academic'
+import PublicIntake from './components/PublicIntake'
 import { fetchMe, login as apiLogin, setToken } from './api'
 
 function readHash() {
   const raw = window.location.hash.replace('#', '').trim()
   return raw || 'lessons'
+}
+
+// Ommaviy (auth talab qilmaydigan) qabul formasi: #intake/<slug>
+function readIntakeSlug() {
+  const raw = window.location.hash.replace('#', '').trim()
+  const m = raw.match(/^intake\/([A-Za-z0-9_-]+)$/)
+  return m ? m[1] : null
 }
 
 function App() {
@@ -39,10 +50,12 @@ function App() {
     try { return JSON.parse(sessionStorage.getItem('selectedGroup')) || null } catch { return null }
   })
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [intakeSlug, setIntakeSlug] = useState(readIntakeSlug)
 
   // Sync state when user navigates with browser back/forward
   useEffect(() => {
     function onHashChange() {
+      setIntakeSlug(readIntakeSlug())
       const page = readHash()
       setActivePage(page)
       if (page !== 'group_detail') setSelectedGroup(null)
@@ -80,6 +93,16 @@ function App() {
     window.location.hash = page
     setActivePage(page)
     setSidebarOpen(false)
+  }
+
+  // Ommaviy qabul formasi — auth talab qilinmaydi
+  if (intakeSlug) {
+    return (
+      <ThemeProvider>
+        <Toaster position="top-right" />
+        <PublicIntake slug={intakeSlug} />
+      </ThemeProvider>
+    )
   }
 
   if (!isAuthed) {
@@ -126,7 +149,7 @@ function App() {
           {activePage === 'lessons' && (
             <Lessons category={selectedCategory} currentUser={currentUser} />
           )}
-          {activePage === 'students' && <Students />}
+          {activePage === 'students' && <Students currentUser={currentUser} />}
           {activePage === 'groups' && (
             <Groups onOpenGroup={g => {
               sessionStorage.setItem('selectedGroup', JSON.stringify(g))
@@ -146,12 +169,13 @@ function App() {
               setActivePage('group_detail')
             }} />
           )}
-          {activePage === 'payments' && <Payments />}
+          {activePage === 'payments' && <Payments currentUser={currentUser} />}
+          {activePage === 'special' && <Special />}
+          {activePage === 'notifications' && <Notifications />}
           {activePage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
           {activePage === 'teacher_salaries' && <TeacherSalaries />}
           {activePage === 'expenses' && <Expenses />}
           {activePage === 'tariffs' && <Tariffs />}
-          {activePage === 'courses' && <Courses />}
           {activePage === 'finance' && <Finance />}
           {activePage === 'teacher_dashboard' && (
             <TeacherDashboard currentUser={currentUser} onOpenGroup={g => {
@@ -169,8 +193,10 @@ function App() {
               setActivePage('group_detail')
             }} />
           )}
+          {activePage === 'academic' && <Academic currentUser={currentUser} />}
           {activePage === 'leads' && <Leads currentUser={currentUser} />}
-          {activePage === 'discounts' && <Discounts />}
+          {activePage === 'parents' && <Parents currentUser={currentUser} />}
+          {activePage === 'feedbacks' && <FeedbackInbox currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
         </div>
       </main>

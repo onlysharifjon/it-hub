@@ -3,17 +3,17 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faPen, faUsers, faUserPlus, faUserMinus,
-  faLock, faLockOpen,
+  faBoxArchive, faBoxOpen,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchGroups, createGroup, updateGroup,
   getGroup, addStudentToGroup, removeStudentFromGroup,
-  fetchStudents, fetchUsers, fetchTariffs, fetchCourses,
+  fetchStudents, fetchTeachers, fetchTariffs,
 } from '../api'
 import DateFilter from './DateFilter'
 import Pagination from './Pagination'
 
-const EMPTY_GROUP = { name: '', course_id: '', stage: 'foundation', teacher_id: '', course_price: '', teacher_pay_per_student: '', schedule: '', start_date: '' }
+const EMPTY_GROUP = { name: '', stage: 'foundation', teacher_id: '', tariff_id: '', course_price: '', teacher_pay_per_student: '', schedule: '', start_date: '', telegram_chat_id: '' }
 
 const STAGE_COLORS = {
   foundation: { bg: '#eff6ff', color: '#1d4ed8', bar: '#3b82f6' },
@@ -25,6 +25,7 @@ const STAGE_LABELS = { foundation: 'Foundation', frontend: 'Frontend', backend: 
 export default function Groups({ onOpenGroup }) {
   const [data, setData] = useState({ items: [], meta: null })
   const [dateFilter, setDateFilter] = useState({ preset: 'all', date_from: '', date_to: '' })
+  const [statusFilter, setStatusFilter] = useState('active')   // active | archived | all
   const [page, setPage] = useState(1)
   const [teachers, setTeachers] = useState([])
   const [allStudents, setAllStudents] = useState([])
@@ -36,20 +37,19 @@ export default function Groups({ onOpenGroup }) {
   const [addStudentId, setAddStudentId] = useState('')
   const [addTariffId, setAddTariffId] = useState('')
   const [tariffs, setTariffs] = useState([])
-  const [courses, setCourses] = useState([])
 
   useEffect(() => {
     load(dateFilter, page)
-    fetchUsers().then(r => setTeachers((r.items || r).filter(u => u.role === 'teacher' || u.role === 'metodist')))
+    fetchTeachers().then(r => setTeachers(r || [])).catch(() => setTeachers([]))
     fetchStudents({ is_active: true, page_size: 100 }).then(r => setAllStudents(r.items || []))
     fetchTariffs().then(r => setTariffs(r || []))
-    fetchCourses().then(r => setCourses(r || []))
   }, [])
 
-  async function load(df = dateFilter, p = page) {
+  async function load(df = dateFilter, p = page, sf = statusFilter) {
     setLoading(true)
     try {
       const res = await fetchGroups({
+        is_active: sf === 'all' ? undefined : sf === 'active',
         date_from: df.date_from || undefined,
         date_to: df.date_to || undefined,
         page: p, page_size: 20,
@@ -66,6 +66,12 @@ export default function Groups({ onOpenGroup }) {
     load(df, 1)
   }
 
+  function handleStatusFilter(sf) {
+    setStatusFilter(sf)
+    setPage(1)
+    load(dateFilter, 1, sf)
+  }
+
   function handlePageChange(p) {
     setPage(p)
     load(dateFilter, p)
@@ -76,31 +82,40 @@ export default function Groups({ onOpenGroup }) {
     setDetailGroup(g)
   }
 
-  function openAdd() { setForm(EMPTY_GROUP); setModal('add') }
+  function openAdd() {
+    // Default tanlov — "Pro" tarifi (bo'lsa), narxi avtomatik to'ladi
+    const pro = tariffs.find(t => t.is_active && t.name.toLowerCase() === 'pro')
+    setForm({ ...EMPTY_GROUP, tariff_id: pro ? String(pro.id) : '', course_price: pro ? pro.price : '' })
+    setModal('add')
+  }
   function openEdit(g) {
+    // Mavjud narxga mos tarifni topamiz (bo'lsa) — tanlangan holda ko'rsatish uchun
+    const matched = tariffs.find(t => Number(t.price) === Number(g.course_price))
     setForm({
-      name: g.name, course_id: g.course_id || '', stage: g.stage || 'foundation',
+      name: g.name, stage: g.stage || 'foundation',
       teacher_id: g.teacher_id || '',
+      tariff_id: matched ? String(matched.id) : '',
       course_price: g.course_price, teacher_pay_per_student: g.teacher_pay_per_student || '',
       schedule: g.schedule || '',
       start_date: g.start_date ? g.start_date.slice(0, 10) : '',
+      telegram_chat_id: g.telegram_chat_id || '',
     })
     setModal(g)
   }
 
   async function handleSave() {
     if (!form.name.trim()) return toast.error("Guruh nomi majburiy")
-    if (!form.course_id) return toast.error("Kursni tanlang")
+    if (!form.tariff_id) return toast.error("Iltimos tarif tanlang")
     setSaving(true)
     const payload = {
       name: form.name,
-      course_id: parseInt(form.course_id),
       stage: form.stage || 'foundation',
       teacher_id: form.teacher_id ? parseInt(form.teacher_id) : null,
+      // Narx tarifdan avtomatik keladi — qo'lda kiritilmaydi
       course_price: parseFloat(form.course_price) || 0,
-      teacher_pay_per_student: parseFloat(form.teacher_pay_per_student) || 0,
       schedule: form.schedule || null,
       start_date: form.start_date ? new Date(form.start_date).toISOString() : null,
+      telegram_chat_id: form.telegram_chat_id.trim() || null,
     }
     try {
       if (modal === 'add') {
@@ -117,8 +132,12 @@ export default function Groups({ onOpenGroup }) {
   }
 
   async function handleToggle(g) {
+    if (g.is_active) {
+      if (!confirm(`"${g.name}" guruhi arxivga olinadi. Arxivdagi guruh moliya, maosh va qarzdorlik hisobotlarida ko'rinmaydi. Davom etasizmi?`)) return
+    }
     try {
       await updateGroup(g.id, { is_active: !g.is_active })
+      toast.success(g.is_active ? 'Guruh arxivga olindi' : 'Guruh arxivdan chiqarildi')
       load(dateFilter, page)
     } catch { toast.error('Xatolik') }
   }
@@ -156,6 +175,17 @@ export default function Groups({ onOpenGroup }) {
       </div>
 
       <div className="toolbar">
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[['active', 'Faol'], ['archived', 'Arxiv'], ['all', 'Hammasi']].map(([val, label]) => (
+            <button
+              key={val}
+              className={`button small ${statusFilter === val ? 'primary' : 'secondary'}`}
+              onClick={() => handleStatusFilter(val)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <DateFilter value={dateFilter} onChange={handleDateFilter} />
         {data.meta && <span className="muted">Jami: {data.meta.total} ta guruh</span>}
       </div>
@@ -182,7 +212,7 @@ export default function Groups({ onOpenGroup }) {
                       {g.course_name || STAGE_LABELS[g.stage || 'foundation']}
                     </span>
                     <span className={`status-badge ${g.is_active ? 'active' : 'inactive'}`}>
-                      {g.is_active ? 'Faol' : 'Yopiq'}
+                      {g.is_active ? 'Faol' : 'Arxivda'}
                     </span>
                   </div>
                 </div>
@@ -234,8 +264,8 @@ export default function Groups({ onOpenGroup }) {
                     <FontAwesomeIcon icon={faPen} /> Tahrir
                   </button>
                   <button className="btn-sm" onClick={() => handleToggle(g)}>
-                    <FontAwesomeIcon icon={g.is_active ? faLock : faLockOpen} />
-                    {g.is_active ? ' Yopish' : ' Ochish'}
+                    <FontAwesomeIcon icon={g.is_active ? faBoxArchive : faBoxOpen} />
+                    {g.is_active ? ' Arxivlash' : ' Arxivdan chiqarish'}
                   </button>
                 </div>
               </div>
@@ -257,28 +287,44 @@ export default function Groups({ onOpenGroup }) {
             <div className="modal-body">
               <label>Guruh nomi *</label>
               <input className="field" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Masalan: Python 1-guruh" />
-              <label>Kurs *</label>
-              <select className="field" value={form.course_id} onChange={e => setForm(p => ({ ...p, course_id: e.target.value }))}>
-                <option value="">— Kursni tanlang —</option>
-                {courses.filter(c => c.is_active).map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}{c.duration_months ? ` (${c.duration_months} oy` : ''}{c.duration_months ? `, ${c.total_lessons} dars)` : ` — ${c.total_lessons} dars`}
-                  </option>
-                ))}
-              </select>
               <label>Ustoz</label>
               <select className="field" value={form.teacher_id} onChange={e => setForm(p => ({ ...p, teacher_id: e.target.value }))}>
                 <option value="">— Tanlang —</option>
                 {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name || t.username}</option>)}
               </select>
-              <label>Kurs narxi (so'm/oy)</label>
-              <input className="field" type="number" value={form.course_price} onChange={e => setForm(p => ({ ...p, course_price: e.target.value }))} placeholder="500000" />
-              <label>O'qituvchi haqi (har bir talabadan, so'm/oy)</label>
-              <input className="field" type="number" value={form.teacher_pay_per_student} onChange={e => setForm(p => ({ ...p, teacher_pay_per_student: e.target.value }))} placeholder="50000" />
+              <label>Tarif *</label>
+              <select
+                className="field"
+                value={form.tariff_id}
+                onChange={e => {
+                  const tid = e.target.value
+                  const t = tariffs.find(x => String(x.id) === tid)
+                  setForm(p => ({ ...p, tariff_id: tid, course_price: t ? t.price : '' }))
+                }}
+              >
+                <option value="">— Tarif tanlang —</option>
+                {tariffs.filter(t => t.is_active).map(t => (
+                  <option key={t.id} value={t.id}>{t.name} — {Number(t.price).toLocaleString()} so'm</option>
+                ))}
+              </select>
+              {form.course_price !== '' && form.course_price != null && (
+                <p className="text-muted" style={{ fontSize: 13, margin: '4px 0 0' }}>
+                  Narx: <strong>{Number(form.course_price).toLocaleString()} so'm/oy</strong>
+                </p>
+              )}
               <label>Dars jadvali</label>
-              <input className="field" value={form.schedule} onChange={e => setForm(p => ({ ...p, schedule: e.target.value }))} placeholder="Du,Cho,Ju 14:00" />
+              <select className="field" value={form.schedule} onChange={e => setForm(p => ({ ...p, schedule: e.target.value }))}>
+                <option value="">— Tanlang —</option>
+                <option value="Juft kunlar">Juft kunlar</option>
+                <option value="Toq kunlar">Toq kunlar</option>
+              </select>
               <label>Boshlanish sanasi</label>
               <input className="field" type="date" value={form.start_date} onChange={e => setForm(p => ({ ...p, start_date: e.target.value }))} />
+              <label>Telegram chat ID (uy vazifasi uchun)</label>
+              <input className="field" value={form.telegram_chat_id} onChange={e => setForm(p => ({ ...p, telegram_chat_id: e.target.value }))} placeholder="-1001234567890" />
+              <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
+                Botni guruhga qo'shib, guruh chat ID'sini shu yerga kiriting — uy vazifalari avtomatik yuboriladi.
+              </p>
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setModal(null)}>Bekor</button>

@@ -40,3 +40,13 @@ backend/alembic/versions/__pycache__/
 
 # Local dev script
 dev.sh
+
+# Deploy secrets / local data (do not commit)
+ACCOUNTS.txt
+data/
+
+# User-uploaded files
+uploads/
+
+# Claude agent skill cache
+.agents/

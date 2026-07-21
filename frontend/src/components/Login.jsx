@@ -26,29 +26,12 @@ function Login({ onSuccess, error }) {
     }
   }
 
-  const devLogin = async () => {
-    setLocalError('')
-    setBlockInfo(null)
-    setLoading(true)
-    try {
-      await onSuccess({ username: 'admin', password: 'Admin@2026' })
-    } catch (err) {
-      if (err.status === 403 && err.detail?.code) {
-        setBlockInfo(err.detail)
-      } else {
-        setLocalError('Dev login xato')
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
-
   return (
     <div className="lp-shell">
       {/* ── LEFT PANEL ── */}
       <div className="lp-left">
         <div className="lp-left-inner">
-          <div className="lp-logo" onClick={devLogin} title="Dev: admin sifatida kirish" style={{ cursor: 'pointer' }}>
+          <div className="lp-logo">
             <span className="lp-logo-icon">IT</span>
             <span className="lp-logo-text">Hub</span>
           </div>

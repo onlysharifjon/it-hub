@@ -69,13 +69,67 @@ export async function reorderLessons(items)  { return request('/lessons/reorder'
 
 export async function fetchLeads(params = {}) {
   const q = new URLSearchParams()
-  if (params.search) q.set('search', params.search)
-  if (params.status) q.set('status', params.status)
+  if (params.search)    q.set('search', params.search)
+  if (params.status)    q.set('status', params.status)
+  if (params.stage)     q.set('stage', params.stage)
+  if (params.source_id) q.set('source_id', params.source_id)
   return request(`/leads${q.toString() ? '?' + q : ''}`)
 }
 export async function createLead(p)                    { return request('/leads', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updateLeadStatus(id, p)          { return request(`/leads/${id}/status`, { method: 'PATCH', body: JSON.stringify(p) }) }
+export async function moveLeadStage(id, p)             { return request(`/leads/${id}/stage`, { method: 'PATCH', body: JSON.stringify(p) }) }
 export async function deleteLead(id)                   { return request(`/leads/${id}`, { method: 'DELETE' }) }
+export async function fetchLeadStats()                 { return request('/leads/stats') }
+export async function fetchLeadActivities(id)          { return request(`/leads/${id}/activities`) }
+
+// Lead stages (pipeline)
+export async function fetchLeadStages()                { return request('/lead-stages') }
+export async function createLeadStage(p)               { return request('/lead-stages', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateLeadStage(id, p)           { return request(`/lead-stages/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
+export async function reorderLeadStages(ordered_ids)   { return request('/lead-stages/reorder', { method: 'PUT', body: JSON.stringify({ ordered_ids }) }) }
+export async function deleteLeadStage(id)              { return request(`/lead-stages/${id}`, { method: 'DELETE' }) }
+
+// Lead sources
+export async function fetchLeadSources()               { return request('/lead-sources') }
+export async function createLeadSource(p)              { return request('/lead-sources', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateLeadSource(id, p)          { return request(`/lead-sources/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
+export async function deleteLeadSource(id)             { return request(`/lead-sources/${id}`, { method: 'DELETE' }) }
+
+// Lead analytics
+export async function fetchLeadAnalytics()             { return request('/leads/analytics') }
+
+// Reminders
+export async function fetchReminders(params = {}) {
+  const q = new URLSearchParams()
+  if (params.status)  q.set('status', params.status)
+  if (params.lead_id) q.set('lead_id', params.lead_id)
+  if (params.mine === false) q.set('mine', 'false')
+  return request(`/reminders${q.toString() ? '?' + q : ''}`)
+}
+export async function createReminder(p)                { return request('/reminders', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateReminder(id, p)            { return request(`/reminders/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
+export async function deleteReminder(id)               { return request(`/reminders/${id}`, { method: 'DELETE' }) }
+
+// Notifications
+export async function fetchNotifications(unreadOnly = false) { return request(`/notifications${unreadOnly ? '?unread_only=true' : ''}`) }
+export async function fetchUnreadCount()               { return request('/notifications/unread-count') }
+export async function markNotificationRead(id)         { return request(`/notifications/${id}/read`, { method: 'POST' }) }
+export async function markAllNotificationsRead()       { return request('/notifications/read-all', { method: 'POST' }) }
+
+// Shared pool / claim
+export async function claimLead(id)                    { return request(`/leads/${id}/claim`, { method: 'POST' }) }
+export async function releaseLead(id)                  { return request(`/leads/${id}/release`, { method: 'POST' }) }
+export async function shareLead(id)                    { return request(`/leads/${id}/share`, { method: 'POST' }) }
+
+// Intake forms (admin)
+export async function fetchIntakeForms()               { return request('/intake-forms') }
+export async function createIntakeForm(p)              { return request('/intake-forms', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateIntakeForm(id, p)          { return request(`/intake-forms/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
+export async function deleteIntakeForm(id)             { return request(`/intake-forms/${id}`, { method: 'DELETE' }) }
+
+// Public intake (no auth)
+export async function fetchPublicIntake(slug)          { return request(`/public/intake/${slug}`) }
+export async function submitPublicIntake(slug, p)      { return request(`/public/intake/${slug}`, { method: 'POST', body: JSON.stringify(p) }) }
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 
@@ -86,6 +140,8 @@ export async function fetchUsers(params = {}) {
   if (params.page_size) q.set('page_size', params.page_size)
   return request(`/users${q.toString() ? '?' + q : ''}`)
 }
+export async function fetchTeachers()     { return request('/teachers') }
+export async function updateProfile(p)    { return request('/me', { method: 'PUT', body: JSON.stringify(p) }) }
 export async function createUser(p)       { return request('/users', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updateUser(id, p)   { return request(`/users/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function blockUser(id, p)    { return request(`/users/${id}/block`, { method: 'POST', body: JSON.stringify(p) }) }
@@ -112,6 +168,9 @@ export async function fetchStudents(params = {}) {
   if (params.is_archived !== undefined) q.set('is_archived', params.is_archived)
   if (params.date_from)           q.set('date_from', params.date_from)
   if (params.date_to)             q.set('date_to', params.date_to)
+  if (params.payment)             q.set('payment', params.payment)
+  if (params.month)               q.set('month', params.month)
+  if (params.year)                q.set('year', params.year)
   if (params.page)                q.set('page', params.page)
   if (params.page_size)           q.set('page_size', params.page_size)
   return request(`/students${q.toString() ? '?' + q : ''}`)
@@ -165,6 +224,17 @@ export async function fetchPayments(params = {}) {
   return request(`/payments${q.toString() ? '?' + q : ''}`)
 }
 
+export async function fetchPaymentExpected({ student_id, group_id, month, year }) {
+  const q = new URLSearchParams({ student_id, group_id, month, year })
+  return request(`/payments/expected?${q}`)
+}
+
+export async function fetchStudentPaymentSummary(id, { month, year } = {}) {
+  const q = new URLSearchParams()
+  if (month) q.set('month', month)
+  if (year)  q.set('year', year)
+  return request(`/students/${id}/payments/summary${q.toString() ? '?' + q : ''}`)
+}
 export async function createPayment(p)       { return request('/payments', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updatePayment(id, p)   { return request(`/payments/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deletePayment(id)      { return request(`/payments/${id}`, { method: 'DELETE' }) }
@@ -195,18 +265,6 @@ export async function createTariff(p)       { return request('/tariffs', { metho
 export async function updateTariff(id, p)   { return request(`/tariffs/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deleteTariff(id)      { return request(`/tariffs/${id}`, { method: 'DELETE' }) }
 
-// ── Discounts ─────────────────────────────────────────────────────────────────
-
-export async function fetchDiscounts()         { return request('/discounts') }
-export async function createDiscount(p)        { return request('/discounts', { method: 'POST', body: JSON.stringify(p) }) }
-export async function updateDiscount(id, p)    { return request(`/discounts/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
-export async function deleteDiscount(id)       { return request(`/discounts/${id}`, { method: 'DELETE' }) }
-export async function applyStudentDiscount(groupId, studentId, discountId) {
-  return request(`/groups/${groupId}/students/${studentId}/discount`, {
-    method: 'PATCH',
-    body: JSON.stringify({ discount_id: discountId }),
-  })
-}
 
 // ── Finance ───────────────────────────────────────────────────────────────────
 
@@ -251,13 +309,172 @@ export async function fetchStatsOverview(year) {
   return request(`/stats/overview${q}`)
 }
 
-export function exportExcelUrl(month, year) {
+// Yuklab-olish URL'lari uzoq muddatli kirish tokenini emas, har safar olinadigan qisqa
+// muddatli (2 daqiqa) `download` tokenini query-parametrda ishlatadi — token sizib chiqsa ham
+// deyarli darhol yaroqsiz bo'ladi. Shu sababli bu funksiyalar async.
+async function downloadToken() {
+  const { token: t } = await request('/auth/download-token')
+  return t
+}
+
+export async function exportExcelUrl(month, year) {
   const q = new URLSearchParams()
   if (month) q.set('month', month)
   if (year)  q.set('year', year)
-  return `${API_BASE}/stats/export/excel?${q}&_token=${token}`
+  q.set('_token', await downloadToken())
+  return `${API_BASE}/stats/export/excel?${q}`
 }
 
-export function receiptUrl(paymentId) {
-  return `${API_BASE}/payments/${paymentId}/receipt?_token=${token}`
+export async function receiptUrl(paymentId) {
+  return `${API_BASE}/payments/${paymentId}/receipt?_token=${await downloadToken()}`
+}
+
+// URL async yasalgani uchun oynani avval (foydalanuvchi bosishida) ochamiz — popup-blocker
+// aks holda keyinchalik ochilgan oynani bloklardi — keyin URL tayyor bo'lgach yo'naltiramiz.
+export async function openDownload(urlPromise) {
+  const w = window.open('', '_blank')
+  try {
+    const url = await urlPromise
+    if (w) w.location = url
+    else window.location = url
+  } catch (e) {
+    if (w) w.close()
+    throw e
+  }
+}
+
+// ── Student visits — Notifications (keldi/ketdi) ──────────────────────────────
+
+export async function fetchVisits({ visit_date, student_id } = {}) {
+  const q = new URLSearchParams()
+  if (visit_date) q.set('visit_date', visit_date)
+  if (student_id) q.set('student_id', student_id)
+  return request(`/visits${q.toString() ? '?' + q : ''}`)
+}
+export async function createVisit(p) { return request('/visits', { method: 'POST', body: JSON.stringify(p) }) }
+
+export async function uploadStudentPhoto(studentId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE}/students/${studentId}/photo`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(typeof err.detail === 'string' ? err.detail : 'Yuklash xatosi')
+  }
+  return res.json()
+}
+
+// ── Special chegirmalar ───────────────────────────────────────────────────────
+
+export async function fetchSpecialDiscounts(studentId) {
+  const q = studentId ? `?student_id=${studentId}` : ''
+  return request(`/special-discounts${q}`)
+}
+export async function createSpecialDiscount(p)     { return request('/special-discounts', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateSpecialDiscount(id, p) { return request(`/special-discounts/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
+export async function deleteSpecialDiscount(id)    { return request(`/special-discounts/${id}`, { method: 'DELETE' }) }
+
+// ── Holidays (dam olish kunlari) ──────────────────────────────────────────────
+
+export async function fetchHolidays(year) {
+  const q = year ? `?year=${year}` : ''
+  return request(`/holidays${q}`)
+}
+export async function createHoliday(p)  { return request('/holidays', { method: 'POST', body: JSON.stringify(p) }) }
+export async function deleteHoliday(id) { return request(`/holidays/${id}`, { method: 'DELETE' }) }
+
+// ── Akademik: baholar / izohlar / sertifikatlar / tadbirlar ──────────────────
+
+export async function fetchAcademicOptions() { return request('/academic/options') }
+
+export async function fetchGrades(params = {}) {
+  const q = new URLSearchParams()
+  if (params.student_id) q.set('student_id', params.student_id)
+  if (params.group_id)   q.set('group_id', params.group_id)
+  return request(`/grades${q.toString() ? '?' + q : ''}`)
+}
+export async function createGrade(p)     { return request('/grades', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateGrade(id, p) { return request(`/grades/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
+export async function deleteGrade(id)    { return request(`/grades/${id}`, { method: 'DELETE' }) }
+
+export async function fetchFeedbacks(studentId, status) {
+  const params = new URLSearchParams()
+  if (studentId) params.set('student_id', studentId)
+  if (status) params.set('status', status)
+  const q = params.toString()
+  return request(`/teacher-feedbacks${q ? `?${q}` : ''}`)
+}
+export async function updateFeedbackStatus(id, status) {
+  return request(`/teacher-feedbacks/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) })
+}
+export async function fetchFeedbackNewCount() { return request('/teacher-feedbacks/new-count') }
+export async function createFeedback(p)     { return request('/teacher-feedbacks', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateFeedback(id, p) { return request(`/teacher-feedbacks/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
+export async function deleteFeedback(id)    { return request(`/teacher-feedbacks/${id}`, { method: 'DELETE' }) }
+
+export async function uploadCertificatePdf(file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${API_BASE}/certificates/upload`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(typeof err.detail === 'string' ? err.detail : 'Yuklash xatosi')
+  }
+  return res.json()   // { file_url }
+}
+
+export async function fetchCertificates(studentId) {
+  const q = studentId ? `?student_id=${studentId}` : ''
+  return request(`/certificates${q}`)
+}
+export async function createCertificate(p)     { return request('/certificates', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateCertificate(id, p) { return request(`/certificates/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
+export async function deleteCertificate(id)    { return request(`/certificates/${id}`, { method: 'DELETE' }) }
+
+export async function fetchEvents()        { return request('/events') }
+export async function createEvent(p)       { return request('/events', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateEvent(id, p)   { return request(`/events/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
+export async function deleteEvent(id)      { return request(`/events/${id}`, { method: 'DELETE' }) }
+
+// ── Coinlar ──────────────────────────────────────────────────────────────────
+
+export async function fetchCoinSummary()      { return request('/coins/summary') }
+export async function giveCoins(p)            { return request('/coins/give', { method: 'POST', body: JSON.stringify(p) }) }
+export async function deductCoins(p)          { return request('/coins/deduct', { method: 'POST', body: JSON.stringify(p) }) }
+export async function fetchCoinTransactions(studentId) {
+  const q = studentId ? `?student_id=${studentId}` : ''
+  return request(`/coins/transactions${q}`)
+}
+export async function fetchCoinTotals()       { return request('/coins/totals') }
+
+// ── Homework (uy vazifasi) ────────────────────────────────────────────────────
+
+export async function fetchNextLesson(groupId) { return request(`/groups/${groupId}/next-lesson`) }
+export async function fetchHomeworks(groupId)  { return request(`/groups/${groupId}/homeworks`) }
+export async function createHomework(groupId, p) {
+  return request(`/groups/${groupId}/homeworks`, { method: 'POST', body: JSON.stringify(p) })
+}
+
+// ── Ota-ona akkauntlari (mobil ilova uchun) ──────────────────────────────────
+
+export async function fetchParents(search) {
+  const q = search ? `?search=${encodeURIComponent(search)}` : ''
+  return request(`/parents${q}`)
+}
+export async function createParent(p)            { return request('/parents', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateParent(id, p)        { return request(`/parents/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
+export async function resetParentPassword(id, p) { return request(`/parents/${id}/reset-password`, { method: 'POST', body: JSON.stringify(p || {}) }) }
+export async function linkParentChild(id, studentId) {
+  return request(`/parents/${id}/children`, { method: 'POST', body: JSON.stringify({ student_id: studentId }) })
+}
+export async function unlinkParentChild(id, studentId) {
+  return request(`/parents/${id}/children/${studentId}`, { method: 'DELETE' })
 }

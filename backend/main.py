@@ -1,12 +1,14 @@
+import html
 import json
 import os
+from uuid import uuid4
 from datetime import datetime, timedelta, date
 from decimal import Decimal
 from typing import List, Optional
 import io
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,7 +18,7 @@ from jose import JWTError, jwt
 from sqlalchemy import func, extract
 from sqlalchemy.orm import Session, selectinload, joinedload
 
-from . import models, schemas
+from . import models, schemas, core_calc
 from .database import get_db
 from .models import UserRole
 
@@ -24,49 +26,201 @@ load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "720"))  # default 12h
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174").split(",")
+
+# Admin seed (parol faqat env orqali — kodda default parol yo'q)
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")            # bo'lmasa admin yaratilmaydi
+SEED_DEMO_USERS = os.getenv("SEED_DEMO_USERS", "false").lower() == "true"
 
 auth_scheme = HTTPBearer(auto_error=False)
 
-UPLOAD_DIR = "/app/uploads"
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/app/uploads")
 AVATARS_DIR = f"{UPLOAD_DIR}/avatars"
+CERTIFICATES_DIR = f"{UPLOAD_DIR}/certificates"
+STUDENTS_DIR = f"{UPLOAD_DIR}/students"
 os.makedirs(AVATARS_DIR, exist_ok=True)
+os.makedirs(CERTIFICATES_DIR, exist_ok=True)
+os.makedirs(STUDENTS_DIR, exist_ok=True)
 
-app = FastAPI(title="IT Hub — LMS API", version="3.0.0")
+# Standart docs'ni o'chiramiz — nginx `/api/` prefiksi bilan mos kelmaydi va o'rniga
+# parol bilan himoyalangan variantini beramiz (openapi.json ham himoyalangan).
+# openapi_url=None — FastAPI'ning himoyasiz built-in /openapi.json marshrutini o'chiradi.
+DOCS_PASSWORD = os.getenv("DOCS_PASSWORD", "1107")
+app = FastAPI(
+    title="IT Hub — LMS API", version="3.0.0",
+    docs_url=None, redoc_url=None, openapi_url=None,
+)
+
+# Public bazaviy yo'l (nginx orqali): https://crm.minaracademy.uz/api
+PUBLIC_API_PREFIX = os.getenv("PUBLIC_API_PREFIX", "/api")
+# Tashqi (mobil ilova) uchun to'liq URL yasashda ishlatiladi — masalan sertifikat PDF linki
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://crm.minaracademy.uz").rstrip("/")
+
+
+# ── Hujjatlar himoyasi (HTTP Basic — parol: DOCS_PASSWORD, default "1107") ────
+# Brauzer parol so'raydi; login (username) e'tiborga olinmaydi, faqat parol tekshiriladi.
+# Muvaffaqiyatli kirilgach brauzer Basic ma'lumotlarni /openapi.json'ga ham avtomatik yuboradi.
+import secrets as _sec
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+
+_docs_basic = HTTPBasic(auto_error=False)
+
+
+def require_docs_auth(creds: Optional[HTTPBasicCredentials] = Depends(_docs_basic)) -> bool:
+    unauth = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Hujjatlar uchun parol kerak",
+        headers={"WWW-Authenticate": 'Basic realm="Minar CRM Docs"'},
+    )
+    if not creds or not _sec.compare_digest(creds.password, DOCS_PASSWORD):
+        raise unauth
+    return True
+
+
+@app.get("/docs", include_in_schema=False)
+def custom_swagger_ui(_: bool = Depends(require_docs_auth)):
+    from fastapi.openapi.docs import get_swagger_ui_html
+    return get_swagger_ui_html(
+        openapi_url=f"{PUBLIC_API_PREFIX}/openapi.json",
+        title="Minar CRM API — Swagger",
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+def custom_redoc(_: bool = Depends(require_docs_auth)):
+    from fastapi.openapi.docs import get_redoc_html
+    return get_redoc_html(
+        openapi_url=f"{PUBLIC_API_PREFIX}/openapi.json",
+        title="Minar CRM API — ReDoc",
+    )
+
+
+@app.get("/openapi.json", include_in_schema=False)
+def protected_openapi(_: bool = Depends(require_docs_auth)):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(app.openapi())
 
 # ── Default users ──────────────────────────────────────────────────────────────
 
-DEFAULT_USERS = [
-    {"username": "admin",       "password": "Admin@2026",      "role": UserRole.admin.value,       "full_name": "Administrator"},
-    {"username": "dev",         "password": "Dev@2026",        "role": UserRole.admin.value,       "full_name": "Developer"},
-    {"username": "metodist",    "password": "Metodist@2026",   "role": UserRole.metodist.value,    "full_name": "Metodist"},
-    {"username": "teacher1",    "password": "Teacher@2026",    "role": UserRole.teacher.value,     "full_name": "Sarvar Toshmatov"},
-    {"username": "teacher2",    "password": "Teacher@2026",    "role": UserRole.teacher.value,     "full_name": "Malika Yusupova"},
-    {"username": "teacher3",    "password": "Teacher@2026",    "role": UserRole.teacher.value,     "full_name": "Jasur Rahimov"},
-    {"username": "hunter1",     "password": "Hunter@2026",     "role": UserRole.hunter.value,      "full_name": "Hunter 1"},
-    {"username": "callcenter1", "password": "CallCenter@2026", "role": UserRole.call_center.value, "full_name": "Call Center 1"},
+# Demo akkountlar faqat SEED_DEMO_USERS=true bo'lsa (dev muhitda) yaratiladi —
+# parollar env orqali beriladi, kodda qattiq kodlangan parol yo'q.
+DEMO_USERS = [
+    {"username": "metodist",    "role": UserRole.metodist.value,    "full_name": "Metodist"},
+    {"username": "teacher1",    "role": UserRole.teacher.value,     "full_name": "Sarvar Toshmatov"},
+    {"username": "hunter1",     "role": UserRole.hunter.value,      "full_name": "Hunter 1"},
+    {"username": "callcenter1", "role": UserRole.call_center.value, "full_name": "Call Center 1"},
+]
+
+
+# ── Default lead pipeline ────────────────────────────────────────────────────
+# slug'lar eski LeadStatus enum qiymatlariga mos — status ustuni bilan sinxron.
+
+DEFAULT_STAGES = [
+    {"slug": "new",       "name": "Yangi",             "order": 10, "color": "sky",     "icon": "sparkles",       "kind": "lead"},
+    {"slug": "called",    "name": "Qo'ng'iroq qilindi","order": 20, "color": "indigo",  "icon": "phone",          "kind": "lead"},
+    {"slug": "callback",  "name": "Qayta ring",        "order": 30, "color": "amber",   "icon": "phone-incoming", "kind": "lead"},
+    {"slug": "will_come", "name": "Keladi",            "order": 40, "color": "violet",  "icon": "calendar",       "kind": "lead"},
+    {"slug": "enrolled",  "name": "Ro'yxatda",         "order": 50, "color": "emerald", "icon": "graduation-cap", "kind": "won"},
+    {"slug": "rejected",  "name": "Rad etildi",        "order": 60, "color": "red",     "icon": "x-circle",       "kind": "lost"},
+]
+
+DEFAULT_SOURCES = [
+    {"name": "Instagram",  "is_campaign": False},
+    {"name": "Telegram",   "is_campaign": False},
+    {"name": "Walk-in",    "is_campaign": False, "is_default": True},
+    {"name": "Website",    "is_campaign": False},
+    {"name": "Referral",   "is_campaign": False},
+    {"name": "Qo'ng'iroq", "is_campaign": False},
+    {"name": "Boshqa",     "is_campaign": False},
 ]
 
 
 @app.on_event("startup")
 def ensure_default_users() -> None:
+    """Faqat admin akkountini ta'minlaydi (parol env orqali). Mavjud parollarga tegmaydi."""
     from .database import SessionLocal
     db = SessionLocal()
     try:
-        for u in DEFAULT_USERS:
-            exists = db.query(models.User).filter(models.User.username == u["username"]).first()
+        # Admin — faqat ADMIN_PASSWORD berilgan bo'lsa va admin hali yo'q bo'lsa
+        if ADMIN_PASSWORD:
+            exists = db.query(models.User).filter(models.User.username == ADMIN_USERNAME).first()
             if not exists:
-                user = models.User(
-                    username=u["username"],
-                    hashed_password=hash_password(u["password"]),
-                    role=u["role"],
-                    full_name=u.get("full_name"),
+                db.add(models.User(
+                    username=ADMIN_USERNAME,
+                    hashed_password=hash_password(ADMIN_PASSWORD),
+                    role=UserRole.admin.value,
+                    full_name="Administrator",
                     is_active=True,
                     created_at=datetime.utcnow(),
-                )
-                db.add(user)
+                ))
+        # Demo akkountlar — faqat aniq yoqilgan bo'lsa (dev muhit)
+        if SEED_DEMO_USERS:
+            demo_pw = os.getenv("DEMO_PASSWORD", "")
+            if demo_pw:
+                for u in DEMO_USERS:
+                    if not db.query(models.User).filter(models.User.username == u["username"]).first():
+                        db.add(models.User(
+                            username=u["username"],
+                            hashed_password=hash_password(demo_pw),
+                            role=u["role"], full_name=u["full_name"],
+                            is_active=True, created_at=datetime.utcnow(),
+                        ))
         db.commit()
+    finally:
+        db.close()
+
+
+@app.on_event("startup")
+def ensure_default_pipeline() -> None:
+    """Standart pipeline bosqichlari va lid manbalarini yaratadi (bir marta)."""
+    from .database import SessionLocal
+    db = SessionLocal()
+    try:
+        if db.query(models.LeadStage).count() == 0:
+            for s in DEFAULT_STAGES:
+                db.add(models.LeadStage(**s, created_at=datetime.utcnow()))
+        if db.query(models.LeadSource).count() == 0:
+            for s in DEFAULT_SOURCES:
+                db.add(models.LeadSource(
+                    name=s["name"],
+                    is_campaign=s.get("is_campaign", False),
+                    is_default=s.get("is_default", False),
+                    is_active=True,
+                    created_at=datetime.utcnow(),
+                ))
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+# Har bir tizimда doim mavjud bo'ladigan standart tariflar (guruh formasida default tanlov)
+DEFAULT_TARIFFS = [
+    {"name": "Pro",     "price": 700000},
+    {"name": "Starter", "price": 500000},
+]
+
+
+@app.on_event("startup")
+def ensure_default_tariffs() -> None:
+    """Global 'Pro' va 'Starter' tariflarini ta'minlaydi (nomiga qarab, takrorlamaydi)."""
+    from .database import SessionLocal
+    db = SessionLocal()
+    try:
+        for t in DEFAULT_TARIFFS:
+            exists = (
+                db.query(models.Tariff)
+                .filter(func.lower(func.trim(models.Tariff.name)) == t["name"].lower())
+                .first()
+            )
+            if not exists:
+                db.add(models.Tariff(name=t["name"], price=t["price"], is_active=True))
+        db.commit()
+    except Exception:
+        db.rollback()
     finally:
         db.close()
 
@@ -82,6 +236,41 @@ app.add_middleware(
 
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
+# Ota-ona mobil ilovasi API (/parent/...) — alohida paketda
+from .parent.router_parent import router as parent_router
+from .parent.notifications import notify_parents_of_student
+app.include_router(parent_router)
+
+
+# ── Rate limiting (in-memory; single-process pm2 fork) ───────────────────────
+import time as _time
+from collections import defaultdict
+
+_rate_hits: dict = defaultdict(list)  # key -> [timestamps]
+
+
+def _client_ip(request: Request) -> str:
+    # nginx `proxy_set_header X-Real-IP $remote_addr;` bilan haqiqiy IP'ni qo'yadi va uni
+    # qayta yozadi — shuning uchun ishonchli. X-Forwarded-For'ning eng chap qiymati mijoz
+    # tomonidan soxtalashtiriladi (rate-limit'ni aylanib o'tishga imkon berardi), unga ishonmaymiz.
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip()
+    return request.client.host if request.client else "unknown"
+
+
+def rate_limit(key: str, *, limit: int, window: int):
+    """Oddiy sliding-window limiter. Limitdan oshsa 429 qaytaradi."""
+    now = _time.time()
+    hits = [t for t in _rate_hits[key] if now - t < window]
+    if len(hits) >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Juda ko'p urinish. Birozdan so'ng qayta urinib ko'ring.",
+        )
+    hits.append(now)
+    _rate_hits[key] = hits
+
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -90,7 +279,11 @@ def hash_password(plain: str) -> str:
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _bcrypt.checkpw(plain.encode(), hashed.encode())
+    # Buzuq/bo'sh hash bcrypt'da ValueError beradi — 500 o'rniga "parol xato" (False) qaytaramiz.
+    try:
+        return _bcrypt.checkpw(plain.encode(), hashed.encode())
+    except ValueError:
+        return False
 
 
 def create_access_token(data: dict) -> str:
@@ -98,6 +291,21 @@ def create_access_token(data: dict) -> str:
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode["exp"] = expire
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+# Yuklab olish (chek/Excel) URL'lariga token query-parametrda beriladi — u nginx logi,
+# brauzer tarixi va Referer orqali sizib chiqishi mumkin. Shuning uchun uzoq muddatli
+# kirish tokeni emas, `typ=download` bo'lgan qisqa muddatli (2 daqiqa) token ishlatiladi.
+DOWNLOAD_TOKEN_TTL_SECONDS = 120
+
+
+def create_download_token(username: str) -> str:
+    now = datetime.utcnow()
+    return jwt.encode(
+        {"sub": username, "typ": "download",
+         "exp": now + timedelta(seconds=DOWNLOAD_TOKEN_TTL_SECONDS)},
+        SECRET_KEY, algorithm=ALGORITHM,
+    )
 
 
 def require_auth(
@@ -156,23 +364,56 @@ def require_call_center(user: models.User = Depends(require_auth)) -> models.Use
 
 
 def require_crm_access(user: models.User = Depends(require_auth)) -> models.User:
-    """Hunter, Call center va admin lidlarga kirishi mumkin."""
-    allowed = (UserRole.hunter.value, UserRole.call_center.value, UserRole.admin.value)
+    """Hunter, Sales, Call center va admin lidlarga kirishi mumkin."""
+    allowed = (UserRole.hunter.value, UserRole.sales.value,
+               UserRole.call_center.value, UserRole.admin.value)
     if user.role not in allowed:
         raise HTTPException(status_code=403, detail="Ruxsat yo'q")
+    return user
+
+
+def require_attendance_editor(user: models.User = Depends(require_auth)) -> models.User:
+    """Yo'qlama qilish: admin, metodist, hunter va teacher uchun ruxsat.
+    Teacher faqat o'z guruhida — bu endpoint ichida tekshiriladi."""
+    allowed = (UserRole.admin.value, UserRole.metodist.value,
+               UserRole.hunter.value, UserRole.teacher.value)
+    if user.role not in allowed:
+        raise HTTPException(status_code=403, detail="Yo'qlama qilishga ruxsat yo'q")
     return user
 
 
 def require_lms_write(user: models.User = Depends(require_auth)) -> models.User:
-    """Metodist, Hunter va admin — talabalar va guruhlar bilan ishlash."""
-    allowed = (UserRole.metodist.value, UserRole.hunter.value, UserRole.admin.value)
+    """Metodist, Hunter, Sales va admin — talabalar va guruhlar bilan ishlash."""
+    allowed = (UserRole.metodist.value, UserRole.hunter.value,
+               UserRole.sales.value, UserRole.admin.value)
     if user.role not in allowed:
         raise HTTPException(status_code=403, detail="Ruxsat yo'q")
     return user
 
 
-def _resolve_token(raw_token: str, db: Session) -> models.User:
-    """Decode a raw JWT string and return the authenticated admin user."""
+def require_feedback_viewer(user: models.User = Depends(require_auth)) -> models.User:
+    """Izohlar ro'yxati: admin, metodist, teacher, hunter va call_center."""
+    allowed = (UserRole.admin.value, UserRole.metodist.value, UserRole.teacher.value,
+               UserRole.hunter.value, UserRole.call_center.value)
+    if user.role not in allowed:
+        raise HTTPException(status_code=403, detail="Ruxsat yo'q")
+    return user
+
+
+def require_feedback_status(user: models.User = Depends(require_auth)) -> models.User:
+    """Izoh statusini o'zgartirish (hal qilindi / javob bermadi): hunter, call_center va admin."""
+    allowed = (UserRole.hunter.value, UserRole.call_center.value, UserRole.admin.value)
+    if user.role not in allowed:
+        raise HTTPException(status_code=403, detail="Bu amal faqat hunter/call_center/admin uchun")
+    return user
+
+
+def _resolve_token(raw_token: str, db: Session, *, expect_download: bool) -> models.User:
+    """Decode a raw JWT string and return the authenticated admin user.
+
+    expect_download=True — token query-parametrda kelgan; faqat `typ=download` bo'lgan
+    qisqa muddatli token qabul qilinadi (uzoq muddatli kirish tokeni URL'da yuborilmasin).
+    """
     exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token xato yoki muddati o'tgan",
@@ -184,6 +425,12 @@ def _resolve_token(raw_token: str, db: Session) -> models.User:
         if not username:
             raise exc
     except JWTError:
+        raise exc
+    is_download = payload.get("typ") == "download"
+    if expect_download and not is_download:
+        raise exc
+    if not expect_download and is_download:
+        # Yuklab-olish tokeni oddiy API chaqiruvlari uchun ishlatilmasin.
         raise exc
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user or not user.is_active:
@@ -198,11 +445,11 @@ def require_admin_download(
     credentials: HTTPAuthorizationCredentials = Depends(auth_scheme),
     db: Session = Depends(get_db),
 ) -> models.User:
-    """Auth for file-download endpoints: accepts Bearer header OR ?_token= query param."""
-    if _token:
-        return _resolve_token(_token, db)
+    """File-download auth: Bearer header (oddiy token) YOKI ?_token= (qisqa download tokeni)."""
     if credentials and credentials.scheme.lower() == "bearer":
-        return _resolve_token(credentials.credentials, db)
+        return _resolve_token(credentials.credentials, db, expect_download=False)
+    if _token:
+        return _resolve_token(_token, db, expect_download=True)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token xato yoki muddati o'tgan",
@@ -228,7 +475,12 @@ def write_audit(db, *, entity_type, entity_id, action, changed_by_id, old_value=
 # ── Auth endpoints ────────────────────────────────────────────────────────────
 
 @app.post("/auth/login", response_model=schemas.TokenResponse)
-def login(payload: schemas.LoginRequest, db: Session = Depends(get_db)):
+def login(payload: schemas.LoginRequest, request: Request, db: Session = Depends(get_db)):
+    ip = _client_ip(request)
+    # Brute-force himoyasi: IP bo'yicha 10/min, login bo'yicha 5/min
+    rate_limit(f"login-ip:{ip}", limit=10, window=60)
+    rate_limit(f"login-user:{payload.username.lower()}", limit=5, window=60)
+
     user = db.query(models.User).filter(models.User.username == payload.username).first()
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Login yoki parol xato")
@@ -263,6 +515,28 @@ def me(user: models.User = Depends(require_auth)):
     return user
 
 
+@app.get("/auth/download-token")
+def download_token(user: models.User = Depends(require_admin)):
+    """Chek/Excel URL'lari uchun qisqa muddatli (2 daqiqa) token beradi.
+    Uzoq muddatli kirish tokeni URL query-parametrida yuborilmasligi uchun."""
+    return {"token": create_download_token(user.username), "expires_in": DOWNLOAD_TOKEN_TTL_SECONDS}
+
+
+@app.put("/me", response_model=schemas.UserRead)
+def update_me(payload: schemas.ProfileUpdate, db: Session = Depends(get_db), user: models.User = Depends(require_auth)):
+    """Har qanday foydalanuvchi o'z profil ma'lumotlarini (ism, parol) o'zgartiradi."""
+    if payload.full_name is not None:
+        user.full_name = payload.full_name.strip() or None
+    if payload.password is not None:
+        # Parol o'zgartirilsa — joriy parol tasdiqlanishi shart
+        if not payload.current_password or not verify_password(payload.current_password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="Joriy parol noto'g'ri")
+        user.hashed_password = hash_password(payload.password)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_AVATAR_BYTES = 5 * 1024 * 1024  # 5 MB
 
@@ -280,7 +554,12 @@ async def upload_avatar(
     if len(contents) > MAX_AVATAR_BYTES:
         raise HTTPException(400, "Fayl hajmi 5 MB dan oshmasin")
 
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "jpg"
+    # Kengaytmani content-type'dan aniqlaymiz — foydalanuvchi fayl nomiga ISHONMAYMIZ
+    # (aks holda .html/.svg yuklab stored-XSS qilish mumkin edi)
+    ext = {
+        "image/jpeg": "jpg", "image/png": "png",
+        "image/webp": "webp", "image/gif": "gif",
+    }[file.content_type]
     filename = f"{user.id}.{ext}"
     filepath = os.path.join(AVATARS_DIR, filename)
 
@@ -307,6 +586,20 @@ def list_users(
     if search:
         q = q.filter(models.User.username.ilike(f"%{search}%") | models.User.full_name.ilike(f"%{search}%"))
     return q.order_by(models.User.id).offset((page - 1) * page_size).limit(page_size).all()
+
+
+@app.get("/teachers", response_model=List[schemas.UserRead])
+def list_teachers(db: Session = Depends(get_db), _: models.User = Depends(require_lms_write)):
+    """Guruhga biriktirish uchun o'qituvchilar ro'yxati — metodist, hunter va admin uchun."""
+    return (
+        db.query(models.User)
+        .filter(
+            models.User.role.in_([UserRole.teacher.value, UserRole.metodist.value]),
+            models.User.is_active == True,  # noqa: E712
+        )
+        .order_by(models.User.full_name, models.User.username)
+        .all()
+    )
 
 
 @app.post("/users", response_model=schemas.UserRead, status_code=201)
@@ -563,47 +856,6 @@ def delete_tariff(tariff_id: int, db: Session = Depends(get_db), actor: models.U
     db.commit()
 
 
-# ── Discounts endpoints ────────────────────────────────────────────────────────
-
-@app.get("/discounts", response_model=List[schemas.DiscountRead])
-def list_discounts(db: Session = Depends(get_db), _: models.User = Depends(require_auth)):
-    return db.query(models.Discount).order_by(models.Discount.name).all()
-
-
-@app.post("/discounts", response_model=schemas.DiscountRead, status_code=201)
-def create_discount(payload: schemas.DiscountCreate, db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
-    if payload.discount_type not in ('percent', 'fixed'):
-        raise HTTPException(status_code=400, detail="discount_type 'percent' yoki 'fixed' bo'lishi kerak")
-    if payload.discount_type == 'percent' and payload.value > 100:
-        raise HTTPException(status_code=400, detail="Foiz 100 dan oshmasligi kerak")
-    d = models.Discount(**payload.dict())
-    db.add(d)
-    db.commit()
-    db.refresh(d)
-    return d
-
-
-@app.put("/discounts/{discount_id}", response_model=schemas.DiscountRead)
-def update_discount(discount_id: int, payload: schemas.DiscountUpdate, db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
-    d = db.query(models.Discount).filter(models.Discount.id == discount_id).first()
-    if not d:
-        raise HTTPException(status_code=404, detail="Chegirma topilmadi")
-    for k, v in payload.dict(exclude_unset=True).items():
-        setattr(d, k, v)
-    db.commit()
-    db.refresh(d)
-    return d
-
-
-@app.delete("/discounts/{discount_id}", status_code=204)
-def delete_discount(discount_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
-    d = db.query(models.Discount).filter(models.Discount.id == discount_id).first()
-    if not d:
-        raise HTTPException(status_code=404, detail="Chegirma topilmadi")
-    db.delete(d)
-    db.commit()
-
-
 # ── Courses endpoints ─────────────────────────────────────────────────────────
 
 @app.get("/courses", response_model=List[schemas.CourseRead])
@@ -645,14 +897,82 @@ def delete_course(course_id: int, db: Session = Depends(get_db), _: models.User 
 
 # ── Students endpoints ────────────────────────────────────────────────────────
 
-def _student_read(s: models.Student) -> schemas.StudentRead:
+def _student_owed_total(s: models.Student, month: int = None, year: int = None,
+                        discounts: list = None) -> Decimal:
+    """Talabaning oylik to'liq summasi — faol guruhlar bo'yicha (tarif yoki guruh narxi).
+    _student_month_owed bilan bir xil mantiq — Special chegirmalar qo'llanadi."""
+    total = Decimal(0)
+    for m in s.group_memberships:
+        g = m.group
+        if not g or not g.is_active:
+            continue
+        if m.tariff and m.tariff.price:
+            price = Decimal(str(m.tariff.price))
+        elif g.course_price and Decimal(str(g.course_price)) > 0:
+            price = Decimal(str(g.course_price))
+        else:
+            continue
+        if discounts:
+            price = core_calc.apply_special_discounts(price, discounts, g.id, month, year)
+        total += price
+    return total.quantize(Decimal('1'))
+
+
+def _students_payment_map(db: Session, students, month: int, year: int) -> dict:
+    """Har talaba uchun (owed, paid, debt, status) — bir marta agregat so'rov bilan."""
+    ids = [s.id for s in students]
+    paid_by = {}
+    discounts_by = {}
+    if ids:
+        rows = (
+            db.query(models.Payment.student_id, func.sum(models.Payment.amount))
+            .filter(models.Payment.student_id.in_(ids),
+                    models.Payment.month == month, models.Payment.year == year)
+            .group_by(models.Payment.student_id).all()
+        )
+        paid_by = {sid: Decimal(str(amt or 0)) for sid, amt in rows}
+        # Special chegirmalar — bitta so'rovda
+        for d in db.query(models.SpecialDiscount).filter(
+            models.SpecialDiscount.student_id.in_(ids),
+            models.SpecialDiscount.is_active == True,
+        ).all():
+            discounts_by.setdefault(d.student_id, []).append(d)
+    out = {}
+    for s in students:
+        owed = _student_owed_total(s, month, year, discounts_by.get(s.id))
+        paid = paid_by.get(s.id, Decimal(0))
+        advance = Decimal(str(s.advance_balance or 0))
+        # Avans balansi qarzni kamaytiradi
+        advance_applied = min(advance, max(Decimal(0), owed - paid))
+        covered = paid + advance
+        debt = max(Decimal(0), owed - covered)
+        if owed <= 0:
+            status = "none"
+        elif covered >= owed:
+            status = "paid"
+        elif covered > 0:
+            status = "partial"
+        else:
+            status = "debtor"
+        out[s.id] = (owed, paid, debt, status, advance_applied)
+    return out
+
+
+def _student_read(s: models.Student, pay: Optional[tuple] = None) -> schemas.StudentRead:
+    owed = paid = debt = pstatus = advance_applied = None
+    if pay is not None:
+        owed, paid, debt, pstatus, advance_applied = pay
     return schemas.StudentRead(
         id=s.id, full_name=s.full_name, phone1=s.phone1,
         father_name=s.father_name, father_phone=s.father_phone,
         mother_name=s.mother_name, mother_phone=s.mother_phone,
-        telegram_id=s.telegram_id, notes=s.notes, is_active=s.is_active,
-        is_archived=s.is_archived,
-        created_at=s.created_at, group_count=len(s.group_memberships)
+        telegram_id=s.telegram_id, telegram_user_id=s.telegram_user_id,
+        photo=s.photo, notes=s.notes, is_active=s.is_active,
+        is_archived=s.is_archived, advance_balance=s.advance_balance,
+        created_at=s.created_at, group_count=len(s.group_memberships),
+        group_names=[m.group.name for m in s.group_memberships if m.group],
+        owed_month=owed, paid_month=paid, debt=debt, payment_status=pstatus,
+        advance_applied=advance_applied,
     )
 
 
@@ -663,12 +983,22 @@ def list_students(
     is_archived: Optional[bool] = Query(None),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
+    payment: Optional[str] = Query(None, description="debtor | partial | paid | unpaid"),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2020),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
     _: models.User = Depends(require_lms_write),
 ):
-    q = db.query(models.Student)
+    now = datetime.utcnow()
+    month = month or now.month
+    year = year or now.year
+
+    q = db.query(models.Student).options(
+        joinedload(models.Student.group_memberships).joinedload(models.GroupStudent.tariff),
+        joinedload(models.Student.group_memberships).joinedload(models.GroupStudent.group),
+    )
     # by default exclude archived unless explicitly requested
     if is_archived is None:
         q = q.filter(models.Student.is_archived == False)
@@ -687,15 +1017,31 @@ def list_students(
         q = q.filter(models.Student.created_at >= datetime(date_from.year, date_from.month, date_from.day))
     if date_to:
         q = q.filter(models.Student.created_at < datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1))
-    total = q.count()
-    students = q.order_by(models.Student.full_name).offset((page - 1) * page_size).limit(page_size).all()
+    q = q.order_by(models.Student.full_name)
+
+    if payment:
+        # To'lov holati bo'yicha filtr — butun to'plamni hisoblab, keyin sahifalash
+        alls = q.all()
+        pmap = _students_payment_map(db, alls, month, year)
+        want = {"unpaid": {"debtor", "partial"}}.get(payment, {payment})
+        filtered = [s for s in alls if pmap[s.id][3] in want]
+        total = len(filtered)
+        students = filtered[(page - 1) * page_size: page * page_size]
+        page_map = pmap
+    else:
+        total = q.count()
+        students = q.offset((page - 1) * page_size).limit(page_size).all()
+        page_map = _students_payment_map(db, students, month, year)
+
     return {
-        "items": [_student_read(s) for s in students],
+        "items": [_student_read(s, page_map.get(s.id)) for s in students],
         "meta": {
             "total": total,
             "page": page,
             "page_size": page_size,
             "total_pages": max(1, (total + page_size - 1) // page_size),
+            "month": month,
+            "year": year,
         }
     }
 
@@ -710,7 +1056,9 @@ def get_student(student_id: int, db: Session = Depends(get_db), _: models.User =
 
 @app.post("/students", response_model=schemas.StudentRead, status_code=201)
 def create_student(payload: schemas.StudentCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
-    s = models.Student(**payload.dict())
+    data = payload.dict()
+    advance = data.pop("advance", 0) or 0
+    s = models.Student(**data, advance_balance=advance)
     db.add(s)
     db.flush()
     write_audit(db, entity_type="student", entity_id=s.id, action="create",
@@ -782,23 +1130,11 @@ def _group_read(g: models.Group, db: Session = None) -> schemas.GroupRead:
         teacher_name=g.teacher.full_name or g.teacher.username if g.teacher else None,
         course_price=g.course_price, schedule=g.schedule,
         start_date=g.start_date, is_active=g.is_active,
+        telegram_chat_id=g.telegram_chat_id,
         created_at=g.created_at, student_count=len(g.members),
         total_lessons=total, completed_lessons=completed,
         remaining_lessons=remaining, progress_pct=pct,
     )
-
-
-def _calc_effective_price(tariff_price, discount):
-    from decimal import Decimal as D
-    if tariff_price is None:
-        return None
-    price = D(str(tariff_price))
-    if not discount:
-        return price
-    val = D(str(discount.value))
-    if discount.discount_type == 'percent':
-        return (price * (1 - val / 100)).quantize(D('1'))
-    return max(D('0'), price - val).quantize(D('1'))
 
 
 def _group_detail(g: models.Group, db: Session = None) -> schemas.GroupDetail:
@@ -811,13 +1147,6 @@ def _group_detail(g: models.Group, db: Session = None) -> schemas.GroupDetail:
             tariff_id=m.tariff_id,
             tariff_name=m.tariff.name if m.tariff else None,
             tariff_price=m.tariff.price if m.tariff else None,
-            discount_id=m.discount_id,
-            discount_name=m.discount.name if m.discount else None,
-            discount_type=m.discount.discount_type if m.discount else None,
-            discount_value=m.discount.value if m.discount else None,
-            effective_price=_calc_effective_price(
-                m.tariff.price if m.tariff else None, m.discount
-            ),
         ) for m in g.members
     ]
     base = _group_read(g, db=db)
@@ -876,7 +1205,6 @@ def get_group(group_id: int, db: Session = Depends(get_db), actor: models.User =
             joinedload(models.Group.course),
             selectinload(models.Group.members).joinedload(models.GroupStudent.student),
             selectinload(models.Group.members).joinedload(models.GroupStudent.tariff),
-            selectinload(models.Group.members).joinedload(models.GroupStudent.discount),
         )
         .filter(models.Group.id == group_id)
         .first()
@@ -908,8 +1236,13 @@ def update_group(group_id: int, payload: schemas.GroupUpdate, db: Session = Depe
     g = db.query(models.Group).filter(models.Group.id == group_id).first()
     if not g:
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
-    for k, v in payload.dict(exclude_unset=True).items():
+    changes = payload.dict(exclude_unset=True)
+    old = {k: str(getattr(g, k)) for k in changes}
+    for k, v in changes.items():
         setattr(g, k, v)
+    write_audit(db, entity_type="group", entity_id=g.id, action="update",
+                changed_by_id=actor.id, old_value=old,
+                new_value={k: str(v) for k, v in changes.items()})
     db.commit()
     db.refresh(g)
     return _group_read(g, db=db)
@@ -968,39 +1301,119 @@ def remove_student_from_group(group_id: int, student_id: int, db: Session = Depe
     db.commit()
 
 
-@app.patch("/groups/{group_id}/students/{student_id}/discount", status_code=200)
-def apply_student_discount(
-    group_id: int,
-    student_id: int,
-    payload: schemas.ApplyDiscountPayload,
-    db: Session = Depends(get_db),
-    actor: models.User = Depends(require_hunter),
-):
-    gs = db.query(models.GroupStudent).filter(
-        models.GroupStudent.group_id == group_id,
-        models.GroupStudent.student_id == student_id,
-    ).first()
-    if not gs:
-        raise HTTPException(status_code=404, detail="Talaba bu guruhda topilmadi")
-    if payload.discount_id is not None:
-        d = db.query(models.Discount).filter(models.Discount.id == payload.discount_id).first()
-        if not d:
-            raise HTTPException(status_code=404, detail="Chegirma topilmadi")
-    gs.discount_id = payload.discount_id
-    db.commit()
-    return {"message": "Chegirma saqlandi"}
-
-
 # ── Payments endpoints ────────────────────────────────────────────────────────
 
-def _payment_read(p: models.Payment) -> schemas.PaymentRead:
+# To'lov hisobi core_calc.py da (yagona manba) — bu yerda faqat delegatsiya.
+_student_month_owed = core_calc.student_month_owed
+_student_month_paid = core_calc.student_month_paid
+
+
+def _payment_read(p: models.Payment, db: Optional[Session] = None) -> schemas.PaymentRead:
+    expected = paid_total = remaining = None
+    status = None
+    if db is not None:
+        expected = _student_month_owed(db, p.student_id, p.group_id, p.month, p.year)
+        paid_total = _student_month_paid(db, p.student_id, p.group_id, p.month, p.year)
+        if expected and expected > 0:
+            remaining = max(Decimal(0), expected - paid_total)
+            status = "paid" if paid_total >= expected else "partial"
     return schemas.PaymentRead(
         id=p.id, student_id=p.student_id,
         student_name=p.student.full_name if p.student else None,
         group_id=p.group_id,
         group_name=p.group.name if p.group else None,
         amount=p.amount, month=p.month, year=p.year,
-        paid_at=p.paid_at, notes=p.notes
+        paid_at=p.paid_at, notes=p.notes,
+        recorded_by_name=(p.recorded_by.full_name or p.recorded_by.username) if p.recorded_by else None,
+        expected=expected, paid_total=paid_total, remaining=remaining, status=status,
+    )
+
+
+@app.get("/payments/expected")
+def payment_expected(
+    student_id: int = Query(...),
+    group_id: int = Query(...),
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_crm_access),
+):
+    """Talabaning shu oy uchun to'liq summasi, to'langani va qolgani."""
+    expected = _student_month_owed(db, student_id, group_id, month, year)
+    paid = _student_month_paid(db, student_id, group_id, month, year)
+    remaining = max(Decimal(0), expected - paid) if expected > 0 else Decimal(0)
+    return {
+        "expected": float(expected),
+        "paid": float(paid),
+        "remaining": float(remaining),
+    }
+
+
+@app.get("/students/{student_id}/payments/summary", response_model=schemas.StudentPaymentSummary)
+def student_payment_summary(
+    student_id: int,
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2020),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_crm_access),
+):
+    """Talabaning joriy oy uchun to'lov xulosasi — guruhlar kesimida qarz, avans va so'nggi to'lovlar."""
+    now = datetime.utcnow()
+    month, year = month or now.month, year or now.year
+
+    s = (
+        db.query(models.Student)
+        .options(
+            joinedload(models.Student.group_memberships).joinedload(models.GroupStudent.group),
+            joinedload(models.Student.group_memberships).joinedload(models.GroupStudent.tariff),
+        )
+        .filter(models.Student.id == student_id).first()
+    )
+    if not s:
+        raise HTTPException(404, "Talaba topilmadi")
+
+    groups: list[schemas.StudentGroupFee] = []
+    total_owed = total_paid = Decimal(0)
+    for m in s.group_memberships:
+        g = m.group
+        if not g or not g.is_active:
+            continue
+        owed = _student_month_owed(db, s.id, g.id, month, year)
+        paid = _student_month_paid(db, s.id, g.id, month, year)
+        total_owed += owed
+        total_paid += paid
+        groups.append(schemas.StudentGroupFee(
+            group_id=g.id, group_name=g.name, owed=owed, paid=paid,
+            remaining=max(Decimal(0), owed - paid),
+        ))
+
+    advance = Decimal(str(s.advance_balance or 0))
+    covered = total_paid + advance
+    debt = max(Decimal(0), total_owed - covered)
+    if total_owed <= 0:
+        status = "none"
+    elif covered >= total_owed:
+        status = "paid"
+    elif covered > 0:
+        status = "partial"
+    else:
+        status = "debtor"
+
+    recent = (
+        db.query(models.Payment)
+        .options(
+            joinedload(models.Payment.group),
+            joinedload(models.Payment.student),
+            joinedload(models.Payment.recorded_by),
+        )
+        .filter(models.Payment.student_id == student_id)
+        .order_by(models.Payment.paid_at.desc()).limit(10).all()
+    )
+    return schemas.StudentPaymentSummary(
+        student_id=s.id, student_name=s.full_name, month=month, year=year,
+        advance_balance=advance, total_owed=total_owed, total_paid=total_paid,
+        debt=debt, payment_status=status, groups=groups,
+        recent_payments=[_payment_read(p, db) for p in recent],
     )
 
 
@@ -1015,7 +1428,7 @@ def list_payments(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_admin),
+    _: models.User = Depends(require_crm_access),
 ):
     q = db.query(models.Payment)
     if student_id:
@@ -1033,7 +1446,7 @@ def list_payments(
     total = q.count()
     payments = q.order_by(models.Payment.paid_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {
-        "items": [_payment_read(p) for p in payments],
+        "items": [_payment_read(p, db) for p in payments],
         "meta": {
             "total": total,
             "page": page,
@@ -1044,15 +1457,22 @@ def list_payments(
 
 
 @app.post("/payments", response_model=schemas.PaymentRead, status_code=201)
-def create_payment(payload: schemas.PaymentCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
-    p = models.Payment(**payload.dict(), paid_at=datetime.utcnow())
+def create_payment(payload: schemas.PaymentCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_crm_access)):
+    p = models.Payment(**payload.dict(), paid_at=datetime.utcnow(), recorded_by_id=actor.id)
     db.add(p)
     db.flush()
     write_audit(db, entity_type="payment", entity_id=p.id, action="create",
                 changed_by_id=actor.id, new_value=payload.dict())
+    # Ota-onalarga bildirishnoma
+    _amount = int(Decimal(str(payload.amount)))
+    notify_parents_of_student(
+        db, student_id=payload.student_id, ntype="payment",
+        title="To'lov qabul qilindi",
+        body=f"{_amount:,} so'm to'lov qabul qilindi".replace(",", " "),
+    )
     db.commit()
     db.refresh(p)
-    return _payment_read(p)
+    return _payment_read(p, db)
 
 
 @app.put("/payments/{payment_id}", response_model=schemas.PaymentRead)
@@ -1060,11 +1480,16 @@ def update_payment(payment_id: int, payload: schemas.PaymentUpdate, db: Session 
     p = db.query(models.Payment).filter(models.Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="To'lov topilmadi")
-    for k, v in payload.dict(exclude_unset=True).items():
+    changes = payload.dict(exclude_unset=True)
+    old = {k: str(getattr(p, k)) for k in changes}
+    for k, v in changes.items():
         setattr(p, k, v)
+    write_audit(db, entity_type="payment", entity_id=p.id, action="update",
+                changed_by_id=actor.id, old_value=old,
+                new_value={k: str(v) for k, v in changes.items()})
     db.commit()
     db.refresh(p)
-    return _payment_read(p)
+    return _payment_read(p, db)
 
 
 @app.delete("/payments/{payment_id}", status_code=204)
@@ -1072,6 +1497,10 @@ def delete_payment(payment_id: int, db: Session = Depends(get_db), actor: models
     p = db.query(models.Payment).filter(models.Payment.id == payment_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="To'lov topilmadi")
+    write_audit(db, entity_type="payment", entity_id=p.id, action="delete",
+                changed_by_id=actor.id,
+                old_value={"student_id": p.student_id, "group_id": p.group_id,
+                           "amount": str(p.amount), "month": p.month, "year": p.year})
     db.delete(p)
     db.commit()
 
@@ -1529,7 +1958,13 @@ def payment_receipt(
     paid_date  = p.paid_at.strftime('%d.%m.%Y %H:%M') if p.paid_at else '—'
     amount_fmt = f"{int(p.amount):,}".replace(',', ' ')
 
-    html = f"""<!DOCTYPE html>
+    # Foydalanuvchi kiritgan matnlar HTML kontekstiga qo'yilishidan oldin escape qilinadi
+    # (aks holda talaba ismi / izoh orqali saqlanadigan XSS bo'lardi — chek admin brauzerida ochiladi).
+    student_name = html.escape(student.full_name) if student and student.full_name else '—'
+    group_name   = html.escape(group.name) if group and group.name else '—'
+    notes_html   = html.escape(p.notes) if p.notes else ''
+
+    page = f"""<!DOCTYPE html>
 <html lang="uz">
 <head>
 <meta charset="UTF-8">
@@ -1583,11 +2018,11 @@ def payment_receipt(
 
   <div class="row">
     <span class="label">O'quvchi</span>
-    <span class="val">{student.full_name if student else '—'}</span>
+    <span class="val">{student_name}</span>
   </div>
   <div class="row">
     <span class="label">Guruh</span>
-    <span class="val">{group.name if group else '—'}</span>
+    <span class="val">{group_name}</span>
   </div>
   <div class="row">
     <span class="label">Oy</span>
@@ -1597,7 +2032,7 @@ def payment_receipt(
     <span class="label">Sana</span>
     <span class="val">{paid_date}</span>
   </div>
-  {f'<div class="row"><span class="label">Izoh</span><span class="val">{p.notes}</span></div>' if p.notes else ''}
+  {f'<div class="row"><span class="label">Izoh</span><span class="val">{notes_html}</span></div>' if notes_html else ''}
 
   <hr class="divider">
 
@@ -1617,7 +2052,7 @@ def payment_receipt(
 </div>
 </body>
 </html>"""
-    return HTMLResponse(content=html)
+    return HTMLResponse(content=page)
 
 
 @app.get("/stats/export/excel")
@@ -1730,12 +2165,13 @@ def today_groups(
 ):
     """
     Groups for quick attendance.
-    - Admin/metodist: ALL active groups, any date (default today).
+    - Admin/metodist/hunter: ALL active groups, any date (default today).
     - Teacher: only their groups scheduled for today.
     """
     ref_date = target_date or date.today()
     ref_wd = ref_date.weekday()
-    is_admin_or_metodist = actor.role in (UserRole.admin.value, UserRole.metodist.value)
+    is_admin_or_metodist = actor.role in (UserRole.admin.value, UserRole.metodist.value,
+                                          UserRole.hunter.value, UserRole.sales.value)
 
     q = (
         db.query(models.Group)
@@ -1840,6 +2276,12 @@ def finance_monthly(
             else:
                 price = Decimal(0)
                 tariff_name = None
+
+            if price > 0:
+                price = core_calc.apply_special_discounts(
+                    price, core_calc.active_special_discounts(db, m.student_id),
+                    g.id, month, year,
+                )
 
             if price > 0:
                 owed = price.quantize(Decimal('1'))
@@ -1973,7 +2415,7 @@ def save_attendance(
     lesson_date: str,
     payload: List[dict],
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_metodist),
+    actor: models.User = Depends(require_attendance_editor),
 ):
     """Save attendance for a specific date. payload: [{student_id, is_present}]"""
     try:
@@ -1985,6 +2427,12 @@ def save_attendance(
     if not group:
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
 
+    # Teacher faqat o'z guruhida yo'qlama qila oladi
+    if actor.role == UserRole.teacher.value and group.teacher_id != actor.id:
+        raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
+
+    newly_absent: list[int] = []
+    newly_present: list[int] = []
     for item in payload:
         sid = item.get("student_id")
         present = item.get("is_present", True)
@@ -1998,14 +2446,44 @@ def save_attendance(
             .first()
         )
         if existing:
+            if existing.is_present and not present:
+                newly_absent.append(sid)
+            elif not existing.is_present and present:
+                newly_present.append(sid)
             existing.is_present = present
         else:
+            if not present:
+                newly_absent.append(sid)
+            else:
+                newly_present.append(sid)
             db.add(models.Attendance(
                 group_id=group_id,
                 student_id=sid,
                 lesson_date=d,
                 is_present=present,
             ))
+
+    # Yo'q deb belgilangan bolalarning ota-onalariga bildirishnoma
+    for sid in newly_absent:
+        notify_parents_of_student(
+            db, student_id=sid, ntype="attendance",
+            title="Bola darsga kelmadi",
+            body=f"{d:%d.%m.%Y} — {group.name} darsida qatnashmadi",
+        )
+    # "Keldi" belgilanganlarga — Telegram (biriktirilgan user ID bo'lsa)
+    if newly_present:
+        students_map = {
+            s.id: s for s in db.query(models.Student)
+            .filter(models.Student.id.in_(newly_present)).all()
+        }
+        for sid in newly_present:
+            s = students_map.get(sid)
+            if s and s.telegram_user_id:
+                notify_student_telegram(
+                    s,
+                    f"📚 <b>{s.full_name}</b> bugun darsda qatnashdi\n"
+                    f"👥 {group.name}\n📅 {d.strftime('%d.%m.%Y')}",
+                )
     db.commit()
     return {"saved": len(payload), "date": lesson_date}
 
@@ -2015,13 +2493,21 @@ def delete_attendance_date(
     group_id: int,
     lesson_date: str,
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_metodist),
+    actor: models.User = Depends(require_attendance_editor),
 ):
     """Delete all attendance records for a specific date."""
     try:
         d = date.fromisoformat(lesson_date)
     except ValueError:
         raise HTTPException(status_code=400, detail="Sana formati xato")
+
+    # Teacher faqat o'z guruhida
+    if actor.role == UserRole.teacher.value:
+        group = db.query(models.Group).filter(models.Group.id == group_id).first()
+        if not group:
+            raise HTTPException(status_code=404, detail="Guruh topilmadi")
+        if group.teacher_id != actor.id:
+            raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
 
     db.query(models.Attendance).filter(
         models.Attendance.group_id == group_id,
@@ -2031,19 +2517,1098 @@ def delete_attendance_date(
     return {"deleted": True, "date": lesson_date}
 
 
+# ── Student visits — Notifications (keldi/ketdi) ─────────────────────────────
+
+def _visit_read(v: models.StudentVisit) -> schemas.StudentVisitRead:
+    return schemas.StudentVisitRead(
+        id=v.id, student_id=v.student_id,
+        student_name=v.student.full_name if v.student else None,
+        student_photo=v.student.photo if v.student else None,
+        kind=v.kind,
+        noted_by_name=(v.noted_by.full_name or v.noted_by.username) if v.noted_by else None,
+        telegram_sent=v.telegram_sent, telegram_error=v.telegram_error,
+        created_at=v.created_at,
+    )
+
+
+@app.get("/visits", response_model=List[schemas.StudentVisitRead])
+def list_visits(
+    visit_date: Optional[date] = Query(None),
+    student_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_crm_access),
+):
+    q = db.query(models.StudentVisit).options(
+        joinedload(models.StudentVisit.student),
+        joinedload(models.StudentVisit.noted_by),
+    )
+    if student_id:
+        q = q.filter(models.StudentVisit.student_id == student_id)
+    else:
+        d = visit_date or date.today()
+        start = datetime(d.year, d.month, d.day)
+        q = q.filter(models.StudentVisit.created_at >= start,
+                     models.StudentVisit.created_at < start + timedelta(days=1))
+    return [_visit_read(v) for v in q.order_by(models.StudentVisit.created_at.desc()).limit(200).all()]
+
+
+@app.post("/visits", response_model=schemas.StudentVisitRead, status_code=201)
+def create_visit(
+    payload: schemas.StudentVisitCreate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_crm_access),
+):
+    """Keldi/ketdi belgilash + biriktirilgan Telegram ID'ga xabar (rasmi bo'lsa rasm bilan)."""
+    s = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+
+    v = models.StudentVisit(student_id=s.id, kind=payload.kind, noted_by_id=actor.id)
+
+    time_str = (datetime.utcnow() + timedelta(hours=5)).strftime("%H:%M")  # Toshkent vaqti
+    if payload.kind == "arrived":
+        caption = f"✅ <b>{s.full_name}</b> o'quv markazga keldi\n🕐 {time_str}"
+    else:
+        caption = f"🏠 <b>{s.full_name}</b> o'quv markazdan ketdi\n🕐 {time_str}"
+    ok, err = notify_student_telegram(s, caption)
+    v.telegram_sent = ok
+    v.telegram_error = err
+
+    db.add(v)
+    db.flush()
+    write_audit(db, entity_type="student_visit", entity_id=v.id, action="create",
+                changed_by_id=actor.id,
+                new_value={"student_id": s.id, "kind": payload.kind, "telegram_sent": ok})
+    db.commit()
+    db.refresh(v)
+    return _visit_read(v)
+
+
+@app.post("/students/{student_id}/photo", response_model=schemas.StudentRead)
+async def upload_student_photo(
+    student_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_crm_access),
+):
+    s = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(400, "Faqat JPEG, PNG, WebP yoki GIF rasm yuklash mumkin")
+    contents = await file.read()
+    if len(contents) > MAX_AVATAR_BYTES:
+        raise HTTPException(400, "Fayl hajmi 5 MB dan oshmasin")
+    ext = {
+        "image/jpeg": "jpg", "image/png": "png",
+        "image/webp": "webp", "image/gif": "gif",
+    }[file.content_type]
+    filename = f"{student_id}.{ext}"
+    with open(os.path.join(STUDENTS_DIR, filename), "wb") as f:
+        f.write(contents)
+    s.photo = f"students/{filename}"
+    db.commit()
+    db.refresh(s)
+    return _student_read(s)
+
+
+# ── Special chegirmalar ───────────────────────────────────────────────────────
+
+def _special_read(d: models.SpecialDiscount) -> schemas.SpecialDiscountRead:
+    return schemas.SpecialDiscountRead(
+        id=d.id, student_id=d.student_id,
+        student_name=d.student.full_name if d.student else None,
+        group_id=d.group_id,
+        group_name=d.group.name if d.group else None,
+        kind=d.kind, amount=d.amount, month=d.month, year=d.year,
+        reason=d.reason, is_active=d.is_active,
+        created_by_name=(d.created_by.full_name or d.created_by.username) if d.created_by else None,
+        created_at=d.created_at,
+    )
+
+
+@app.get("/special-discounts", response_model=List[schemas.SpecialDiscountRead])
+def list_special_discounts(
+    student_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_hunter),
+):
+    q = db.query(models.SpecialDiscount).options(
+        joinedload(models.SpecialDiscount.student),
+        joinedload(models.SpecialDiscount.group),
+        joinedload(models.SpecialDiscount.created_by),
+    )
+    if student_id:
+        q = q.filter(models.SpecialDiscount.student_id == student_id)
+    return [_special_read(d) for d in q.order_by(models.SpecialDiscount.created_at.desc()).all()]
+
+
+@app.post("/special-discounts", response_model=schemas.SpecialDiscountRead, status_code=201)
+def create_special_discount(
+    payload: schemas.SpecialDiscountCreate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_hunter),
+):
+    s = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    if payload.group_id:
+        if not db.query(models.Group).filter(models.Group.id == payload.group_id).first():
+            raise HTTPException(status_code=404, detail="Guruh topilmadi")
+    if payload.kind == "free_month":
+        if not payload.month or not payload.year:
+            raise HTTPException(status_code=400, detail="Bepul oy uchun oy va yil kiritilishi kerak")
+    if payload.kind == "monthly" and not payload.amount:
+        raise HTTPException(status_code=400, detail="Oylik chegirma uchun summa kiritilishi kerak")
+
+    d = models.SpecialDiscount(
+        student_id=payload.student_id,
+        group_id=payload.group_id,
+        kind=payload.kind,
+        amount=payload.amount if payload.kind == "monthly" else None,
+        month=payload.month if payload.kind == "free_month" else None,
+        year=payload.year if payload.kind == "free_month" else None,
+        reason=payload.reason,
+        created_by_id=actor.id,
+    )
+    db.add(d)
+    db.flush()
+    write_audit(db, entity_type="special_discount", entity_id=d.id, action="create",
+                changed_by_id=actor.id,
+                new_value={"student_id": d.student_id, "group_id": d.group_id, "kind": d.kind,
+                           "amount": str(d.amount) if d.amount else None,
+                           "month": d.month, "year": d.year, "reason": d.reason})
+    db.commit()
+    db.refresh(d)
+    return _special_read(d)
+
+
+@app.patch("/special-discounts/{discount_id}", response_model=schemas.SpecialDiscountRead)
+def update_special_discount(
+    discount_id: int,
+    payload: schemas.SpecialDiscountUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_hunter),
+):
+    d = db.query(models.SpecialDiscount).filter(models.SpecialDiscount.id == discount_id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Chegirma topilmadi")
+    changes = payload.dict(exclude_unset=True)
+    old = {k: str(getattr(d, k)) for k in changes}
+    for k, v in changes.items():
+        setattr(d, k, v)
+    write_audit(db, entity_type="special_discount", entity_id=d.id, action="update",
+                changed_by_id=actor.id, old_value=old,
+                new_value={k: str(v) for k, v in changes.items()})
+    db.commit()
+    db.refresh(d)
+    return _special_read(d)
+
+
+@app.delete("/special-discounts/{discount_id}", status_code=204)
+def delete_special_discount(discount_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_hunter)):
+    d = db.query(models.SpecialDiscount).filter(models.SpecialDiscount.id == discount_id).first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Chegirma topilmadi")
+    write_audit(db, entity_type="special_discount", entity_id=d.id, action="delete",
+                changed_by_id=actor.id,
+                old_value={"student_id": d.student_id, "kind": d.kind,
+                           "amount": str(d.amount) if d.amount else None,
+                           "month": d.month, "year": d.year})
+    db.delete(d)
+    db.commit()
+
+
+# ── Holidays (dam olish kunlari) ──────────────────────────────────────────────
+
+def _holiday_read(h: models.Holiday) -> schemas.HolidayRead:
+    return schemas.HolidayRead(
+        id=h.id, name=h.name, start_date=h.start_date, end_date=h.end_date,
+        created_by_name=(h.created_by.full_name or h.created_by.username) if h.created_by else None,
+        created_at=h.created_at,
+    )
+
+
+@app.get("/holidays", response_model=List[schemas.HolidayRead])
+def list_holidays(
+    year: Optional[int] = Query(None, ge=2020),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_auth),
+):
+    q = db.query(models.Holiday).options(joinedload(models.Holiday.created_by))
+    if year:
+        q = q.filter(models.Holiday.end_date >= date(year, 1, 1),
+                     models.Holiday.start_date <= date(year, 12, 31))
+    return [_holiday_read(h) for h in q.order_by(models.Holiday.start_date.desc()).all()]
+
+
+@app.post("/holidays", response_model=schemas.HolidayRead, status_code=201)
+def create_holiday(payload: schemas.HolidayCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+    if payload.end_date < payload.start_date:
+        raise HTTPException(status_code=400, detail="Tugash sanasi boshlanish sanasidan oldin bo'lishi mumkin emas")
+    h = models.Holiday(
+        name=payload.name, start_date=payload.start_date, end_date=payload.end_date,
+        created_by_id=actor.id,
+    )
+    db.add(h)
+    db.flush()
+    write_audit(db, entity_type="holiday", entity_id=h.id, action="create",
+                changed_by_id=actor.id,
+                new_value={"name": h.name, "start_date": str(h.start_date), "end_date": str(h.end_date)})
+    db.commit()
+    db.refresh(h)
+    return _holiday_read(h)
+
+
+@app.delete("/holidays/{holiday_id}", status_code=204)
+def delete_holiday(holiday_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+    h = db.query(models.Holiday).filter(models.Holiday.id == holiday_id).first()
+    if not h:
+        raise HTTPException(status_code=404, detail="Dam olish kuni topilmadi")
+    write_audit(db, entity_type="holiday", entity_id=h.id, action="delete",
+                changed_by_id=actor.id,
+                old_value={"name": h.name, "start_date": str(h.start_date), "end_date": str(h.end_date)})
+    db.delete(h)
+    db.commit()
+
+
+# ── Homework (uy vazifasi) + Telegram ─────────────────────────────────────────
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+
+def send_telegram_message(chat_id: str, text: str):
+    """Guruh Telegram chatiga xabar yuboradi. (ok, error) qaytaradi."""
+    if not TELEGRAM_BOT_TOKEN:
+        return False, "TELEGRAM_BOT_TOKEN sozlanmagan (.env)"
+    try:
+        import httpx
+        r = httpx.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10,
+        )
+        body = r.json()
+        if r.status_code == 200 and body.get("ok"):
+            return True, None
+        return False, str(body.get("description", r.text))[:400]
+    except Exception as e:
+        return False, str(e)[:400]
+
+
+def send_telegram_photo(chat_id: str, photo_path: str, caption: str):
+    """Rasm + izoh yuboradi. (ok, error) qaytaradi."""
+    if not TELEGRAM_BOT_TOKEN:
+        return False, "TELEGRAM_BOT_TOKEN sozlanmagan (.env)"
+    try:
+        import httpx
+        with open(photo_path, "rb") as f:
+            r = httpx.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
+                files={"photo": f},
+                timeout=15,
+            )
+        body = r.json()
+        if r.status_code == 200 and body.get("ok"):
+            return True, None
+        return False, str(body.get("description", r.text))[:400]
+    except Exception as e:
+        return False, str(e)[:400]
+
+
+def notify_student_telegram(student: models.Student, caption: str):
+    """Talabaga biriktirilgan Telegram ID'ga xabar: rasmi bo'lsa rasm bilan, bo'lmasa matn."""
+    if not student.telegram_user_id:
+        return False, "Talabaga Telegram user ID biriktirilmagan"
+    if student.photo:
+        path = os.path.join(UPLOAD_DIR, student.photo)
+        if os.path.exists(path):
+            return send_telegram_photo(student.telegram_user_id, path, caption)
+    return send_telegram_message(student.telegram_user_id, caption)
+
+
+def _homework_read(hw: models.Homework) -> schemas.HomeworkRead:
+    return schemas.HomeworkRead(
+        id=hw.id, group_id=hw.group_id,
+        group_name=hw.group.name if hw.group else None,
+        lesson_id=hw.lesson_id, lesson_number=hw.lesson_number,
+        lesson_title=hw.lesson_title, text=hw.text, lesson_date=hw.lesson_date,
+        created_by_name=(hw.created_by.full_name or hw.created_by.username) if hw.created_by else None,
+        created_at=hw.created_at,
+        telegram_sent=hw.telegram_sent, telegram_error=hw.telegram_error,
+    )
+
+
+def _check_group_access(db: Session, group_id: int, actor: models.User) -> models.Group:
+    group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Guruh topilmadi")
+    if actor.role == UserRole.teacher.value and group.teacher_id != actor.id:
+        raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
+    return group
+
+
+@app.get("/groups/{group_id}/next-lesson", response_model=schemas.NextLessonInfo)
+def group_next_lesson(group_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    """Metodika bo'yicha navbatdagi dars: raqami, nomi va uy vazifasi (lessons jadvalidan)."""
+    group = _check_group_access(db, group_id, actor)
+    category = group.stage or 'foundation'
+    total = group.course.total_lessons if group.course else schemas.STAGE_TOTAL_LESSONS.get(category, 24)
+    completed = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
+        models.Attendance.group_id == group_id
+    ).scalar() or 0
+    next_num = completed + 1
+    lesson = db.query(models.Lesson).filter(
+        models.Lesson.category == category,
+        models.Lesson.lesson_number == next_num,
+    ).first()
+    return schemas.NextLessonInfo(
+        lesson_id=lesson.id if lesson else None,
+        lesson_number=next_num,
+        lesson_title=lesson.title if lesson else None,
+        homework=lesson.homework if lesson else None,
+        category=category,
+        completed_lessons=completed,
+        total_lessons=total,
+    )
+
+
+@app.get("/groups/{group_id}/homeworks", response_model=List[schemas.HomeworkRead])
+def list_homeworks(group_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    _check_group_access(db, group_id, actor)
+    hws = (
+        db.query(models.Homework)
+        .options(joinedload(models.Homework.group), joinedload(models.Homework.created_by))
+        .filter(models.Homework.group_id == group_id)
+        .order_by(models.Homework.lesson_date.desc(), models.Homework.id.desc())
+        .limit(30).all()
+    )
+    return [_homework_read(hw) for hw in hws]
+
+
+@app.post("/groups/{group_id}/homeworks", response_model=schemas.HomeworkRead, status_code=201)
+def create_homework(
+    group_id: int,
+    payload: schemas.HomeworkCreate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_attendance_editor),
+):
+    """Uy vazifasini saqlaydi va guruh Telegram chatiga yuboradi."""
+    group = _check_group_access(db, group_id, actor)
+    lesson_date = payload.lesson_date or date.today()
+
+    hw = models.Homework(
+        group_id=group_id,
+        lesson_id=payload.lesson_id,
+        lesson_number=payload.lesson_number,
+        lesson_title=payload.lesson_title,
+        text=payload.text,
+        lesson_date=lesson_date,
+        created_by_id=actor.id,
+    )
+
+    # Telegram xabari
+    lines = [f"📚 <b>{group.name}</b>"]
+    if payload.lesson_number:
+        title_part = f" — {payload.lesson_title}" if payload.lesson_title else ""
+        lines.append(f"📖 {payload.lesson_number}-dars{title_part}")
+    elif payload.lesson_title:
+        lines.append(f"📖 {payload.lesson_title}")
+    lines.append(f"📅 {lesson_date.strftime('%d.%m.%Y')}")
+    lines.append("")
+    lines.append("📝 <b>Uy vazifasi:</b>")
+    lines.append(payload.text)
+    message = "\n".join(lines)
+
+    if group.telegram_chat_id:
+        ok, err = send_telegram_message(group.telegram_chat_id, message)
+        hw.telegram_sent = ok
+        hw.telegram_error = err
+    else:
+        hw.telegram_sent = False
+        hw.telegram_error = "Guruhga Telegram chat ID biriktirilmagan"
+
+    db.add(hw)
+    db.flush()
+    write_audit(db, entity_type="homework", entity_id=hw.id, action="create",
+                changed_by_id=actor.id,
+                new_value={"group_id": group_id, "lesson_number": payload.lesson_number,
+                           "lesson_date": str(lesson_date), "telegram_sent": hw.telegram_sent})
+    db.commit()
+    db.refresh(hw)
+    return _homework_read(hw)
+
+
+# ── Akademik: baholar / izohlar / sertifikatlar / tadbirlar ──────────────────
+
+def _teacher_group_ids(db: Session, actor: models.User) -> set:
+    return {gid for (gid,) in db.query(models.Group.id).filter(models.Group.teacher_id == actor.id).all()}
+
+
+def _check_academic_target(db: Session, actor: models.User, student_id: int, group_id: Optional[int]) -> None:
+    """Talaba/guruh mavjudligini va teacher faqat o'z guruhida ishlashini tekshiradi."""
+    if not db.query(models.Student).filter(models.Student.id == student_id).first():
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    if group_id and not db.query(models.Group).filter(models.Group.id == group_id).first():
+        raise HTTPException(status_code=404, detail="Guruh topilmadi")
+    if actor.role == UserRole.teacher.value:
+        if not group_id:
+            raise HTTPException(status_code=400, detail="O'qituvchi uchun guruh tanlanishi shart")
+        if group_id not in _teacher_group_ids(db, actor):
+            raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
+        enrolled = db.query(models.GroupStudent).filter(
+            models.GroupStudent.group_id == group_id,
+            models.GroupStudent.student_id == student_id,
+        ).first()
+        if not enrolled:
+            raise HTTPException(status_code=404, detail="Talaba bu guruhda emas")
+
+
+def _check_academic_owner(db: Session, actor: models.User, group_id: Optional[int]) -> None:
+    """Teacher faqat o'z guruhidagi yozuvni o'zgartira oladi/o'chira oladi."""
+    if actor.role == UserRole.teacher.value:
+        if not group_id or group_id not in _teacher_group_ids(db, actor):
+            raise HTTPException(status_code=403, detail="Bu yozuv sizga tegishli emas")
+
+
+@app.get("/academic/options", response_model=List[schemas.AcademicGroupOption])
+def academic_options(db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    """Baho/izoh kiritish uchun guruh→talabalar ro'yxati (teacher — faqat o'z guruhlari)."""
+    q = db.query(models.Group).filter(models.Group.is_active.is_(True))
+    if actor.role == UserRole.teacher.value:
+        q = q.filter(models.Group.teacher_id == actor.id)
+    out = []
+    for g in q.order_by(models.Group.name.asc()).all():
+        students = sorted(
+            (m.student for m in g.members if m.student and m.student.is_active and not m.student.is_archived),
+            key=lambda s: s.full_name,
+        )
+        out.append(schemas.AcademicGroupOption(
+            group_id=g.id, group_name=g.name,
+            students=[schemas.StudentBrief(id=s.id, full_name=s.full_name) for s in students],
+        ))
+    return out
+
+
+# ── Baholar ──
+
+def _grade_read(g: models.Grade) -> schemas.GradeRead:
+    return schemas.GradeRead(
+        id=g.id, student_id=g.student_id,
+        student_name=g.student.full_name if g.student else None,
+        group_id=g.group_id, group_name=g.group.name if g.group else None,
+        subject=g.subject, score=g.score, max_score=g.max_score,
+        exam_type=g.exam_type, exam_date=g.exam_date, comment=g.comment,
+        created_by_name=(g.created_by.full_name or g.created_by.username) if g.created_by else None,
+        created_at=g.created_at,
+    )
+
+
+@app.get("/grades", response_model=List[schemas.GradeRead])
+def list_grades(
+    student_id: Optional[int] = Query(None),
+    group_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_attendance_editor),
+):
+    q = db.query(models.Grade).options(
+        joinedload(models.Grade.student), joinedload(models.Grade.group),
+        joinedload(models.Grade.created_by),
+    )
+    if actor.role == UserRole.teacher.value:
+        q = q.filter(models.Grade.group_id.in_(_teacher_group_ids(db, actor) or {0}))
+    if student_id:
+        q = q.filter(models.Grade.student_id == student_id)
+    if group_id:
+        q = q.filter(models.Grade.group_id == group_id)
+    return [_grade_read(g) for g in q.order_by(models.Grade.exam_date.desc(), models.Grade.id.desc()).limit(300).all()]
+
+
+@app.post("/grades", response_model=schemas.GradeRead, status_code=201)
+def create_grade(payload: schemas.GradeCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    _check_academic_target(db, actor, payload.student_id, payload.group_id)
+    if payload.score > payload.max_score:
+        raise HTTPException(status_code=400, detail="Ball maksimal balldan katta bo'lishi mumkin emas")
+    g = models.Grade(
+        student_id=payload.student_id, group_id=payload.group_id,
+        subject=payload.subject, score=payload.score, max_score=payload.max_score,
+        exam_type=payload.exam_type, exam_date=payload.exam_date or date.today(),
+        comment=payload.comment, created_by_id=actor.id,
+    )
+    db.add(g)
+    db.flush()
+    write_audit(db, entity_type="grade", entity_id=g.id, action="create", changed_by_id=actor.id,
+                new_value={"student_id": g.student_id, "subject": g.subject,
+                           "score": g.score, "max_score": g.max_score, "exam_date": str(g.exam_date)})
+    notify_parents_of_student(
+        db, student_id=g.student_id, ntype="announcement",
+        title=f"Yangi baho: {g.subject}",
+        body=f"Natija: {g.score}/{g.max_score}" + (f" — {g.comment}" if g.comment else ""),
+    )
+    db.commit()
+    db.refresh(g)
+    return _grade_read(g)
+
+
+@app.patch("/grades/{grade_id}", response_model=schemas.GradeRead)
+def update_grade(grade_id: int, payload: schemas.GradeUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    g = db.query(models.Grade).filter(models.Grade.id == grade_id).first()
+    if not g:
+        raise HTTPException(status_code=404, detail="Baho topilmadi")
+    _check_academic_owner(db, actor, g.group_id)
+    changes = payload.dict(exclude_unset=True)
+    old = {k: str(getattr(g, k)) for k in changes}
+    for k, v in changes.items():
+        setattr(g, k, v)
+    if g.score > g.max_score:
+        raise HTTPException(status_code=400, detail="Ball maksimal balldan katta bo'lishi mumkin emas")
+    write_audit(db, entity_type="grade", entity_id=g.id, action="update", changed_by_id=actor.id,
+                old_value=old, new_value={k: str(v) for k, v in changes.items()})
+    db.commit()
+    db.refresh(g)
+    return _grade_read(g)
+
+
+@app.delete("/grades/{grade_id}", status_code=204)
+def delete_grade(grade_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    g = db.query(models.Grade).filter(models.Grade.id == grade_id).first()
+    if not g:
+        raise HTTPException(status_code=404, detail="Baho topilmadi")
+    _check_academic_owner(db, actor, g.group_id)
+    write_audit(db, entity_type="grade", entity_id=g.id, action="delete", changed_by_id=actor.id,
+                old_value={"student_id": g.student_id, "subject": g.subject, "score": g.score})
+    db.delete(g)
+    db.commit()
+
+
+# ── O'qituvchi izohlari ──
+
+def _feedback_read(f: models.TeacherFeedback) -> schemas.TeacherFeedbackRead:
+    return schemas.TeacherFeedbackRead(
+        id=f.id, student_id=f.student_id,
+        student_name=f.student.full_name if f.student else None,
+        group_id=f.group_id, group_name=f.group.name if f.group else None,
+        teacher_name=(f.teacher.full_name or f.teacher.username) if f.teacher else None,
+        comment=f.comment, created_at=f.created_at,
+        status=f.status or "new",
+        status_updated_by_name=(f.status_updated_by.full_name or f.status_updated_by.username) if f.status_updated_by else None,
+        status_updated_at=f.status_updated_at,
+    )
+
+
+@app.get("/teacher-feedbacks", response_model=List[schemas.TeacherFeedbackRead])
+def list_teacher_feedbacks(
+    student_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None),     # new | resolved | no_answer
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_feedback_viewer),
+):
+    q = db.query(models.TeacherFeedback).options(
+        joinedload(models.TeacherFeedback.student), joinedload(models.TeacherFeedback.group),
+        joinedload(models.TeacherFeedback.teacher), joinedload(models.TeacherFeedback.status_updated_by),
+    )
+    if actor.role == UserRole.teacher.value:
+        q = q.filter(models.TeacherFeedback.group_id.in_(_teacher_group_ids(db, actor) or {0}))
+    if student_id:
+        q = q.filter(models.TeacherFeedback.student_id == student_id)
+    if status:
+        q = q.filter(models.TeacherFeedback.status == status)
+    return [_feedback_read(f) for f in q.order_by(models.TeacherFeedback.created_at.desc()).limit(300).all()]
+
+
+@app.get("/teacher-feedbacks/new-count")
+def teacher_feedbacks_new_count(
+    _: models.User = Depends(require_feedback_status),
+    db: Session = Depends(get_db),
+):
+    """Yangi (hal qilinmagan) izohlar soni — sidebar'dagi qizil badge uchun."""
+    n = (
+        db.query(func.count(models.TeacherFeedback.id))
+        .filter(models.TeacherFeedback.status == "new")
+        .scalar()
+    )
+    return {"count": n or 0}
+
+
+@app.post("/teacher-feedbacks", response_model=schemas.TeacherFeedbackRead, status_code=201)
+def create_teacher_feedback(payload: schemas.TeacherFeedbackCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    _check_academic_target(db, actor, payload.student_id, payload.group_id)
+    f = models.TeacherFeedback(
+        student_id=payload.student_id, group_id=payload.group_id,
+        teacher_id=actor.id, comment=payload.comment,
+    )
+    db.add(f)
+    db.flush()
+    write_audit(db, entity_type="teacher_feedback", entity_id=f.id, action="create", changed_by_id=actor.id,
+                new_value={"student_id": f.student_id, "comment": f.comment[:200]})
+    notify_parents_of_student(
+        db, student_id=f.student_id, ntype="announcement",
+        title="O'qituvchi izohi", body=f.comment[:300],
+    )
+    # Hunter va Call center yangi izohni kuzatib borishi kerak — qizil badge + notification
+    student_name = db.query(models.Student.full_name).filter(models.Student.id == f.student_id).scalar()
+    _notify(
+        db, user_ids=[u[0] for u in db.query(models.User.id).filter(
+            models.User.is_active == True,  # noqa: E712
+            models.User.role.in_([UserRole.hunter.value, UserRole.call_center.value]),
+            models.User.id != actor.id,
+        ).all()],
+        title="Yangi o'quvchi izohi",
+        body=f"{student_name or 'Talaba'}: {f.comment[:250]}",
+        link="/feedbacks", ntype="feedback",
+    )
+    db.commit()
+    db.refresh(f)
+    return _feedback_read(f)
+
+
+@app.patch("/teacher-feedbacks/{feedback_id}", response_model=schemas.TeacherFeedbackRead)
+def update_teacher_feedback(feedback_id: int, payload: schemas.TeacherFeedbackUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    f = db.query(models.TeacherFeedback).filter(models.TeacherFeedback.id == feedback_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Izoh topilmadi")
+    if actor.role == UserRole.teacher.value and f.teacher_id != actor.id:
+        raise HTTPException(status_code=403, detail="Bu izoh sizga tegishli emas")
+    old = f.comment
+    f.comment = payload.comment
+    write_audit(db, entity_type="teacher_feedback", entity_id=f.id, action="update", changed_by_id=actor.id,
+                old_value={"comment": old[:200]}, new_value={"comment": f.comment[:200]})
+    db.commit()
+    db.refresh(f)
+    return _feedback_read(f)
+
+
+_FEEDBACK_STATUS_LABELS = {
+    "new": "Yangi",
+    "resolved": "Hal qilindi",
+    "no_answer": "Telefonga ota-onasi javob bermadi",
+}
+
+
+@app.patch("/teacher-feedbacks/{feedback_id}/status", response_model=schemas.TeacherFeedbackRead)
+def update_teacher_feedback_status(
+    feedback_id: int,
+    payload: schemas.TeacherFeedbackStatusUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_feedback_status),
+):
+    """Izoh kuzatuv statusi: hal qilindi / telefonga ota-onasi javob bermadi."""
+    f = db.query(models.TeacherFeedback).filter(models.TeacherFeedback.id == feedback_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Izoh topilmadi")
+    old = f.status or "new"
+    f.status = payload.status
+    f.status_updated_by_id = actor.id
+    f.status_updated_at = datetime.utcnow()
+    write_audit(db, entity_type="teacher_feedback", entity_id=f.id, action="status", changed_by_id=actor.id,
+                old_value={"status": old}, new_value={"status": f.status})
+    # Izoh egasi (o'qituvchi) natijadan xabardor bo'ladi
+    if f.teacher_id and f.teacher_id != actor.id:
+        _notify(
+            db, user_ids=[f.teacher_id],
+            title="Izoh statusi yangilandi",
+            body=f"{_FEEDBACK_STATUS_LABELS.get(f.status, f.status)} — {f.comment[:200]}",
+            link="/feedbacks", ntype="feedback",
+        )
+    db.commit()
+    db.refresh(f)
+    db.refresh(f, attribute_names=["student", "group", "teacher", "status_updated_by"])
+    return _feedback_read(f)
+
+
+@app.delete("/teacher-feedbacks/{feedback_id}", status_code=204)
+def delete_teacher_feedback(feedback_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    f = db.query(models.TeacherFeedback).filter(models.TeacherFeedback.id == feedback_id).first()
+    if not f:
+        raise HTTPException(status_code=404, detail="Izoh topilmadi")
+    if actor.role == UserRole.teacher.value and f.teacher_id != actor.id:
+        raise HTTPException(status_code=403, detail="Bu izoh sizga tegishli emas")
+    write_audit(db, entity_type="teacher_feedback", entity_id=f.id, action="delete", changed_by_id=actor.id,
+                old_value={"student_id": f.student_id, "comment": f.comment[:200]})
+    db.delete(f)
+    db.commit()
+
+
+# ── Sertifikatlar ──
+
+MAX_CERT_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
+_CERT_URL_MARKER = "/uploads/certificates/"
+
+
+def _delete_cert_file_if_local(file_url: str) -> None:
+    """Bizning serverga yuklangan PDF bo'lsa — faylni ham o'chiramiz (best-effort)."""
+    if _CERT_URL_MARKER not in (file_url or ""):
+        return
+    filename = file_url.rsplit("/", 1)[-1]
+    # Path traversal himoyasi: faqat bizning uuid.pdf formatimiz
+    if not filename.endswith(".pdf") or "/" in filename or ".." in filename:
+        return
+    try:
+        os.remove(os.path.join(CERTIFICATES_DIR, filename))
+    except OSError:
+        pass
+
+
+@app.post("/certificates/upload")
+async def upload_certificate_pdf(
+    file: UploadFile = File(...),
+    _: models.User = Depends(require_lms_write),
+):
+    """PDF faylni serverga yuklaydi va public file_url qaytaradi.
+
+    Fayl nomi tasodifiy (uuid) — taxmin qilib bo'lmaydi, shu sababli
+    /uploads statikasi authsiz bo'lsa ham sertifikatlar sanab chiqilmaydi.
+    """
+    contents = await file.read()
+    if len(contents) > MAX_CERT_PDF_BYTES:
+        raise HTTPException(400, "Fayl hajmi 10 MB dan oshmasin")
+    # Content-type'ga ham, fayl nomiga ham ishonmaymiz — magic bytes tekshiramiz
+    if not contents.startswith(b"%PDF-"):
+        raise HTTPException(400, "Faqat PDF fayl yuklash mumkin")
+
+    filename = f"{uuid4().hex}.pdf"
+    with open(os.path.join(CERTIFICATES_DIR, filename), "wb") as f:
+        f.write(contents)
+
+    return {"file_url": f"{PUBLIC_BASE_URL}{PUBLIC_API_PREFIX}{_CERT_URL_MARKER}{filename}"}
+
+
+def _certificate_read(c: models.Certificate) -> schemas.CertificateRead:
+    return schemas.CertificateRead(
+        id=c.id, student_id=c.student_id,
+        student_name=c.student.full_name if c.student else None,
+        title=c.title, file_url=c.file_url, issued_at=c.issued_at,
+        created_by_name=(c.created_by.full_name or c.created_by.username) if c.created_by else None,
+        created_at=c.created_at,
+    )
+
+
+@app.get("/certificates", response_model=List[schemas.CertificateRead])
+def list_certificates(
+    student_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_lms_write),
+):
+    q = db.query(models.Certificate).options(
+        joinedload(models.Certificate.student), joinedload(models.Certificate.created_by),
+    )
+    if student_id:
+        q = q.filter(models.Certificate.student_id == student_id)
+    return [_certificate_read(c) for c in q.order_by(models.Certificate.created_at.desc()).limit(300).all()]
+
+
+@app.post("/certificates", response_model=schemas.CertificateRead, status_code=201)
+def create_certificate(payload: schemas.CertificateCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
+    if not db.query(models.Student).filter(models.Student.id == payload.student_id).first():
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    c = models.Certificate(
+        student_id=payload.student_id, title=payload.title,
+        file_url=payload.file_url, issued_at=payload.issued_at,
+        created_by_id=actor.id,
+    )
+    db.add(c)
+    db.flush()
+    write_audit(db, entity_type="certificate", entity_id=c.id, action="create", changed_by_id=actor.id,
+                new_value={"student_id": c.student_id, "title": c.title, "file_url": c.file_url})
+    notify_parents_of_student(
+        db, student_id=c.student_id, ntype="announcement",
+        title="Yangi sertifikat", body=c.title,
+    )
+    db.commit()
+    db.refresh(c)
+    return _certificate_read(c)
+
+
+@app.patch("/certificates/{certificate_id}", response_model=schemas.CertificateRead)
+def update_certificate(certificate_id: int, payload: schemas.CertificateUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
+    c = db.query(models.Certificate).filter(models.Certificate.id == certificate_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Sertifikat topilmadi")
+    changes = payload.dict(exclude_unset=True)
+    old = {k: str(getattr(c, k)) for k in changes}
+    old_file_url = c.file_url
+    for k, v in changes.items():
+        setattr(c, k, v)
+    write_audit(db, entity_type="certificate", entity_id=c.id, action="update", changed_by_id=actor.id,
+                old_value=old, new_value={k: str(v) for k, v in changes.items()})
+    db.commit()
+    db.refresh(c)
+    if "file_url" in changes and changes["file_url"] != old_file_url:
+        _delete_cert_file_if_local(old_file_url)
+    return _certificate_read(c)
+
+
+@app.delete("/certificates/{certificate_id}", status_code=204)
+def delete_certificate(certificate_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
+    c = db.query(models.Certificate).filter(models.Certificate.id == certificate_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Sertifikat topilmadi")
+    write_audit(db, entity_type="certificate", entity_id=c.id, action="delete", changed_by_id=actor.id,
+                old_value={"student_id": c.student_id, "title": c.title})
+    file_url = c.file_url
+    db.delete(c)
+    db.commit()
+    _delete_cert_file_if_local(file_url)
+
+
+# ── Tadbirlar ──
+
+def _event_read(e: models.Event) -> schemas.EventRead:
+    return schemas.EventRead(
+        id=e.id, title=e.title, description=e.description,
+        event_date=e.event_date, location=e.location, is_active=e.is_active,
+        created_by_name=(e.created_by.full_name or e.created_by.username) if e.created_by else None,
+        created_at=e.created_at,
+    )
+
+
+@app.get("/events", response_model=List[schemas.EventRead])
+def list_events(db: Session = Depends(get_db), _: models.User = Depends(require_auth)):
+    rows = (
+        db.query(models.Event).options(joinedload(models.Event.created_by))
+        .order_by(models.Event.event_date.desc()).limit(200).all()
+    )
+    return [_event_read(e) for e in rows]
+
+
+@app.post("/events", response_model=schemas.EventRead, status_code=201)
+def create_event(payload: schemas.EventCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+    e = models.Event(
+        title=payload.title, description=payload.description,
+        event_date=payload.event_date, location=payload.location,
+        created_by_id=actor.id,
+    )
+    db.add(e)
+    db.flush()
+    write_audit(db, entity_type="event", entity_id=e.id, action="create", changed_by_id=actor.id,
+                new_value={"title": e.title, "event_date": str(e.event_date), "location": e.location})
+    db.commit()
+    db.refresh(e)
+    return _event_read(e)
+
+
+@app.patch("/events/{event_id}", response_model=schemas.EventRead)
+def update_event(event_id: int, payload: schemas.EventUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+    e = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Tadbir topilmadi")
+    changes = payload.dict(exclude_unset=True)
+    old = {k: str(getattr(e, k)) for k in changes}
+    for k, v in changes.items():
+        setattr(e, k, v)
+    write_audit(db, entity_type="event", entity_id=e.id, action="update", changed_by_id=actor.id,
+                old_value=old, new_value={k: str(v) for k, v in changes.items()})
+    db.commit()
+    db.refresh(e)
+    return _event_read(e)
+
+
+@app.delete("/events/{event_id}", status_code=204)
+def delete_event(event_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+    e = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Tadbir topilmadi")
+    write_audit(db, entity_type="event", entity_id=e.id, action="delete", changed_by_id=actor.id,
+                old_value={"title": e.title, "event_date": str(e.event_date)})
+    db.delete(e)
+    db.commit()
+
+
+# ── Coinlar (o'qituvchi rag'bati) ────────────────────────────────────────────
+# Budjet alohida saqlanmaydi: oylik budjet = COINS_PER_STUDENT × o'qituvchining
+# faol guruhlaridagi faol talabalar soni; sarf esa joriy kalendar oyda
+# berilganlar yig'indisi. Shu sabab har oyning 1-kunida qoldiq o'z-o'zidan
+# to'liq budjetga qaytadi — cron kerak emas.
+
+COINS_PER_STUDENT = int(os.getenv("COINS_PER_STUDENT", "50"))
+
+
+def _teacher_coin_budget(db: Session, teacher_id: int) -> int:
+    """Oylik budjet: 50 coin × o'qituvchi guruhlaridagi har bir faol talaba."""
+    student_count = (
+        db.query(func.count(func.distinct(models.GroupStudent.student_id)))
+        .join(models.Group, models.Group.id == models.GroupStudent.group_id)
+        .join(models.Student, models.Student.id == models.GroupStudent.student_id)
+        .filter(
+            models.Group.teacher_id == teacher_id,
+            models.Group.is_active.is_(True),
+            models.Student.is_active.is_(True),
+            models.Student.is_archived.is_(False),
+        )
+        .scalar()
+    ) or 0
+    return COINS_PER_STUDENT * student_count
+
+
+def _coins_spent_this_month(db: Session, teacher_id: int, now: Optional[datetime] = None) -> int:
+    now = now or datetime.utcnow()
+    return int(
+        db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0))
+        .filter(
+            models.CoinTransaction.teacher_id == teacher_id,
+            extract("month", models.CoinTransaction.created_at) == now.month,
+            extract("year", models.CoinTransaction.created_at) == now.year,
+        )
+        .scalar()
+    )
+
+
+def _coin_tx_read(t: models.CoinTransaction) -> schemas.CoinTransactionRead:
+    return schemas.CoinTransactionRead(
+        id=t.id, student_id=t.student_id,
+        student_name=t.student.full_name if t.student else None,
+        group_name=t.group.name if t.group else None,
+        teacher_name=(t.teacher.full_name or t.teacher.username) if t.teacher else None,
+        amount=t.amount, reason=t.reason, created_at=t.created_at,
+    )
+
+
+@app.get("/coins/summary", response_model=schemas.CoinSummary)
+def coin_summary(db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    now = datetime.utcnow()
+    spent = _coins_spent_this_month(db, actor.id, now)
+    if actor.role == UserRole.teacher.value:
+        budget = _teacher_coin_budget(db, actor.id)
+        return schemas.CoinSummary(month=now.month, year=now.year, budget=budget,
+                                   spent=spent, remaining=max(0, budget - spent))
+    return schemas.CoinSummary(month=now.month, year=now.year, budget=None, spent=spent, remaining=None)
+
+
+@app.post("/coins/give", response_model=schemas.CoinTransactionRead, status_code=201)
+def give_coins(payload: schemas.CoinGive, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    _check_academic_target(db, actor, payload.student_id, payload.group_id)
+
+    # Teacher uchun oylik budjet nazorati (boshqa rollar cheklanmagan)
+    if actor.role == UserRole.teacher.value:
+        budget = _teacher_coin_budget(db, actor.id)
+        remaining = budget - _coins_spent_this_month(db, actor.id)
+        if payload.amount > remaining:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Coin yetarli emas: qoldiq {max(0, remaining)} (har oy 1-sanada {budget} ga to'ladi)",
+            )
+
+    t = models.CoinTransaction(
+        student_id=payload.student_id, teacher_id=actor.id, group_id=payload.group_id,
+        amount=payload.amount, reason=payload.reason, created_at=datetime.utcnow(),
+    )
+    db.add(t)
+    db.flush()
+    write_audit(db, entity_type="coin", entity_id=t.id, action="create", changed_by_id=actor.id,
+                new_value={"student_id": t.student_id, "amount": t.amount, "reason": t.reason})
+    notify_parents_of_student(
+        db, student_id=t.student_id, ntype="announcement",
+        title=f"Farzandingiz {t.amount} coin oldi 🎉",
+        body=t.reason or "O'qituvchi rag'bati",
+    )
+    db.commit()
+    db.refresh(t)
+    return _coin_tx_read(t)
+
+
+def _student_coin_total(db: Session, student_id: int) -> int:
+    return int(
+        db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0))
+        .filter(models.CoinTransaction.student_id == student_id)
+        .scalar()
+    )
+
+
+@app.post("/coins/deduct", response_model=schemas.CoinTransactionRead, status_code=201)
+def deduct_coins(payload: schemas.CoinDeduct, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+    """Talabadan coin yechish (jarima/tuzatish) — faqat admin. Manfiy yozuv sifatida saqlanadi."""
+    student = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+
+    total = _student_coin_total(db, payload.student_id)
+    if payload.amount > total:
+        raise HTTPException(status_code=400, detail=f"Talabada faqat {max(0, total)} coin bor — balans manfiy bo'lolmaydi")
+
+    t = models.CoinTransaction(
+        student_id=payload.student_id, teacher_id=actor.id, group_id=None,
+        amount=-payload.amount, reason=payload.reason, created_at=datetime.utcnow(),
+    )
+    db.add(t)
+    db.flush()
+    write_audit(db, entity_type="coin", entity_id=t.id, action="deduct", changed_by_id=actor.id,
+                new_value={"student_id": t.student_id, "amount": t.amount, "reason": t.reason})
+    notify_parents_of_student(
+        db, student_id=t.student_id, ntype="announcement",
+        title=f"Farzandingizdan {payload.amount} coin yechildi",
+        body=t.reason or "Administratsiya qarori",
+    )
+    db.commit()
+    db.refresh(t)
+    return _coin_tx_read(t)
+
+
+@app.get("/coins/transactions", response_model=List[schemas.CoinTransactionRead])
+def list_coin_transactions(
+    student_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_attendance_editor),
+):
+    q = db.query(models.CoinTransaction).options(
+        joinedload(models.CoinTransaction.student),
+        joinedload(models.CoinTransaction.group),
+        joinedload(models.CoinTransaction.teacher),
+    )
+    if actor.role == UserRole.teacher.value:
+        q = q.filter(models.CoinTransaction.teacher_id == actor.id)
+    if student_id:
+        q = q.filter(models.CoinTransaction.student_id == student_id)
+    return [_coin_tx_read(t) for t in q.order_by(models.CoinTransaction.created_at.desc()).limit(300).all()]
+
+
+@app.get("/coins/totals", response_model=List[schemas.StudentCoinTotal])
+def coin_totals(db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    """Talabalar bo'yicha umumiy coin reytingi (teacher — faqat o'z guruhlari talabalari)."""
+    q = (
+        db.query(models.Student.id, models.Student.full_name,
+                 func.coalesce(func.sum(models.CoinTransaction.amount), 0).label("total"))
+        .join(models.CoinTransaction, models.CoinTransaction.student_id == models.Student.id)
+        .group_by(models.Student.id)
+    )
+    if actor.role == UserRole.teacher.value:
+        gids = _teacher_group_ids(db, actor) or {0}
+        q = q.join(models.GroupStudent, models.GroupStudent.student_id == models.Student.id) \
+             .filter(models.GroupStudent.group_id.in_(gids)).group_by(models.Student.id)
+    rows = q.order_by(func.sum(models.CoinTransaction.amount).desc()).limit(100).all()
+    return [schemas.StudentCoinTotal(student_id=r[0], student_name=r[1], total=int(r[2])) for r in rows]
+
+
 # ═══════════════════════════════════════════════════════
 #  LEADS  (Hunter & Call Center CRM)
 # ═══════════════════════════════════════════════════════
 
 def _lead_read(lead: models.Lead) -> schemas.LeadRead:
+    st = lead.stage
+    src = lead.source
     return schemas.LeadRead(
         id=lead.id,
         full_name=lead.full_name,
         phone=lead.phone,
         course_interest=lead.course_interest,
         status=lead.status,
+        stage_id=lead.stage_id,
+        stage_name=st.name if st else None,
+        stage_color=st.color if st else None,
+        stage_icon=st.icon if st else None,
+        stage_kind=st.kind if st else None,
+        source_id=lead.source_id,
+        source_name=src.name if src else None,
         callback_at=lead.callback_at,
         notes=lead.notes,
+        date_of_birth=lead.date_of_birth,
+        parent_phone=lead.parent_phone,
+        parent2_phone=lead.parent2_phone,
+        interested_group_id=lead.interested_group_id,
+        interested_group_name=lead.interested_group.name if lead.interested_group else None,
+        is_shared=lead.is_shared,
+        claimed_by_id=lead.claimed_by_id,
+        claimed_by_name=(lead.claimed_by.full_name or lead.claimed_by.username) if lead.claimed_by else None,
         created_by_id=lead.created_by_id,
         created_by_name=lead.created_by.full_name or lead.created_by.username if lead.created_by else None,
         updated_by_name=lead.updated_by.full_name or lead.updated_by.username if lead.updated_by else None,
@@ -2052,22 +3617,90 @@ def _lead_read(lead: models.Lead) -> schemas.LeadRead:
     )
 
 
+def _log_lead_activity(db, *, lead_id, action, description, author_id=None, meta=None):
+    db.add(models.LeadActivity(
+        lead_id=lead_id,
+        action=action,
+        description=description,
+        author_id=author_id,
+        meta_json=json.dumps(meta, ensure_ascii=False, default=str) if meta else None,
+        created_at=datetime.utcnow(),
+    ))
+
+
+def _notify(db, *, user_ids, title, body=None, link=None, ntype="new_lead"):
+    now = datetime.utcnow()
+    for uid in set(user_ids):
+        db.add(models.Notification(
+            user_id=uid, notification_type=ntype, title=title,
+            body=body, link=link, is_read=False, created_at=now,
+        ))
+
+
+def _crm_recipient_ids(db, exclude_id=None):
+    """Yangi lid haqida xabardor qilinadigan foydalanuvchilar (admin + call_center)."""
+    rows = (
+        db.query(models.User.id)
+        .filter(
+            models.User.is_active == True,  # noqa: E712
+            models.User.role.in_([UserRole.admin.value, UserRole.call_center.value]),
+        ).all()
+    )
+    return [r[0] for r in rows if r[0] != exclude_id]
+
+
+def _slugify(name: str) -> str:
+    base = "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-")
+    base = "-".join(filter(None, base.split("-"))) or "stage"
+    return base[:70]
+
+
+def _default_stage(db) -> Optional[models.LeadStage]:
+    return (
+        db.query(models.LeadStage)
+        .filter(models.LeadStage.is_archived == False, models.LeadStage.kind == "lead")  # noqa: E712
+        .order_by(models.LeadStage.order.asc())
+        .first()
+    )
+
+
+_LEAD_LOAD = (
+    joinedload(models.Lead.created_by),
+    joinedload(models.Lead.updated_by),
+    joinedload(models.Lead.claimed_by),
+    joinedload(models.Lead.stage),
+    joinedload(models.Lead.source),
+    joinedload(models.Lead.interested_group),
+)
+
+
 @app.get("/leads", response_model=List[schemas.LeadRead])
 def list_leads(
     status: Optional[str] = Query(None),
+    stage: Optional[str] = Query(None),      # stage.slug bo'yicha filtr
+    source_id: Optional[int] = Query(None),
+    pool: bool = Query(False),               # faqat umumiy havza (band qilinmagan)
     search: Optional[str] = Query(None),
     actor: models.User = Depends(require_crm_access),
     db: Session = Depends(get_db),
 ):
-    q = db.query(models.Lead).options(
-        joinedload(models.Lead.created_by),
-        joinedload(models.Lead.updated_by),
-    )
-    # Hunter faqat o'z lidlarini ko'radi
-    if actor.role == UserRole.hunter.value:
-        q = q.filter(models.Lead.created_by_id == actor.id)
-    if status:
+    q = db.query(models.Lead).options(*_LEAD_LOAD)
+    if pool:
+        # Umumiy havza: ulashilgan va hali band qilinmagan lidlar
+        q = q.filter(models.Lead.is_shared == True, models.Lead.claimed_by_id.is_(None))  # noqa: E712
+    elif actor.role in (UserRole.hunter.value, UserRole.sales.value):
+        # Hunter/Sales: o'zi yaratgan yoki band qilgan + havzadagi bo'sh lidlar
+        q = q.filter(
+            (models.Lead.created_by_id == actor.id) |
+            (models.Lead.claimed_by_id == actor.id) |
+            ((models.Lead.is_shared == True) & (models.Lead.claimed_by_id.is_(None)))  # noqa: E712
+        )
+    if stage:
+        q = q.join(models.LeadStage, models.Lead.stage_id == models.LeadStage.id).filter(models.LeadStage.slug == stage)
+    elif status:
         q = q.filter(models.Lead.status == status)
+    if source_id:
+        q = q.filter(models.Lead.source_id == source_id)
     if search:
         q = q.filter(
             models.Lead.full_name.ilike(f"%{search}%") |
@@ -2077,22 +3710,65 @@ def list_leads(
     return [_lead_read(l) for l in leads]
 
 
+@app.get("/leads/stats", response_model=schemas.LeadStatsRead)
+def lead_stats(
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    lead_q = db.query(models.Lead)
+    if actor.role in (UserRole.hunter.value, UserRole.sales.value):
+        lead_q = lead_q.filter(models.Lead.created_by_id == actor.id)
+    total = lead_q.count()
+
+    counts = dict(
+        lead_q.with_entities(models.Lead.stage_id, func.count(models.Lead.id))
+        .group_by(models.Lead.stage_id).all()
+    )
+    stages = (
+        db.query(models.LeadStage)
+        .filter(models.LeadStage.is_archived == False)  # noqa: E712
+        .order_by(models.LeadStage.order.asc()).all()
+    )
+    return schemas.LeadStatsRead(
+        total=total,
+        stages=[
+            schemas.LeadStageStat(
+                slug=s.slug, name=s.name, color=s.color, icon=s.icon,
+                kind=s.kind, order=s.order, count=counts.get(s.id, 0),
+            ) for s in stages
+        ],
+    )
+
+
 @app.post("/leads", response_model=schemas.LeadRead, status_code=201)
 def create_lead(
     payload: schemas.LeadCreate,
     actor: models.User = Depends(require_crm_access),
     db: Session = Depends(get_db),
 ):
+    stage = _default_stage(db)
     lead = models.Lead(
         **payload.dict(),
-        status=models.LeadStatus.new.value,
+        status=stage.slug if stage else models.LeadStatus.new.value,
+        stage_id=stage.id if stage else None,
         created_by_id=actor.id,
         created_at=datetime.utcnow(),
     )
     db.add(lead)
+    db.flush()
+    _log_lead_activity(
+        db, lead_id=lead.id, action="created",
+        description=f"Lid qo'shildi: {lead.full_name}", author_id=actor.id,
+    )
+    _notify(
+        db, user_ids=_crm_recipient_ids(db, exclude_id=actor.id),
+        title="Yangi lid qo'shildi",
+        body=f"{lead.full_name} · {lead.source.name if lead.source else 'manba yo‘q'}",
+        link=f"/leads?lead={lead.id}", ntype="new_lead",
+    )
     db.commit()
     db.refresh(lead)
-    db.refresh(lead, attribute_names=["created_by", "updated_by"])
+    db.refresh(lead, attribute_names=["created_by", "updated_by", "stage", "source"])
     return _lead_read(lead)
 
 
@@ -2103,21 +3779,182 @@ def update_lead_status(
     actor: models.User = Depends(require_call_center),
     db: Session = Depends(get_db),
 ):
-    lead = db.query(models.Lead).options(
-        joinedload(models.Lead.created_by),
-        joinedload(models.Lead.updated_by),
-    ).filter(models.Lead.id == lead_id).first()
+    lead = db.query(models.Lead).options(*_LEAD_LOAD).filter(models.Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(404, "Lid topilmadi")
-    lead.status = payload.status.value
+    old_name = lead.stage.name if lead.stage else lead.status
+    new_slug = payload.status.value
+    lead.status = new_slug
+    # status ustunini stage bilan sinxronlaymiz
+    stage = db.query(models.LeadStage).filter(models.LeadStage.slug == new_slug).first()
+    if stage:
+        lead.stage_id = stage.id
     lead.callback_at = payload.callback_at
     if payload.notes is not None:
         lead.notes = payload.notes
     lead.updated_by_id = actor.id
     lead.updated_at = datetime.utcnow()
+    new_name = stage.name if stage else new_slug
+    if new_name != old_name:
+        _log_lead_activity(
+            db, lead_id=lead.id, action="stage_changed",
+            description=f"Holat: {old_name} → {new_name}", author_id=actor.id,
+            meta={"old": old_name, "new": new_name},
+        )
     db.commit()
     db.refresh(lead)
-    db.refresh(lead, attribute_names=["created_by", "updated_by"])
+    db.refresh(lead, attribute_names=["created_by", "updated_by", "stage", "source"])
+    return _lead_read(lead)
+
+
+@app.patch("/leads/{lead_id}/stage", response_model=schemas.LeadRead)
+def move_lead_stage(
+    lead_id: int,
+    payload: schemas.LeadStageMove,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    lead = db.query(models.Lead).options(*_LEAD_LOAD).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    if actor.role in (UserRole.hunter.value, UserRole.sales.value) and lead.created_by_id != actor.id:
+        raise HTTPException(403, "Faqat o'z lidingizni o'zgartira olasiz")
+    stage = db.query(models.LeadStage).filter(models.LeadStage.id == payload.stage_id).first()
+    if not stage:
+        raise HTTPException(404, "Bosqich topilmadi")
+    old_name = lead.stage.name if lead.stage else lead.status
+    lead.stage_id = stage.id
+    lead.status = stage.slug
+    if payload.callback_at is not None:
+        lead.callback_at = payload.callback_at
+    if payload.notes is not None:
+        lead.notes = payload.notes
+    lead.updated_by_id = actor.id
+    lead.updated_at = datetime.utcnow()
+    if stage.name != old_name:
+        _log_lead_activity(
+            db, lead_id=lead.id, action="stage_changed",
+            description=f"Holat: {old_name} → {stage.name}", author_id=actor.id,
+            meta={"old": old_name, "new": stage.name},
+        )
+    db.commit()
+    db.refresh(lead)
+    db.refresh(lead, attribute_names=["created_by", "updated_by", "stage", "source"])
+    return _lead_read(lead)
+
+
+@app.get("/leads/{lead_id}/activities", response_model=List[schemas.LeadActivityRead])
+def lead_activities(
+    lead_id: int,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    if actor.role in (UserRole.hunter.value, UserRole.sales.value) and lead.created_by_id != actor.id:
+        raise HTTPException(403, "Ruxsat yo'q")
+    acts = (
+        db.query(models.LeadActivity)
+        .options(joinedload(models.LeadActivity.author))
+        .filter(models.LeadActivity.lead_id == lead_id)
+        .order_by(models.LeadActivity.created_at.desc()).all()
+    )
+    return [
+        schemas.LeadActivityRead(
+            id=a.id, action=a.action, description=a.description,
+            author_name=(a.author.full_name or a.author.username) if a.author else None,
+            created_at=a.created_at,
+        ) for a in acts
+    ]
+
+
+@app.post("/leads/{lead_id}/claim", response_model=schemas.LeadRead)
+def claim_lead(
+    lead_id: int,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Umumiy havzadagi lidni o'ziga biriktirish."""
+    lead = db.query(models.Lead).options(*_LEAD_LOAD).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    if lead.claimed_by_id and lead.claimed_by_id != actor.id:
+        raise HTTPException(409, "Bu lid allaqachon band qilingan")
+    lead.claimed_by_id = actor.id
+    lead.claimed_at = datetime.utcnow()
+    lead.updated_by_id = actor.id
+    lead.updated_at = datetime.utcnow()
+    actor_name = actor.full_name or actor.username
+    _log_lead_activity(
+        db, lead_id=lead.id, action="claimed",
+        description=f"Lid band qilindi: {actor_name}", author_id=actor.id,
+    )
+    db.commit()
+    db.refresh(lead)
+    db.refresh(lead, attribute_names=["created_by", "updated_by", "claimed_by", "stage", "source", "interested_group"])
+    return _lead_read(lead)
+
+
+@app.post("/leads/{lead_id}/release", response_model=schemas.LeadRead)
+def release_lead(
+    lead_id: int,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Lidni umumiy havzaga qaytarish (band qilishni bekor qilish)."""
+    lead = db.query(models.Lead).options(*_LEAD_LOAD).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    is_owner = lead.claimed_by_id == actor.id
+    if not is_owner and actor.role != UserRole.admin.value:
+        raise HTTPException(403, "Faqat egasi yoki admin havzaga qaytara oladi")
+    lead.claimed_by_id = None
+    lead.claimed_at = None
+    lead.is_shared = True
+    lead.updated_by_id = actor.id
+    lead.updated_at = datetime.utcnow()
+    _log_lead_activity(
+        db, lead_id=lead.id, action="released",
+        description="Lid umumiy havzaga qaytarildi", author_id=actor.id,
+    )
+    db.commit()
+    db.refresh(lead)
+    db.refresh(lead, attribute_names=["created_by", "updated_by", "claimed_by", "stage", "source", "interested_group"])
+    return _lead_read(lead)
+
+
+@app.post("/leads/{lead_id}/share", response_model=schemas.LeadRead)
+def share_lead(
+    lead_id: int,
+    actor: models.User = Depends(require_call_center),
+    db: Session = Depends(get_db),
+):
+    """Lidni umumiy havzaga chiqarish (admin/call_center)."""
+    lead = db.query(models.Lead).options(*_LEAD_LOAD).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    lead.is_shared = True
+    lead.claimed_by_id = None
+    lead.claimed_at = None
+    lead.updated_by_id = actor.id
+    lead.updated_at = datetime.utcnow()
+    _log_lead_activity(
+        db, lead_id=lead.id, action="shared",
+        description="Lid umumiy havzaga chiqarildi", author_id=actor.id,
+    )
+    _notify(
+        db, user_ids=[u[0] for u in db.query(models.User.id).filter(
+            models.User.is_active == True,  # noqa: E712
+            models.User.role.in_([UserRole.hunter.value, UserRole.sales.value]),
+        ).all()],
+        title="Umumiy havzada yangi lid",
+        body=f"{lead.full_name} — band qilish uchun ochiq",
+        link=f"/leads?lead={lead.id}", ntype="shared_lead",
+    )
+    db.commit()
+    db.refresh(lead)
+    db.refresh(lead, attribute_names=["created_by", "updated_by", "claimed_by", "stage", "source", "interested_group"])
     return _lead_read(lead)
 
 
@@ -2130,7 +3967,763 @@ def delete_lead(
     lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(404, "Lid topilmadi")
-    if actor.role == UserRole.hunter.value and lead.created_by_id != actor.id:
+    if actor.role in (UserRole.hunter.value, UserRole.sales.value) and lead.created_by_id != actor.id:
         raise HTTPException(403, "Faqat o'z lidingizni o'chira olasiz")
     db.delete(lead)
     db.commit()
+
+
+# ── Lead stages (pipeline) ────────────────────────────────────────────────────
+
+@app.get("/lead-stages", response_model=List[schemas.LeadStageRead])
+def list_lead_stages(
+    include_archived: bool = Query(False),
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.LeadStage)
+    if not include_archived:
+        q = q.filter(models.LeadStage.is_archived == False)  # noqa: E712
+    stages = q.order_by(models.LeadStage.order.asc()).all()
+    counts = dict(
+        db.query(models.Lead.stage_id, func.count(models.Lead.id))
+        .group_by(models.Lead.stage_id).all()
+    )
+    out = []
+    for s in stages:
+        r = schemas.LeadStageRead.from_orm(s)
+        r.lead_count = counts.get(s.id, 0)
+        out.append(r)
+    return out
+
+
+@app.post("/lead-stages", response_model=schemas.LeadStageRead, status_code=201)
+def create_lead_stage(
+    payload: schemas.LeadStageCreate,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    slug = _slugify(payload.name)
+    if db.query(models.LeadStage).filter(models.LeadStage.slug == slug).first():
+        slug = f"{slug}-{int(datetime.utcnow().timestamp())}"
+    max_order = db.query(func.max(models.LeadStage.order)).scalar() or 0
+    stage = models.LeadStage(
+        name=payload.name, slug=slug, order=max_order + 10,
+        color=payload.color, icon=payload.icon, kind=payload.kind,
+        created_at=datetime.utcnow(),
+    )
+    db.add(stage)
+    db.commit()
+    db.refresh(stage)
+    r = schemas.LeadStageRead.from_orm(stage)
+    r.lead_count = 0
+    return r
+
+
+@app.put("/lead-stages/reorder", response_model=List[schemas.LeadStageRead])
+def reorder_lead_stages(
+    payload: schemas.StageReorder,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    for idx, sid in enumerate(payload.ordered_ids):
+        db.query(models.LeadStage).filter(models.LeadStage.id == sid).update({"order": (idx + 1) * 10})
+    db.commit()
+    return list_lead_stages(include_archived=False, actor=actor, db=db)
+
+
+@app.put("/lead-stages/{stage_id}", response_model=schemas.LeadStageRead)
+def update_lead_stage(
+    stage_id: int,
+    payload: schemas.LeadStageUpdate,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    stage = db.query(models.LeadStage).filter(models.LeadStage.id == stage_id).first()
+    if not stage:
+        raise HTTPException(404, "Bosqich topilmadi")
+    for field, val in payload.dict(exclude_unset=True).items():
+        setattr(stage, field, val)
+    db.commit()
+    db.refresh(stage)
+    count = db.query(func.count(models.Lead.id)).filter(models.Lead.stage_id == stage.id).scalar()
+    r = schemas.LeadStageRead.from_orm(stage)
+    r.lead_count = count
+    return r
+
+
+@app.delete("/lead-stages/{stage_id}", status_code=204)
+def delete_lead_stage(
+    stage_id: int,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    stage = db.query(models.LeadStage).filter(models.LeadStage.id == stage_id).first()
+    if not stage:
+        raise HTTPException(404, "Bosqich topilmadi")
+    in_use = db.query(func.count(models.Lead.id)).filter(models.Lead.stage_id == stage_id).scalar()
+    if in_use:
+        # Ichida lid bo'lsa o'chirmaymiz — arxivlaymiz
+        stage.is_archived = True
+        db.commit()
+        return
+    db.delete(stage)
+    db.commit()
+
+
+# ── Lead sources ──────────────────────────────────────────────────────────────
+
+@app.get("/lead-sources", response_model=List[schemas.LeadSourceRead])
+def list_lead_sources(
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(models.LeadSource)
+        .filter(models.LeadSource.is_active == True)  # noqa: E712
+        .order_by(models.LeadSource.name.asc()).all()
+    )
+
+
+@app.post("/lead-sources", response_model=schemas.LeadSourceRead, status_code=201)
+def create_lead_source(
+    payload: schemas.LeadSourceCreate,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    src = models.LeadSource(
+        name=payload.name, is_campaign=payload.is_campaign,
+        is_active=True, created_at=datetime.utcnow(),
+    )
+    db.add(src)
+    db.commit()
+    db.refresh(src)
+    return src
+
+
+@app.put("/lead-sources/{source_id}", response_model=schemas.LeadSourceRead)
+def update_lead_source(
+    source_id: int,
+    payload: schemas.LeadSourceUpdate,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    src = db.query(models.LeadSource).filter(models.LeadSource.id == source_id).first()
+    if not src:
+        raise HTTPException(404, "Manba topilmadi")
+    for field, val in payload.dict(exclude_unset=True).items():
+        setattr(src, field, val)
+    db.commit()
+    db.refresh(src)
+    return src
+
+
+@app.delete("/lead-sources/{source_id}", status_code=204)
+def delete_lead_source(
+    source_id: int,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    src = db.query(models.LeadSource).filter(models.LeadSource.id == source_id).first()
+    if not src:
+        raise HTTPException(404, "Manba topilmadi")
+    src.is_active = False
+    db.commit()
+
+
+# ── Reminders / tasks ─────────────────────────────────────────────────────────
+
+def _reminder_read(r: models.Reminder) -> schemas.ReminderRead:
+    now = datetime.utcnow()
+    effective_due = r.snoozed_until or r.due_at
+    return schemas.ReminderRead(
+        id=r.id,
+        lead_id=r.lead_id,
+        lead_name=r.lead.full_name if r.lead else None,
+        lead_phone=r.lead.phone if r.lead else None,
+        assigned_to_id=r.assigned_to_id,
+        assigned_to_name=(r.assigned_to.full_name or r.assigned_to.username) if r.assigned_to else None,
+        due_at=r.due_at,
+        body=r.body,
+        kind=r.kind,
+        status=r.status,
+        snoozed_until=r.snoozed_until,
+        is_overdue=r.status == "pending" and effective_due < now,
+        created_at=r.created_at,
+    )
+
+
+@app.get("/reminders", response_model=List[schemas.ReminderRead])
+def list_reminders(
+    status: Optional[str] = Query(None),          # pending | done | dismissed
+    lead_id: Optional[int] = Query(None),
+    mine: bool = Query(True),
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.Reminder).options(
+        joinedload(models.Reminder.lead),
+        joinedload(models.Reminder.assigned_to),
+    )
+    if lead_id:
+        q = q.filter(models.Reminder.lead_id == lead_id)
+    if status:
+        q = q.filter(models.Reminder.status == status)
+    # Har kim o'ziga tegishli / o'zi yaratganini ko'radi; admin — hammasini
+    if mine and actor.role != UserRole.admin.value:
+        q = q.filter(
+            (models.Reminder.assigned_to_id == actor.id) |
+            (models.Reminder.created_by_id == actor.id)
+        )
+    reminders = q.order_by(models.Reminder.due_at.asc()).all()
+    return [_reminder_read(r) for r in reminders]
+
+
+@app.post("/reminders", response_model=schemas.ReminderRead, status_code=201)
+def create_reminder(
+    payload: schemas.ReminderCreate,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    lead = db.query(models.Lead).filter(models.Lead.id == payload.lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    r = models.Reminder(
+        lead_id=payload.lead_id,
+        assigned_to_id=payload.assigned_to_id or actor.id,
+        created_by_id=actor.id,
+        due_at=payload.due_at,
+        body=payload.body,
+        kind=payload.kind,
+        status="pending",
+        created_at=datetime.utcnow(),
+    )
+    db.add(r)
+    _log_lead_activity(
+        db, lead_id=lead.id, action="reminder",
+        description=f"Eslatma: {payload.body or payload.kind} ({payload.due_at:%d.%m %H:%M})",
+        author_id=actor.id,
+    )
+    db.commit()
+    db.refresh(r)
+    db.refresh(r, attribute_names=["lead", "assigned_to"])
+    return _reminder_read(r)
+
+
+@app.patch("/reminders/{reminder_id}", response_model=schemas.ReminderRead)
+def update_reminder(
+    reminder_id: int,
+    payload: schemas.ReminderUpdate,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    r = db.query(models.Reminder).options(
+        joinedload(models.Reminder.lead),
+        joinedload(models.Reminder.assigned_to),
+    ).filter(models.Reminder.id == reminder_id).first()
+    if not r:
+        raise HTTPException(404, "Eslatma topilmadi")
+    data = payload.dict(exclude_unset=True)
+    for field, val in data.items():
+        setattr(r, field, val)
+    if data.get("status") == "done" and not r.done_at:
+        r.done_at = datetime.utcnow()
+    r.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(r)
+    db.refresh(r, attribute_names=["lead", "assigned_to"])
+    return _reminder_read(r)
+
+
+@app.delete("/reminders/{reminder_id}", status_code=204)
+def delete_reminder(
+    reminder_id: int,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    r = db.query(models.Reminder).filter(models.Reminder.id == reminder_id).first()
+    if not r:
+        raise HTTPException(404, "Eslatma topilmadi")
+    db.delete(r)
+    db.commit()
+
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+
+@app.get("/notifications", response_model=List[schemas.NotificationRead])
+def list_notifications(
+    unread_only: bool = Query(False),
+    limit: int = Query(30, le=100),
+    actor: models.User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.Notification).filter(models.Notification.user_id == actor.id)
+    if unread_only:
+        q = q.filter(models.Notification.is_read == False)  # noqa: E712
+    return q.order_by(models.Notification.created_at.desc()).limit(limit).all()
+
+
+@app.get("/notifications/unread-count")
+def notifications_unread_count(
+    actor: models.User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    n = (
+        db.query(func.count(models.Notification.id))
+        .filter(models.Notification.user_id == actor.id, models.Notification.is_read == False)  # noqa: E712
+        .scalar()
+    )
+    return {"count": n or 0}
+
+
+@app.post("/notifications/{notification_id}/read", status_code=204)
+def mark_notification_read(
+    notification_id: int,
+    actor: models.User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    n = db.query(models.Notification).filter(
+        models.Notification.id == notification_id,
+        models.Notification.user_id == actor.id,
+    ).first()
+    if not n:
+        raise HTTPException(404, "Topilmadi")
+    n.is_read = True
+    db.commit()
+
+
+@app.post("/notifications/read-all", status_code=204)
+def mark_all_notifications_read(
+    actor: models.User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    db.query(models.Notification).filter(
+        models.Notification.user_id == actor.id,
+        models.Notification.is_read == False,  # noqa: E712
+    ).update({"is_read": True})
+    db.commit()
+
+
+# ── Lead analytics ────────────────────────────────────────────────────────────
+
+@app.get("/leads/analytics", response_model=schemas.LeadAnalyticsRead)
+def lead_analytics(
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    lead_q = db.query(models.Lead)
+    if actor.role in (UserRole.hunter.value, UserRole.sales.value):
+        lead_q = lead_q.filter(models.Lead.created_by_id == actor.id)
+    total = lead_q.count()
+
+    stage_counts = dict(
+        lead_q.with_entities(models.Lead.stage_id, func.count(models.Lead.id))
+        .group_by(models.Lead.stage_id).all()
+    )
+    stages = (
+        db.query(models.LeadStage)
+        .filter(models.LeadStage.is_archived == False)  # noqa: E712
+        .order_by(models.LeadStage.order.asc()).all()
+    )
+    distribution = [
+        schemas.FunnelStep(
+            slug=s.slug, name=s.name, color=s.color,
+            count=stage_counts.get(s.id, 0),
+            percentage=round(stage_counts.get(s.id, 0) / total * 100, 1) if total else 0.0,
+        ) for s in stages
+    ]
+    won = sum(stage_counts.get(s.id, 0) for s in stages if s.kind == "won")
+    lost = sum(stage_counts.get(s.id, 0) for s in stages if s.kind == "lost")
+    won_stage_ids = [s.id for s in stages if s.kind == "won"]
+
+    # Manba bo'yicha konversiya
+    src_total = dict(
+        lead_q.with_entities(models.Lead.source_id, func.count(models.Lead.id))
+        .group_by(models.Lead.source_id).all()
+    )
+    src_won = {}
+    if won_stage_ids:
+        src_won = dict(
+            lead_q.filter(models.Lead.stage_id.in_(won_stage_ids))
+            .with_entities(models.Lead.source_id, func.count(models.Lead.id))
+            .group_by(models.Lead.source_id).all()
+        )
+    source_names = {s.id: s.name for s in db.query(models.LeadSource).all()}
+    sources = []
+    for sid, tot in sorted(src_total.items(), key=lambda kv: kv[1], reverse=True):
+        enr = src_won.get(sid, 0)
+        sources.append(schemas.SourceStat(
+            source=source_names.get(sid, "Noma'lum"),
+            total=tot, enrolled=enr,
+            conversion_rate=round(enr / tot * 100, 1) if tot else 0.0,
+        ))
+
+    return schemas.LeadAnalyticsRead(
+        total=total, won=won, lost=lost,
+        conversion=round(won / total * 100, 1) if total else 0.0,
+        distribution=distribution, sources=sources,
+    )
+
+
+# ── Intake forms (public lead capture) ────────────────────────────────────────
+
+def _intake_read(f: models.IntakeForm) -> schemas.IntakeFormRead:
+    return schemas.IntakeFormRead(
+        id=f.id, slug=f.slug, name=f.name, title=f.title, description=f.description,
+        source_id=f.source_id, source_name=f.source.name if f.source else None,
+        is_active=f.is_active, submissions=f.submissions, created_at=f.created_at,
+    )
+
+
+@app.get("/intake-forms", response_model=List[schemas.IntakeFormRead])
+def list_intake_forms(
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    forms = (
+        db.query(models.IntakeForm).options(joinedload(models.IntakeForm.source))
+        .order_by(models.IntakeForm.created_at.desc()).all()
+    )
+    return [_intake_read(f) for f in forms]
+
+
+@app.post("/intake-forms", response_model=schemas.IntakeFormRead, status_code=201)
+def create_intake_form(
+    payload: schemas.IntakeFormCreate,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    slug = _slugify(payload.name)[:50]
+    if db.query(models.IntakeForm).filter(models.IntakeForm.slug == slug).first():
+        slug = f"{slug}-{int(datetime.utcnow().timestamp())}"
+    form = models.IntakeForm(
+        slug=slug, name=payload.name, title=payload.title or payload.name,
+        description=payload.description, source_id=payload.source_id,
+        is_active=True, submissions=0, created_at=datetime.utcnow(),
+    )
+    db.add(form)
+    db.commit()
+    db.refresh(form)
+    db.refresh(form, attribute_names=["source"])
+    return _intake_read(form)
+
+
+@app.put("/intake-forms/{form_id}", response_model=schemas.IntakeFormRead)
+def update_intake_form(
+    form_id: int,
+    payload: schemas.IntakeFormUpdate,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    form = db.query(models.IntakeForm).filter(models.IntakeForm.id == form_id).first()
+    if not form:
+        raise HTTPException(404, "Forma topilmadi")
+    for field, val in payload.dict(exclude_unset=True).items():
+        setattr(form, field, val)
+    db.commit()
+    db.refresh(form)
+    db.refresh(form, attribute_names=["source"])
+    return _intake_read(form)
+
+
+@app.delete("/intake-forms/{form_id}", status_code=204)
+def delete_intake_form(
+    form_id: int,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    form = db.query(models.IntakeForm).filter(models.IntakeForm.id == form_id).first()
+    if not form:
+        raise HTTPException(404, "Forma topilmadi")
+    db.delete(form)
+    db.commit()
+
+
+# ── Public (auth talab qilmaydigan) intake endpoint'lar ───────────────────────
+
+@app.get("/public/intake/{slug}", response_model=schemas.PublicIntakeConfig)
+def public_intake_config(slug: str, db: Session = Depends(get_db)):
+    form = db.query(models.IntakeForm).filter(models.IntakeForm.slug == slug).first()
+    if not form or not form.is_active:
+        raise HTTPException(404, "Forma topilmadi yoki faol emas")
+    return schemas.PublicIntakeConfig(
+        slug=form.slug, name=form.name, title=form.title or form.name,
+        description=form.description, is_active=form.is_active,
+    )
+
+
+@app.post("/public/intake/{slug}", status_code=201)
+def public_intake_submit(
+    slug: str,
+    payload: schemas.PublicLeadSubmit,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip = _client_ip(request)
+    # Spam himoyasi: bir IP daqiqasiga 5 ta, soatiga 30 ta ariza
+    rate_limit(f"intake-min:{ip}", limit=5, window=60)
+    rate_limit(f"intake-hour:{ip}", limit=30, window=3600)
+
+    form = db.query(models.IntakeForm).filter(models.IntakeForm.slug == slug).first()
+    if not form or not form.is_active:
+        raise HTTPException(404, "Forma topilmadi yoki faol emas")
+    stage = _default_stage(db)
+    lead = models.Lead(
+        full_name=payload.full_name.strip(),
+        phone=payload.phone.strip(),
+        course_interest=payload.course_interest,
+        parent_phone=payload.parent_phone,
+        notes=payload.notes,
+        source_id=form.source_id,
+        status=stage.slug if stage else models.LeadStatus.new.value,
+        stage_id=stage.id if stage else None,
+        is_shared=True,                       # ommaviy formadan kelgan lid — umumiy havzaga
+        created_by_id=_system_user_id(db),
+        created_at=datetime.utcnow(),
+    )
+    db.add(lead)
+    db.flush()
+    _log_lead_activity(
+        db, lead_id=lead.id, action="created",
+        description=f"Ommaviy forma orqali: {form.name}", author_id=None,
+    )
+    form.submissions = (form.submissions or 0) + 1
+    recipients = [u[0] for u in db.query(models.User.id).filter(
+        models.User.is_active == True,  # noqa: E712
+        models.User.role.in_([UserRole.admin.value, UserRole.call_center.value,
+                              UserRole.hunter.value, UserRole.sales.value]),
+    ).all()]
+    _notify(
+        db, user_ids=recipients,
+        title="Ommaviy formadan yangi lid",
+        body=f"{lead.full_name} · {form.name}",
+        link=f"/leads?lead={lead.id}", ntype="new_lead",
+    )
+    db.commit()
+    return {"ok": True, "message": "Arizangiz qabul qilindi"}
+
+
+def _system_user_id(db) -> int:
+    """Ommaviy formadan kelgan lidlar uchun 'egasi' — birinchi admin."""
+    u = (
+        db.query(models.User.id)
+        .filter(models.User.role == UserRole.admin.value)
+        .order_by(models.User.id.asc()).first()
+    )
+    if not u:
+        u = db.query(models.User.id).order_by(models.User.id.asc()).first()
+    return u[0]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  OTA-ONA AKKAUNTLARI — hunter/admin boshqaruvi (+ dars jadvali slotlari)
+# ═══════════════════════════════════════════════════════════════════════════
+import secrets as _secrets
+import string as _string
+
+
+def _gen_password(n: int = 8) -> str:
+    alphabet = _string.ascii_letters + _string.digits
+    return "".join(_secrets.choice(alphabet) for _ in range(n))
+
+
+def _parent_account_read(p: models.Parent) -> schemas.ParentAccountRead:
+    return schemas.ParentAccountRead(
+        id=p.id, full_name=p.full_name, display_name=p.display_name,
+        phone=p.phone, username=p.username, is_active=p.is_active, created_at=p.created_at,
+        children=[
+            schemas.ParentChildInfo(student_id=c.student_id, student_name=c.student.full_name)
+            for c in p.children if c.student
+        ],
+    )
+
+
+@app.post("/parents", response_model=schemas.ParentAccountCreated, status_code=201)
+def create_parent_account(
+    payload: schemas.ParentAccountCreate,
+    actor: models.User = Depends(require_hunter),
+    db: Session = Depends(get_db),
+):
+    """Ota-ona akkaunti yaratish (hunter/admin). Parol bir marta qaytariladi."""
+    phone = payload.phone.strip()
+    username = (payload.username or phone).strip()
+    if db.query(models.Parent).filter(models.Parent.phone == phone).first():
+        raise HTTPException(409, "Bu telefon bilan ota-ona allaqachon mavjud")
+    if db.query(models.Parent).filter(models.Parent.username == username).first():
+        raise HTTPException(409, "Bu login band")
+
+    raw_password = payload.password or _gen_password()
+    parent = models.Parent(
+        full_name=payload.full_name.strip(), display_name=payload.display_name,
+        phone=phone, username=username, hashed_password=hash_password(raw_password),
+        is_active=True, created_by_id=actor.id, created_at=datetime.utcnow(),
+    )
+    db.add(parent)
+    db.flush()
+    for sid in dict.fromkeys(payload.student_ids):   # dublikatlarsiz
+        if db.query(models.Student).filter(models.Student.id == sid).first():
+            db.add(models.ParentChild(parent_id=parent.id, student_id=sid, created_at=datetime.utcnow()))
+    db.commit()
+    db.refresh(parent)
+    out = schemas.ParentAccountCreated(**_parent_account_read(parent).dict())
+    out.generated_password = raw_password
+    return out
+
+
+@app.get("/parents", response_model=List[schemas.ParentAccountRead])
+def list_parent_accounts(
+    search: Optional[str] = Query(None),
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.Parent).options(
+        joinedload(models.Parent.children).joinedload(models.ParentChild.student),
+    )
+    if search:
+        q = q.filter(
+            models.Parent.full_name.ilike(f"%{search}%") |
+            models.Parent.phone.ilike(f"%{search}%") |
+            models.Parent.username.ilike(f"%{search}%")
+        )
+    return [_parent_account_read(p) for p in q.order_by(models.Parent.full_name).all()]
+
+
+@app.get("/parents/{parent_id}", response_model=schemas.ParentAccountRead)
+def get_parent_account(
+    parent_id: int,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
+    if not p:
+        raise HTTPException(404, "Ota-ona topilmadi")
+    return _parent_account_read(p)
+
+
+@app.patch("/parents/{parent_id}", response_model=schemas.ParentAccountRead)
+def update_parent_account(
+    parent_id: int,
+    payload: schemas.ParentAccountUpdate,
+    actor: models.User = Depends(require_hunter),
+    db: Session = Depends(get_db),
+):
+    p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
+    if not p:
+        raise HTTPException(404, "Ota-ona topilmadi")
+    data = payload.dict(exclude_unset=True)
+    if "phone" in data and data["phone"] != p.phone:
+        if db.query(models.Parent).filter(models.Parent.phone == data["phone"]).first():
+            raise HTTPException(409, "Bu telefon band")
+    for k, v in data.items():
+        setattr(p, k, v)
+    db.commit()
+    db.refresh(p)
+    return _parent_account_read(p)
+
+
+@app.post("/parents/{parent_id}/reset-password")
+def reset_parent_password(
+    parent_id: int,
+    payload: schemas.ResetParentPassword,
+    actor: models.User = Depends(require_hunter),
+    db: Session = Depends(get_db),
+):
+    p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
+    if not p:
+        raise HTTPException(404, "Ota-ona topilmadi")
+    raw = payload.password or _gen_password()
+    p.hashed_password = hash_password(raw)
+    # Barcha refresh tokenlarni bekor qilamiz (xavfsizlik)
+    db.query(models.ParentRefreshToken).filter(
+        models.ParentRefreshToken.parent_id == p.id,
+        models.ParentRefreshToken.revoked_at.is_(None),
+    ).update({"revoked_at": datetime.utcnow()})
+    db.commit()
+    return {"generated_password": raw}
+
+
+@app.post("/parents/{parent_id}/children", response_model=schemas.ParentAccountRead)
+def link_parent_child(
+    parent_id: int,
+    payload: schemas.LinkChildRequest,
+    actor: models.User = Depends(require_hunter),
+    db: Session = Depends(get_db),
+):
+    p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
+    if not p:
+        raise HTTPException(404, "Ota-ona topilmadi")
+    if not db.query(models.Student).filter(models.Student.id == payload.student_id).first():
+        raise HTTPException(404, "Talaba topilmadi")
+    exists = db.query(models.ParentChild).filter(
+        models.ParentChild.parent_id == parent_id,
+        models.ParentChild.student_id == payload.student_id,
+    ).first()
+    if not exists:
+        db.add(models.ParentChild(parent_id=parent_id, student_id=payload.student_id, created_at=datetime.utcnow()))
+        db.commit()
+    db.refresh(p)
+    return _parent_account_read(p)
+
+
+@app.delete("/parents/{parent_id}/children/{student_id}", status_code=204)
+def unlink_parent_child(
+    parent_id: int,
+    student_id: int,
+    actor: models.User = Depends(require_hunter),
+    db: Session = Depends(get_db),
+):
+    link = db.query(models.ParentChild).filter(
+        models.ParentChild.parent_id == parent_id,
+        models.ParentChild.student_id == student_id,
+    ).first()
+    if link:
+        db.delete(link)
+        db.commit()
+
+
+# ── Dars jadvali slotlari (strukturaviy jadval) ──────────────────────────────
+
+@app.get("/groups/{group_id}/schedule-slots", response_model=List[schemas.ScheduleSlotRead])
+def list_schedule_slots(
+    group_id: int,
+    actor: models.User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(models.ScheduleSlot)
+        .filter(models.ScheduleSlot.group_id == group_id)
+        .order_by(models.ScheduleSlot.day_of_week, models.ScheduleSlot.start_time)
+        .all()
+    )
+
+
+@app.post("/groups/{group_id}/schedule-slots", response_model=schemas.ScheduleSlotRead, status_code=201)
+def create_schedule_slot(
+    group_id: int,
+    payload: schemas.ScheduleSlotCreate,
+    actor: models.User = Depends(require_lms_write),
+    db: Session = Depends(get_db),
+):
+    if not db.query(models.Group).filter(models.Group.id == group_id).first():
+        raise HTTPException(404, "Guruh topilmadi")
+    slot = models.ScheduleSlot(
+        group_id=group_id, day_of_week=payload.day_of_week,
+        start_time=payload.start_time, end_time=payload.end_time,
+        room=payload.room, created_at=datetime.utcnow(),
+    )
+    db.add(slot)
+    db.commit()
+    db.refresh(slot)
+    return slot
+
+
+@app.delete("/schedule-slots/{slot_id}", status_code=204)
+def delete_schedule_slot(
+    slot_id: int,
+    actor: models.User = Depends(require_lms_write),
+    db: Session = Depends(get_db),
+):
+    slot = db.query(models.ScheduleSlot).filter(models.ScheduleSlot.id == slot_id).first()
+    if slot:
+        db.delete(slot)
+        db.commit()
