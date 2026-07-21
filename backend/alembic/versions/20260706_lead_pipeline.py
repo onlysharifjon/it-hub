@@ -1,14 +1,14 @@
 """lead pipeline: stages, sources, activities
 
 Revision ID: 20260706_lead_pipeline
-Revises: 20260704_add_discounts
+Revises: 20260704_add_face_photos
 Create Date: 2026-07-06
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = '20260706_lead_pipeline'
-down_revision = '20260704_add_discounts'
+down_revision = '20260704_add_face_photos'
 branch_labels = None
 depends_on = None
 

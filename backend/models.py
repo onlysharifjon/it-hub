@@ -37,6 +37,7 @@ class User(Base):
     avatar = Column(String(500), nullable=True)
     phone = Column(String(30), nullable=True)          # kontakt (ota-ona ilovasida ko'rinadi)
     telegram = Column(String(100), nullable=True)      # @username
+    face_photo_path = Column(String(500), nullable=True)  # kamera orqali davomat uchun yuz rasmi
     # Block & expiry
     blocked_reason  = Column(Text, nullable=True)         # sabab matni
     blocked_contact = Column(String(300), nullable=True)  # bog'lanish ma'lumoti
@@ -127,6 +128,7 @@ class Student(Base):
     telegram_id  = Column(String(120), nullable=True)
     telegram_user_id = Column(String(50), nullable=True)   # bildirishnoma yuboriladigan Telegram chat/user ID
     photo = Column(String(500), nullable=True)              # o'quvchi rasmi (uploads/students/...)
+    photo_path   = Column(String(500), nullable=True)       # kamera orqali davomat uchun yuz rasmi
     notes = Column(Text, nullable=True)
     advance_balance = Column(Numeric(12, 2), nullable=False, default=0)  # avans (oldindan to'lov)
     is_active = Column(Boolean, nullable=False, default=True)

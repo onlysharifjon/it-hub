@@ -4,13 +4,13 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPen, faToggleOn, faToggleOff, faPlus,
   faMagnifyingGlass, faUserGraduate, faPhone,
-  faBoxArchive, faArrowUpFromBracket, faCircle,
+  faBoxArchive, faArrowUpFromBracket, faCircle, faCamera,
   faWallet, faCircleCheck, faXmark,
 } from '@fortawesome/free-solid-svg-icons'
 import { faTelegram as faTelegramBrand } from '@fortawesome/free-brands-svg-icons'
 import {
   fetchStudents, createStudent, updateStudent, archiveStudent, unarchiveStudent,
-  fetchStudentPaymentSummary, createPayment,
+  fetchStudentPaymentSummary, createPayment, uploadStudentFacePhoto, API_BASE,
 } from '../api'
 import Pagination from './Pagination'
 import DateFilter from './DateFilter'
@@ -20,6 +20,21 @@ const EMPTY = {
   father_name: '', father_phone: '',
   mother_name: '', mother_phone: '',
   telegram_id: 'https://t.me/', telegram_user_id: '', notes: '', advance: '',
+}
+
+function StudentAvatar({ photoUrl, size = 60 }) {
+  if (!photoUrl) return (
+    <div style={{ width: size, height: size, borderRadius: '50%', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <FontAwesomeIcon icon={faUserGraduate} style={{ color: '#94a3b8', fontSize: size * 0.4 }} />
+    </div>
+  )
+  return (
+    <img
+      src={`${API_BASE}${photoUrl}`}
+      alt=""
+      style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+    />
+  )
 }
 
 export default function Students({ currentUser }) {
@@ -32,9 +47,11 @@ export default function Students({ currentUser }) {
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [modal, setModal] = useState(null)
+  const [editStudent, setEditStudent] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
   const [payModal, setPayModal] = useState(null)   // student object
+  const [photoUploading, setPhotoUploading] = useState(false)
 
   useEffect(() => { load(search, dateFilter, page, tab) }, [tab])
 
@@ -84,7 +101,7 @@ export default function Students({ currentUser }) {
     setSearch('')
   }
 
-  function openAdd() { setForm(EMPTY); setModal('add') }
+  function openAdd() { setForm(EMPTY); setEditStudent(null); setModal('add') }
   function openEdit(s) {
     setForm({
       full_name: s.full_name, phone1: s.phone1,
@@ -93,7 +110,20 @@ export default function Students({ currentUser }) {
       telegram_id: s.telegram_id || '', telegram_user_id: s.telegram_user_id || '',
       notes: s.notes || '',
     })
+    setEditStudent(s)
     setModal(s)
+  }
+
+  async function handlePhotoUpload(file) {
+    if (!editStudent?.id) return
+    setPhotoUploading(true)
+    try {
+      const res = await uploadStudentFacePhoto(editStudent.id, file)
+      setEditStudent(prev => ({ ...prev, photo_url: res.photo_url }))
+      toast.success('Rasm yuklandi')
+      load()
+    } catch (e) { toast.error(e.message) }
+    finally { setPhotoUploading(false) }
   }
 
   async function handleSave() {
@@ -326,6 +356,27 @@ export default function Students({ currentUser }) {
               <button className="modal-close" onClick={() => setModal(null)}>✕</button>
             </div>
             <div className="modal-body">
+              {modal !== 'add' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+                  <StudentAvatar photoUrl={editStudent?.photo_url} size={72} />
+                  <div>
+                    <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 6 }}>
+                      Kamera tizimi uchun yuz rasmi
+                    </div>
+                    <label className="button secondary" style={{ cursor: 'pointer', fontSize: 13 }}>
+                      <FontAwesomeIcon icon={faCamera} style={{ marginRight: 6 }} />
+                      {photoUploading ? 'Yuklanmoqda...' : 'Rasm yuklash'}
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        style={{ display: 'none' }}
+                        disabled={photoUploading}
+                        onChange={e => e.target.files[0] && handlePhotoUpload(e.target.files[0])}
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
               <label>Ism Familiya *</label>
               <input className="field" value={form.full_name} onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))} placeholder="To'liq ism" />
               <label><FontAwesomeIcon icon={faPhone} /> Telefon *</label>

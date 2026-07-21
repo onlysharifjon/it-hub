@@ -8,7 +8,7 @@ from typing import List, Optional
 import io
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -40,9 +40,15 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/app/uploads")
 AVATARS_DIR = f"{UPLOAD_DIR}/avatars"
 CERTIFICATES_DIR = f"{UPLOAD_DIR}/certificates"
 STUDENTS_DIR = f"{UPLOAD_DIR}/students"
+STUDENT_PHOTOS_DIR = f"{UPLOAD_DIR}/student_photos"
+STAFF_PHOTOS_DIR = f"{UPLOAD_DIR}/staff_photos"
 os.makedirs(AVATARS_DIR, exist_ok=True)
 os.makedirs(CERTIFICATES_DIR, exist_ok=True)
 os.makedirs(STUDENTS_DIR, exist_ok=True)
+os.makedirs(STUDENT_PHOTOS_DIR, exist_ok=True)
+os.makedirs(STAFF_PHOTOS_DIR, exist_ok=True)
+
+CAMERA_API_KEY = os.getenv("CAMERA_API_KEY", "")
 
 # Standart docs'ni o'chiramiz — nginx `/api/` prefiksi bilan mos kelmaydi va o'rniga
 # parol bilan himoyalangan variantini beramiz (openapi.json ham himoyalangan).
@@ -973,6 +979,7 @@ def _student_read(s: models.Student, pay: Optional[tuple] = None) -> schemas.Stu
         group_names=[m.group.name for m in s.group_memberships if m.group],
         owed_month=owed, paid_month=paid, debt=debt, payment_status=pstatus,
         advance_applied=advance_applied,
+        photo_url=f"/uploads/{s.photo_path}" if s.photo_path else None,
     )
 
 
@@ -4727,3 +4734,122 @@ def delete_schedule_slot(
     if slot:
         db.delete(slot)
         db.commit()
+# ── Camera API ────────────────────────────────────────────────────────────────
+
+@app.post("/students/{student_id}/face-photo")
+async def upload_student_face_photo(
+    student_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_lms_write),
+):
+    s = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if ext not in ("jpg", "jpeg", "png", "webp"):
+        raise HTTPException(status_code=400, detail="Faqat jpg/png/webp rasm yuklang")
+    filename = f"{student_id}.{ext}"
+    filepath = os.path.join(STUDENT_PHOTOS_DIR, filename)
+    contents = await file.read()
+    with open(filepath, "wb") as f:
+        f.write(contents)
+    s.photo_path = f"student_photos/{filename}"
+    db.commit()
+    return {"photo_url": f"/uploads/student_photos/{filename}"}
+
+def _require_camera_key(x_camera_key: Optional[str] = Header(None, alias="x-camera-key")) -> None:
+    if not CAMERA_API_KEY or x_camera_key != CAMERA_API_KEY:
+        raise HTTPException(status_code=403, detail="Camera API key noto'g'ri")
+
+
+@app.post("/users/{user_id}/face-photo")
+async def upload_user_face_photo(
+    user_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    u = db.query(models.User).filter(models.User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if ext not in ("jpg", "jpeg", "png", "webp"):
+        raise HTTPException(status_code=400, detail="Faqat jpg/png/webp rasm yuklang")
+    filename = f"{user_id}.{ext}"
+    filepath = os.path.join(STAFF_PHOTOS_DIR, filename)
+    contents = await file.read()
+    with open(filepath, "wb") as f:
+        f.write(contents)
+    u.face_photo_path = f"staff_photos/{filename}"
+    db.commit()
+    return {"face_photo_url": f"/uploads/staff_photos/{filename}"}
+
+
+@app.get("/camera/students")
+def camera_students(
+    db: Session = Depends(get_db),
+    _: None = Depends(_require_camera_key),
+):
+    """Kamera servisi uchun — faol o'quvchilar ro'yxati (foto URL, guruh ma'lumotlari bilan)."""
+    students = (
+        db.query(models.Student)
+        .options(selectinload(models.Student.group_memberships).selectinload(models.GroupStudent.group))
+        .filter(models.Student.is_active == True, models.Student.is_archived == False)
+        .all()
+    )
+    result = []
+    for s in students:
+        groups = [
+            {"id": gs.group_id, "name": gs.group.name}
+            for gs in s.group_memberships
+            if gs.group and gs.group.is_active
+        ]
+        result.append({
+            "id": s.id,
+            "full_name": s.full_name,
+            "telegram_id": s.telegram_id,
+            "photo_url": f"/uploads/{s.photo_path}" if s.photo_path else None,
+            "groups": groups,
+        })
+    return result
+
+
+@app.get("/camera/staff")
+def camera_staff(
+    db: Session = Depends(get_db),
+    _: None = Depends(_require_camera_key),
+):
+    """Kamera servisi uchun — yuz rasmi bor xodimlar ro'yxati."""
+    staff = (
+        db.query(models.User)
+        .filter(
+            models.User.is_active == True,
+            models.User.face_photo_path.isnot(None),
+        )
+        .all()
+    )
+    return [
+        {
+            "id": u.id,
+            "full_name": u.full_name or u.username,
+            "role": u.role,
+            "face_photo_url": f"/uploads/{u.face_photo_path}" if u.face_photo_path else None,
+        }
+        for u in staff
+    ]
+
+
+@app.post("/camera/checkin", status_code=201)
+def camera_checkin(
+    payload: schemas.CameraCheckin,
+    db: Session = Depends(get_db),
+    _: None = Depends(_require_camera_key),
+):
+    """Kamera tomonidan aniqlangan keldi/ketdi hodisasini qayd etadi."""
+    detected_at = payload.detected_at or datetime.utcnow()
+    import logging as _log
+    _log.getLogger("camera.checkin").info(
+        "student_id=%s event=%s detected_at=%s", payload.student_id, payload.event, detected_at
+    )
+    return {"status": "ok"}

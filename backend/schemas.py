@@ -496,6 +496,7 @@ class StudentRead(BaseModel):
     telegram_id: Optional[str] = None
     telegram_user_id: Optional[str] = None
     photo: Optional[str] = None
+    photo_url:   Optional[str] = None
     notes: Optional[str] = None
     advance_balance: Optional[Decimal] = Decimal('0')
     is_active: bool
@@ -512,6 +513,12 @@ class StudentRead(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class CameraCheckin(BaseModel):
+    student_id: int
+    event: str          # "arrival" | "departure"
+    detected_at: Optional[datetime] = None
 
 
 class StudentCreate(BaseModel):
