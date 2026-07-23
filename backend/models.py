@@ -200,6 +200,19 @@ class Payment(Base):
     recorded_by = relationship("User", foreign_keys=[recorded_by_id])
 
 
+class CameraAttendance(Base):
+    __tablename__ = "camera_attendance"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    student_id  = Column(Integer, ForeignKey("students.id"), nullable=True)
+    staff_id    = Column(Integer, ForeignKey("users.id"),    nullable=True)
+    person_type = Column(String(20), nullable=False)   # student | staff | unknown
+    event_type  = Column(String(10), nullable=False)   # keldi   | ketdi
+    detected_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    student = relationship("Student")
+
+
 class Expense(Base):
     __tablename__ = "expenses"
 

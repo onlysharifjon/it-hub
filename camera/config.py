@@ -22,11 +22,17 @@ DETECTION_MODEL = _get("DETECTION_MODEL", "hog")
 RECOGNITION_TOLERANCE = float(_get("RECOGNITION_TOLERANCE", "0.5"))
 
 # ── Keldi/Ketdi mantiq ────────────────────────────────────────────────────────
-# Bola shuncha soniya ko'rinmasa "ketdi" deb hisoblanadi.
+# Bola shuncha soniya ko'rinmasa "ketdi" deb hisoblanadi (fallback).
 ABSENCE_TIMEOUT = int(_get("ABSENCE_TIMEOUT", "180"))
 
 # Bitta bola bo'yicha xabarlar orasidagi eng kam vaqt (takroriy spamning oldini oladi).
 NOTIFY_COOLDOWN = int(_get("NOTIFY_COOLDOWN", "300"))
+
+# ── Virtual chiziqlar (kadr balandligining ulushi sifatida 0.0–1.0) ────────────
+# 1-chiziq: shaxs bu chiziqdan pastga o'tsa → ketdi
+LINE_1_Y_FRAC = float(_get("LINE_1_Y_FRAC", "0.55"))
+# 2-chiziq: shaxs bu chiziqdan tepaga o'tsa → keldi
+LINE_2_Y_FRAC = float(_get("LINE_2_Y_FRAC", "0.65"))
 
 # ── Telegram bildirishnomasi ──────────────────────────────────────────────────
 TELEGRAM_TOKEN = _get("TELEGRAM_TOKEN")
@@ -40,6 +46,9 @@ NOTIFY_PARENT = _get("NOTIFY_PARENT", "true").lower() == "true"
 CRM_URL = _get("CRM_URL")
 # Camera servis uchun alohida API kalit (backend .env dagi CAMERA_API_KEY bilan bir xil)
 CAMERA_API_KEY = _get("CAMERA_API_KEY")
+# CRM admin login (agar /camera/students route'i yo'q bo'lsa, fallback uchun)
+CRM_ADMIN_USER = _get("CRM_ADMIN_USER")
+CRM_ADMIN_PASS = _get("CRM_ADMIN_PASS")
 # O'quvchilar ro'yxatini qancha vaqtda bir yangilash (soniya). Standart: 1 soat.
 SYNC_INTERVAL = int(_get("SYNC_INTERVAL", "3600"))
 
@@ -58,3 +67,10 @@ TEMP_DIR = _get("TEMP_DIR", os.path.join(os.path.dirname(__file__), "temp"))
 
 # ── Hisobot (XLSX) ────────────────────────────────────────────────────────────
 EXCEL_LOG = _get("EXCEL_LOG", os.path.join(os.path.dirname(__file__), "davomat_log.xlsx"))
+
+# ── AI (Claude) ───────────────────────────────────────────────────────────────
+ANTHROPIC_API_KEY = _get("ANTHROPIC_API_KEY")
+
+# ── Snapshot ──────────────────────────────────────────────────────────────────
+# Telegramga qancha vaqtda bir kamera rasmi yuborilsin (soniya). 0 = o'chirilgan.
+SNAPSHOT_INTERVAL = int(_get("SNAPSHOT_INTERVAL", "300"))

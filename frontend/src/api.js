@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
 let token = localStorage.getItem('token') || ''
 
@@ -51,8 +51,6 @@ export async function uploadAvatar(file) {
   }
   return res.json()
 }
-
-export { API_BASE }
 
 // ── Lessons ───────────────────────────────────────────────────────────────────
 
@@ -252,6 +250,10 @@ export async function deleteAttendanceDate(groupId, lessonDate) {
 }
 
 // ── Courses ───────────────────────────────────────────────────────────────────
+
+export async function fetchStudentCameraAttendance(studentId, days = 30) {
+  return request(`/students/${studentId}/camera-attendance?days=${days}`)
+}
 
 export async function fetchCourses()        { return request('/courses') }
 export async function createCourse(p)       { return request('/courses', { method: 'POST', body: JSON.stringify(p) }) }

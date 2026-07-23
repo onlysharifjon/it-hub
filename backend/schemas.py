@@ -516,8 +516,9 @@ class StudentRead(BaseModel):
 
 
 class CameraCheckin(BaseModel):
-    student_id: int
-    event: str          # "arrival" | "departure"
+    student_id:  int
+    event:       str                   # "arrival" | "departure" | "keldi" | "ketdi"
+    person_type: Optional[str] = "student"   # "student" | "staff"
     detected_at: Optional[datetime] = None
 
 
