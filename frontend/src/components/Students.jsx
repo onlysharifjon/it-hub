@@ -5,9 +5,10 @@ import {
   faPen, faToggleOn, faToggleOff, faPlus,
   faMagnifyingGlass, faUserGraduate, faPhone,
   faBoxArchive, faArrowUpFromBracket, faCamera,
+  faClockRotateLeft, faArrowRightToBracket, faArrowRightFromBracket,
 } from '@fortawesome/free-solid-svg-icons'
 import { faTelegram as faTelegramBrand } from '@fortawesome/free-brands-svg-icons'
-import { fetchStudents, createStudent, updateStudent, archiveStudent, unarchiveStudent, uploadStudentPhoto, API_BASE } from '../api'
+import { fetchStudents, createStudent, updateStudent, archiveStudent, unarchiveStudent, uploadStudentPhoto, fetchStudentCameraAttendance, API_BASE } from '../api'
 import Pagination from './Pagination'
 import DateFilter from './DateFilter'
 
@@ -45,6 +46,10 @@ export default function Students() {
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
   const [photoUploading, setPhotoUploading] = useState(false)
+  const [attendanceModal, setAttendanceModal] = useState(null)  // student object
+  const [attendanceData, setAttendanceData]   = useState([])
+  const [attendanceDays, setAttendanceDays]   = useState(30)
+  const [attendanceLoading, setAttendanceLoading] = useState(false)
 
   useEffect(() => { load(search, dateFilter, page, tab) }, [tab])
 
@@ -152,6 +157,28 @@ export default function Students() {
     } catch { toast.error('Xatolik') }
   }
 
+  async function openAttendance(s, days = 30) {
+    setAttendanceModal(s)
+    setAttendanceDays(days)
+    setAttendanceLoading(true)
+    setAttendanceData([])
+    try {
+      const rows = await fetchStudentCameraAttendance(s.id, days)
+      setAttendanceData(rows)
+    } catch { toast.error("Davomat yuklanmadi") }
+    finally { setAttendanceLoading(false) }
+  }
+
+  async function changeAttendanceDays(s, days) {
+    setAttendanceDays(days)
+    setAttendanceLoading(true)
+    try {
+      const rows = await fetchStudentCameraAttendance(s.id, days)
+      setAttendanceData(rows)
+    } catch {}
+    finally { setAttendanceLoading(false) }
+  }
+
   const students = data.items || []
   const meta = data.meta
 
@@ -246,6 +273,9 @@ export default function Students() {
                       </span>
                     </td>
                     <td className="actions">
+                      <button className="btn-icon" onClick={() => openAttendance(s)} title="Davomat tarixi" style={{ color: '#7c3aed' }}>
+                        <FontAwesomeIcon icon={faClockRotateLeft} />
+                      </button>
                       {tab === 'active' ? (
                         <>
                           <button className="btn-icon" onClick={() => openEdit(s)} title="Tahrirlash">
@@ -278,6 +308,84 @@ export default function Students() {
           </div>
           <Pagination meta={meta} onPageChange={handlePageChange} />
         </>
+      )}
+
+      {/* ── Davomat modali ── */}
+      {attendanceModal && (
+        <div className="modal-overlay" onClick={() => setAttendanceModal(null)}>
+          <div className="modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>
+                <FontAwesomeIcon icon={faClockRotateLeft} style={{ marginRight: 8, color: '#7c3aed' }} />
+                {attendanceModal.full_name} — Kamera davomati
+              </h3>
+              <button className="modal-close" onClick={() => setAttendanceModal(null)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ padding: '12px 20px' }}>
+              {/* Davr tanlash */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                {[7, 14, 30, 90].map(d => (
+                  <button
+                    key={d}
+                    className={`button ${attendanceDays === d ? 'primary' : 'secondary'}`}
+                    style={{ fontSize: 12, padding: '4px 12px' }}
+                    onClick={() => changeAttendanceDays(attendanceModal, d)}
+                  >
+                    {d} kun
+                  </button>
+                ))}
+              </div>
+
+              {attendanceLoading ? (
+                <div className="muted center py-4">Yuklanmoqda...</div>
+              ) : attendanceData.length === 0 ? (
+                <div className="muted center py-4">
+                  Bu davrda kamera yozuvi topilmadi
+                </div>
+              ) : (
+                <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+                  <table className="data-table" style={{ fontSize: 13 }}>
+                    <thead>
+                      <tr>
+                        <th>Sana</th>
+                        <th>Kun</th>
+                        <th>Soat</th>
+                        <th>Holat</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attendanceData.map(r => {
+                        const dt   = new Date(r.detected_at)
+                        const date = dt.toLocaleDateString('uz-UZ', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                        const day  = dt.toLocaleDateString('uz-UZ', { weekday: 'long' })
+                        const time = dt.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
+                        const isKeldi = r.event_type === 'keldi'
+                        return (
+                          <tr key={r.id}>
+                            <td>{date}</td>
+                            <td style={{ color: 'var(--muted)', fontSize: 12 }}>{day}</td>
+                            <td><strong>{time}</strong></td>
+                            <td>
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 5,
+                                padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                                background: isKeldi ? '#dcfce7' : '#fee2e2',
+                                color:      isKeldi ? '#16a34a' : '#dc2626',
+                              }}>
+                                <FontAwesomeIcon icon={isKeldi ? faArrowRightToBracket : faArrowRightFromBracket} />
+                                {isKeldi ? 'Keldi' : 'Ketdi'}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {modal && (

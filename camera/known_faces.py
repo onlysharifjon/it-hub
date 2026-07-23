@@ -46,15 +46,16 @@ class FaceDB:
         self._save_cache()
         log.info("Encodinglar qayta yuklandi: %d ta yuz", len(self.encodings))
 
-    def match(self, encoding: np.ndarray) -> dict | None:
-        """Berilgan encodingga mos shaxs info'sini qaytaradi yoki None."""
+    def match(self, encoding: np.ndarray) -> tuple:
+        """(person_dict | None, distance) qaytaradi."""
         if not self.encodings:
-            return None
+            return None, 1.0
         distances = face_recognition.face_distance(self.encodings, encoding)
         best = int(np.argmin(distances))
-        if distances[best] <= config.RECOGNITION_TOLERANCE:
-            return self.persons[best]
-        return None
+        dist = float(distances[best])
+        if dist <= config.RECOGNITION_TOLERANCE:
+            return self.persons[best], dist
+        return None, dist
 
     # ── private ───────────────────────────────────────────────────────────────
 

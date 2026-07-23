@@ -1,11 +1,27 @@
 """Telegram orqali keldi/ketdi bildirishnomalarini yuboradi."""
 import os
+import time
 import logging
 from datetime import datetime
 
 import requests
 
 import config
+
+_UZ_DAYS = {"Du": 0, "Se": 1, "Cho": 2, "Pa": 3, "Ju": 4, "Sha": 5, "Ya": 6}
+
+
+def _has_class_today(schedule: str) -> tuple[bool, str]:
+    if not schedule:
+        return False, ""
+    parts = schedule.strip().split()
+    today_wd = datetime.today().weekday()
+    days_str = parts[0]
+    time_str = parts[1] if len(parts) > 1 else ""
+    for d in days_str.split(","):
+        if _UZ_DAYS.get(d.strip()) == today_wd:
+            return True, time_str
+    return False, time_str
 
 log = logging.getLogger("camera.notify")
 
@@ -41,8 +57,8 @@ def _send_photo(chat_id: str, photo_path: str, caption: str) -> None:
             resp = requests.post(
                 f"{_TG.format(token=config.TELEGRAM_TOKEN)}/sendPhoto",
                 data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
-                files={"photo": ("face.jpg", photo_file, "image/jpeg")},
-                timeout=20,
+                files={"photo": ("frame.jpg", photo_file, "image/jpeg")},
+                timeout=30,
             )
         if resp.status_code != 200:
             log.warning("Telegram photo xatosi %s: %s", resp.status_code, resp.text[:200])
@@ -63,30 +79,66 @@ def _cleanup(photo_path: str | None) -> None:
 
 def notify_arrival(student: dict, photo_path: str | None = None) -> None:
     """O'quvchi markazga keldi."""
-    ts = datetime.now().strftime("%H:%M")
-    name = student.get("full_name", f"ID {student.get('id')}")
+    ts     = datetime.now().strftime("%H:%M")
+    name   = student.get("full_name", f"ID {student.get('id')}")
     groups = student.get("groups", [])
     group_str = ", ".join(g["name"] for g in groups) if groups else "—"
+
+    # Bugungi dars vaqtini aniqlash
+    schedule_line = ""
+    for g in groups:
+        has_cls, t = _has_class_today(g.get("schedule", ""))
+        if has_cls and t:
+            schedule_line = f"\n📅 Bugun dars: <b>{g['name']}</b> — soat {t}"
+            break
+
+    # To'lov holati
+    debt_line = ""
+    if student.get("is_debtor"):
+        debt_line = "\n💸 <b>Oylik to'lov amalga oshmagan!</b>"
 
     school_msg = (
         f"✅ <b>{name}</b> markazga <b>keldi</b>\n"
         f"🕒 {ts}\n"
         f"📚 Guruh: {group_str}"
+        f"{schedule_line}"
+        f"{debt_line}"
     )
-    # Maktab guruhiga foto bilan
     if config.NOTIFY_CHAT_ID:
         _send_photo(config.NOTIFY_CHAT_ID, photo_path, school_msg)
-        photo_path = None  # faqat bir marta yuboriladi, keyin o'chiriladi
+        photo_path = None
 
-    # Ota-onaga matnli xabar
+    # Ota-onaga shaxsiy xabar
     if config.NOTIFY_PARENT and student.get("telegram_id"):
         parent_msg = (
             f"✅ Farzandingiz <b>{name}</b> o'quv markazga <b>keldi</b>\n"
             f"🕒 Vaqt: {ts}"
+            f"{schedule_line}"
         )
+        if student.get("is_debtor"):
+            parent_msg += "\n💸 Eslatma: bu oylik to'lov amalga oshmagan."
         _send_text(str(student["telegram_id"]), parent_msg)
 
     _cleanup(photo_path)
+
+
+_last_unknown: float = 0.0
+
+
+def notify_unknown(photo_path: str | None = None) -> None:
+    """Noma'lum yuz — cooldown bilan Telegramga yuboradi."""
+    global _last_unknown
+    now = time.time()
+    if now - _last_unknown < config.NOTIFY_COOLDOWN:
+        _cleanup(photo_path)
+        return
+    _last_unknown = now
+    ts  = datetime.now().strftime("%H:%M")
+    msg = f"⚠️ <b>Noma'lum shaxs</b> aniqlandi!\n🕒 {ts}"
+    if config.NOTIFY_CHAT_ID:
+        _send_photo(config.NOTIFY_CHAT_ID, photo_path, msg)
+    else:
+        _cleanup(photo_path)
 
 
 def notify_departure(student: dict, photo_path: str | None = None) -> None:

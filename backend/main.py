@@ -2202,26 +2202,39 @@ def camera_students(
     db: Session = Depends(get_db),
     _: None = Depends(_require_camera_key),
 ):
-    """Kamera servisi uchun — faol o'quvchilar ro'yxati (foto URL, guruh ma'lumotlari bilan)."""
+    """Kamera servisi uchun — faol o'quvchilar ro'yxati (foto, guruh, jadval, to'lov holati)."""
+    now_   = datetime.utcnow()
+    month_ = now_.month
+    year_  = now_.year
+
     students = (
         db.query(models.Student)
-        .options(selectinload(models.Student.group_memberships).selectinload(models.GroupStudent.group))
+        .options(
+            selectinload(models.Student.group_memberships).selectinload(models.GroupStudent.group),
+            selectinload(models.Student.payments),
+        )
         .filter(models.Student.is_active == True, models.Student.is_archived == False)
         .all()
     )
     result = []
     for s in students:
         groups = [
-            {"id": gs.group_id, "name": gs.group.name}
+            {"id": gs.group_id, "name": gs.group.name, "schedule": gs.group.schedule}
             for gs in s.group_memberships
             if gs.group and gs.group.is_active
         ]
+        paid_this_month = sum(
+            float(p.amount) for p in s.payments
+            if p.month == month_ and p.year == year_
+        )
+        is_debtor = (paid_this_month == 0) and len(groups) > 0
         result.append({
-            "id": s.id,
-            "full_name": s.full_name,
+            "id":         s.id,
+            "full_name":  s.full_name,
             "telegram_id": s.telegram_id,
-            "photo_url": f"/uploads/{s.photo_path}" if s.photo_path else None,
-            "groups": groups,
+            "photo_url":  f"/uploads/{s.photo_path}" if s.photo_path else None,
+            "groups":     groups,
+            "is_debtor":  is_debtor,
         })
     return result
 
@@ -2251,16 +2264,89 @@ def camera_staff(
     ]
 
 
+@app.get("/camera/photo/student/{student_id}")
+def camera_student_photo(
+    student_id: int,
+    db: Session = Depends(get_db),
+    _: None = Depends(_require_camera_key),
+):
+    """Kamera servisi uchun — o'quvchi yuz rasmi (bytes)."""
+    from fastapi.responses import FileResponse as FR
+    s = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not s or not s.photo_path:
+        raise HTTPException(status_code=404, detail="Rasm topilmadi")
+    path = os.path.join(UPLOAD_DIR, s.photo_path)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Fayl topilmadi")
+    return FR(path)
+
+
+@app.get("/camera/photo/staff/{user_id}")
+def camera_staff_photo(
+    user_id: int,
+    db: Session = Depends(get_db),
+    _: None = Depends(_require_camera_key),
+):
+    """Kamera servisi uchun — xodim yuz rasmi (bytes)."""
+    from fastapi.responses import FileResponse as FR
+    u = db.query(models.User).filter(models.User.id == user_id).first()
+    if not u or not u.face_photo_path:
+        raise HTTPException(status_code=404, detail="Rasm topilmadi")
+    path = os.path.join(UPLOAD_DIR, u.face_photo_path)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Fayl topilmadi")
+    return FR(path)
+
+
 @app.post("/camera/checkin", status_code=201)
 def camera_checkin(
     payload: schemas.CameraCheckin,
     db: Session = Depends(get_db),
     _: None = Depends(_require_camera_key),
 ):
-    """Kamera tomonidan aniqlangan keldi/ketdi hodisasini qayd etadi."""
+    """Kamera tomonidan aniqlangan keldi/ketdi hodisasini DB ga saqlaydi."""
     detected_at = payload.detected_at or datetime.utcnow()
-    import logging as _log
-    _log.getLogger("camera.checkin").info(
-        "student_id=%s event=%s detected_at=%s", payload.student_id, payload.event, detected_at
+    event_type  = "keldi" if payload.event in ("arrival", "keldi") else "ketdi"
+
+    rec = models.CameraAttendance(
+        student_id  = payload.student_id if payload.person_type == "student" else None,
+        staff_id    = payload.student_id if payload.person_type == "staff"   else None,
+        person_type = payload.person_type or "student",
+        event_type  = event_type,
+        detected_at = detected_at,
     )
-    return {"status": "ok"}
+    db.add(rec)
+    db.commit()
+    return {"status": "ok", "id": rec.id}
+
+
+@app.get("/students/{student_id}/camera-attendance")
+def student_camera_attendance(
+    student_id: int,
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_staff),
+):
+    """O'quvchining kamera orqali keldi/ketdi tarixi (so'nggi N kun)."""
+    from datetime import timedelta
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(models.CameraAttendance)
+        .filter(
+            models.CameraAttendance.student_id == student_id,
+            models.CameraAttendance.detected_at >= since,
+        )
+        .order_by(models.CameraAttendance.detected_at.desc())
+        .limit(200)
+        .all()
+    )
+    return [
+        {
+            "id":          r.id,
+            "event_type":  r.event_type,
+            "detected_at": r.detected_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
