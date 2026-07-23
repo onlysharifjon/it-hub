@@ -5,8 +5,9 @@ import {
   faArrowLeft, faChalkboardTeacher, faCalendarDay,
   faPlus, faTrash, faCheck, faXmark, faMinus,
   faUserGraduate, faChartBar, faTag, faBookOpen, faPaperPlane,
+  faVideo, faArrowRightToBracket, faArrowRightFromBracket,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework } from '../api'
+import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework, fetchGroupCameraAttendance } from '../api'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
@@ -67,12 +68,31 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   const [hwText, setHwText] = useState('')
   const [hwSending, setHwSending] = useState(false)
 
+  // Kamera davomati tab
+  const [mainTab, setMainTab] = useState('attendance')   // 'attendance' | 'camera'
+  const [camData, setCamData] = useState([])
+  const [camDays, setCamDays] = useState(7)
+  const [camLoading, setCamLoading] = useState(false)
+
   useEffect(() => { load() }, [month, year, groupProp.id])
   useEffect(() => {
     if (!canEditAttendance) return
     fetchNextLesson(groupProp.id).then(setNextLesson).catch(() => {})
     fetchHomeworks(groupProp.id).then(setHomeworks).catch(() => {})
   }, [groupProp.id])
+
+  async function loadCam(days = camDays) {
+    setCamLoading(true)
+    try {
+      const rows = await fetchGroupCameraAttendance(groupProp.id, days)
+      setCamData(rows)
+    } catch { toast.error("Kamera ma'lumotlari yuklanmadi") }
+    finally { setCamLoading(false) }
+  }
+
+  useEffect(() => {
+    if (mainTab === 'camera') loadCam(camDays)
+  }, [mainTab, groupProp.id])
 
   function openHwModal() {
     setHwText(nextLesson?.homework || '')
@@ -366,8 +386,93 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
           )}
         </div>
 
-        {/* ── Right Panel: Attendance Grid ── */}
+        {/* ── Right Panel: Attendance Grid + Camera ── */}
         <div className="group-detail-main">
+
+          {/* Tab switcher */}
+          <div className="tab-bar" style={{ marginBottom: '1rem' }}>
+            <button
+              className={`tab-btn ${mainTab === 'attendance' ? 'active' : ''}`}
+              onClick={() => setMainTab('attendance')}
+            >
+              <FontAwesomeIcon icon={faChartBar} /> Yo'qlama
+            </button>
+            <button
+              className={`tab-btn ${mainTab === 'camera' ? 'active' : ''}`}
+              onClick={() => setMainTab('camera')}
+            >
+              <FontAwesomeIcon icon={faVideo} /> Kamera davomati
+            </button>
+          </div>
+
+          {/* ── Camera attendance tab ── */}
+          {mainTab === 'camera' && (
+            <div>
+              {/* Days filter */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                {[1, 7, 14, 30].map(d => (
+                  <button
+                    key={d}
+                    className={`button ${camDays === d ? 'primary' : 'secondary'} small`}
+                    onClick={() => { setCamDays(d); loadCam(d) }}
+                  >
+                    {d === 1 ? 'Bugun' : `${d} kun`}
+                  </button>
+                ))}
+              </div>
+
+              {camLoading ? (
+                <div className="muted center py-4">Yuklanmoqda...</div>
+              ) : camData.length === 0 ? (
+                <div className="muted center py-4">Bu davrda kamera yozuvi topilmadi</div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>O'quvchi</th>
+                        <th>Sana</th>
+                        <th>Kun</th>
+                        <th>Soat</th>
+                        <th>Holat</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {camData.map(r => {
+                        const dt   = new Date(r.detected_at)
+                        const date = dt.toLocaleDateString('uz-UZ', { year: 'numeric', month: '2-digit', day: '2-digit' })
+                        const day  = dt.toLocaleDateString('uz-UZ', { weekday: 'short' })
+                        const time = dt.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
+                        const isKeldi = r.event_type === 'keldi'
+                        return (
+                          <tr key={r.id}>
+                            <td><strong>{r.student_name}</strong></td>
+                            <td>{date}</td>
+                            <td style={{ color: 'var(--muted)', fontSize: 12 }}>{day}</td>
+                            <td><strong>{time}</strong></td>
+                            <td>
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 5,
+                                padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                                background: isKeldi ? '#dcfce7' : '#fee2e2',
+                                color:      isKeldi ? '#16a34a' : '#dc2626',
+                              }}>
+                                <FontAwesomeIcon icon={isKeldi ? faArrowRightToBracket : faArrowRightFromBracket} />
+                                {isKeldi ? 'Keldi' : 'Ketdi'}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Yo'qlama tab ── */}
+          {mainTab === 'attendance' && <>
           {/* Month filter */}
           <div className="toolbar" style={{ marginBottom: '1rem' }}>
             <select className="field-sm" value={month} onChange={e => setMonth(Number(e.target.value))}>
@@ -504,6 +609,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
               </table>
             </div>
           )}
+          </>}
         </div>
       </div>
 

@@ -2347,6 +2347,49 @@ def finance_monthly(
 
 # ── Attendance ─────────────────────────────────────────────────────────────────
 
+@app.get("/groups/{group_id}/camera-attendance")
+def group_camera_attendance(
+    group_id: int,
+    days: int = Query(7, ge=1, le=90),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_staff),
+):
+    """Guruh o'quvchilarining kamera keldi/ketdi tarixi (so'nggi N kun)."""
+    from datetime import timedelta
+    since = datetime.utcnow() - timedelta(days=days)
+
+    member_ids = [
+        gs.student_id for gs in
+        db.query(models.GroupStudent.student_id)
+        .filter(models.GroupStudent.group_id == group_id)
+        .all()
+    ]
+    if not member_ids:
+        return []
+
+    rows = (
+        db.query(models.CameraAttendance, models.Student.full_name)
+        .join(models.Student, models.Student.id == models.CameraAttendance.student_id)
+        .filter(
+            models.CameraAttendance.student_id.in_(member_ids),
+            models.CameraAttendance.detected_at >= since,
+        )
+        .order_by(models.CameraAttendance.detected_at.desc())
+        .limit(500)
+        .all()
+    )
+    return [
+        {
+            "id":           r.CameraAttendance.id,
+            "student_id":   r.CameraAttendance.student_id,
+            "student_name": r.full_name,
+            "event_type":   r.CameraAttendance.event_type,
+            "detected_at":  r.CameraAttendance.detected_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
 @app.get("/groups/{group_id}/attendance")
 def get_attendance(
     group_id: int,

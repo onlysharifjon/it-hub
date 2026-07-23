@@ -255,6 +255,10 @@ export async function fetchStudentCameraAttendance(studentId, days = 30) {
   return request(`/students/${studentId}/camera-attendance?days=${days}`)
 }
 
+export async function fetchGroupCameraAttendance(groupId, days = 7) {
+  return request(`/groups/${groupId}/camera-attendance?days=${days}`)
+}
+
 export async function fetchCourses()        { return request('/courses') }
 export async function createCourse(p)       { return request('/courses', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updateCourse(id, p)   { return request(`/courses/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
@@ -282,6 +286,13 @@ export async function createTariff(p)       { return request('/tariffs', { metho
 export async function updateTariff(id, p)   { return request(`/tariffs/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deleteTariff(id)      { return request(`/tariffs/${id}`, { method: 'DELETE' }) }
 
+
+// ── Discounts ─────────────────────────────────────────────────────────────────
+
+export async function fetchDiscounts()         { return request('/discounts') }
+export async function createDiscount(p)        { return request('/discounts', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateDiscount(id, p)    { return request(`/discounts/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
+export async function deleteDiscount(id)       { return request(`/discounts/${id}`, { method: 'DELETE' }) }
 
 // ── Finance ───────────────────────────────────────────────────────────────────
 
