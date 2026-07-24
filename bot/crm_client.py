@@ -1,16 +1,28 @@
 import asyncio
+import os
+import sys
 from datetime import datetime, timedelta
+from decimal import Decimal
+from pathlib import Path
 
-import httpx
+from config import CRM_DB_URL
 
-from config import CRM_API_PREFIX, CRM_BASE_URL, CRM_PASSWORD, CRM_USERNAME
+# CRM ma'lumotlari (guruhlar/o'quvchilar/to'lovlar) backendning o'z Postgres bazasidan
+# to'g'ridan-to'g'ri o'qiladi — backend.models + backend.core_calc orqali. Faqat SELECT
+# so'rovlari ishlatiladi, hech qachon session.add/commit/delete chaqirilmaydi.
 
-# Faqat GET so'rovlar — bot CRMga hech narsa yozmaydi/o'zgartirmaydi.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-_token: str | None = None
+if CRM_DB_URL:
+    os.environ["DATABASE_URL"] = CRM_DB_URL
 
-MAX_GROUP_ID_SCAN = 150
-GROUP_SCAN_CONCURRENCY = 10
+from backend import core_calc  # noqa: E402
+from backend import models as bm  # noqa: E402
+from backend.database import SessionLocal  # noqa: E402
+
+ZERO = Decimal("0")
 
 
 class CRMError(Exception):
@@ -23,100 +35,133 @@ def _tashkent_now() -> datetime:
     return datetime.utcnow() + timedelta(hours=5)
 
 
-def _url(path: str) -> str:
-    return f"{CRM_BASE_URL}{CRM_API_PREFIX}{path}"
+async def _run(fn, *args):
+    try:
+        return await asyncio.to_thread(fn, *args)
+    except CRMError:
+        raise
+    except Exception as error:
+        raise CRMError(f"Bazaga so'rov yuborib bo'lmadi: {error}") from error
 
 
-async def _login() -> str:
-    global _token
-    async with httpx.AsyncClient(timeout=10) as client:
-        try:
-            resp = await client.post(
-                _url("/auth/login"),
-                json={"username": CRM_USERNAME, "password": CRM_PASSWORD},
+def _group_to_dict(group: "bm.Group") -> dict:
+    return {"id": group.id, "name": group.name, "is_active": group.is_active}
+
+
+def _member_to_dict(gs: "bm.GroupStudent") -> dict | None:
+    student = gs.student
+    if student is None or not student.is_active or student.is_archived:
+        return None
+    return {"student_id": student.id, "student_name": student.full_name}
+
+
+def _sync_get_groups() -> list[dict]:
+    with SessionLocal() as db:
+        groups = (
+            db.query(bm.Group)
+            .filter(bm.Group.is_active.is_(True))
+            .order_by(bm.Group.name)
+            .all()
+        )
+        return [_group_to_dict(g) for g in groups]
+
+
+def _sync_get_group_detail(group_id: int) -> dict:
+    with SessionLocal() as db:
+        group = db.get(bm.Group, group_id)
+        if group is None:
+            raise CRMError("Guruh topilmadi.", status_code=404)
+        members = [_member_to_dict(gs) for gs in group.members]
+        return {
+            "id": group.id,
+            "name": group.name,
+            "is_active": group.is_active,
+            "schedule": group.schedule or "",
+            "members": [m for m in members if m is not None],
+        }
+
+
+def _sync_get_student(student_id: int) -> dict:
+    with SessionLocal() as db:
+        student = db.get(bm.Student, student_id)
+        if student is None:
+            raise CRMError("O'quvchi topilmadi.", status_code=404)
+        return {
+            "id": student.id,
+            "full_name": student.full_name,
+            "phone1": student.phone1,
+        }
+
+
+def _sync_search_students(query: str, page_size: int) -> list[dict]:
+    with SessionLocal() as db:
+        like = f"%{query}%"
+        students = (
+            db.query(bm.Student)
+            .filter(bm.Student.full_name.ilike(like))
+            .filter(bm.Student.is_archived.is_(False))
+            .order_by(bm.Student.full_name)
+            .limit(page_size)
+            .all()
+        )
+        results = []
+        for student in students:
+            group_names = [
+                gs.group.name for gs in student.group_memberships if gs.group is not None
+            ]
+            results.append(
+                {"id": student.id, "full_name": student.full_name, "group_names": group_names}
             )
-        except httpx.RequestError as error:
-            raise CRMError(f"CRM bilan bog'lanib bo'lmadi: {error}") from error
-    if resp.status_code != 200:
-        raise CRMError(f"CRM login xato ({resp.status_code}): {resp.text[:200]}")
-    _token = resp.json()["access_token"]
-    return _token
+        return results
 
 
-async def _get(path: str, **kwargs):
-    global _token
-    if _token is None:
-        await _login()
-    for attempt in range(2):
-        headers = {"Authorization": f"Bearer {_token}"}
-        async with httpx.AsyncClient(timeout=10) as client:
-            try:
-                resp = await client.get(_url(path), headers=headers, **kwargs)
-            except httpx.RequestError as error:
-                raise CRMError(f"CRM bilan bog'lanib bo'lmadi: {error}") from error
-        if resp.status_code == 401 and attempt == 0:
-            await _login()
-            continue
-        if resp.status_code >= 400:
-            raise CRMError(f"CRM xatosi ({resp.status_code}): {resp.text[:200]}", status_code=resp.status_code)
-        return resp.json()
-    raise CRMError("CRM autentifikatsiyasi muvaffaqiyatsiz.")
+def _sync_get_payment_summary(student_id: int, month: int | None, year: int | None) -> dict:
+    now = _tashkent_now()
+    month = month or now.month
+    year = year or now.year
+    with SessionLocal() as db:
+        student = db.get(bm.Student, student_id)
+        if student is None:
+            raise CRMError("O'quvchi topilmadi.", status_code=404)
+        memberships = (
+            db.query(bm.GroupStudent).filter(bm.GroupStudent.student_id == student_id).all()
+        )
+        total_owed = ZERO
+        total_paid = ZERO
+        for membership in memberships:
+            total_owed += core_calc.student_month_owed(db, student_id, membership.group_id, month, year)
+            total_paid += core_calc.student_month_paid(db, student_id, membership.group_id, month, year)
+        advance = Decimal(str(student.advance_balance or 0))
+        status = core_calc.payment_status(total_owed, total_paid, advance)
+        debt = max(ZERO, total_owed - total_paid - advance)
+        return {
+            "student_name": student.full_name,
+            "month": month,
+            "year": year,
+            "payment_status": status,
+            "total_owed": float(total_owed),
+            "total_paid": float(total_paid),
+            "debt": float(debt),
+        }
 
 
 async def get_groups() -> list[dict]:
-    try:
-        items: list[dict] = []
-        page = 1
-        while True:
-            data = await _get("/groups", params={"is_active": True, "page_size": 100, "page": page})
-            items.extend(data.get("items", []))
-            meta = data.get("meta") or {}
-            if page >= meta.get("total_pages", 1):
-                break
-            page += 1
-        return items
-    except CRMError as error:
-        if error.status_code != 403:
-            raise
-        return await _scan_accessible_groups()
-
-
-async def _scan_accessible_groups() -> list[dict]:
-    """Fallback for roles (e.g. teacher) without bulk /groups access — probes
-    /groups/{id} for each id, keeping only ones this account can see (their own)."""
-    semaphore = asyncio.Semaphore(GROUP_SCAN_CONCURRENCY)
-
-    async def _try(group_id: int) -> dict | None:
-        async with semaphore:
-            try:
-                detail = await get_group_detail(group_id)
-            except CRMError:
-                return None
-            return detail if detail.get("is_active", True) else None
-
-    results = await asyncio.gather(*(_try(i) for i in range(1, MAX_GROUP_ID_SCAN + 1)))
-    return [group for group in results if group is not None]
+    return await _run(_sync_get_groups)
 
 
 async def get_group_detail(group_id: int) -> dict:
-    return await _get(f"/groups/{group_id}")
+    return await _run(_sync_get_group_detail, group_id)
 
 
 async def get_student(student_id: int) -> dict:
-    return await _get(f"/students/{student_id}")
+    return await _run(_sync_get_student, student_id)
 
 
 async def search_students(query: str, page_size: int = 20) -> list[dict]:
-    """Guruhga bog'liq bo'lmagan holda, ism/telefon bo'yicha to'g'ridan-to'g'ri qidirish
+    """Guruhga bog'liq bo'lmagan holda, ism bo'yicha to'g'ridan-to'g'ri qidirish
     (guruhga hali qo'shilmagan o'quvchilarni ham topish uchun)."""
-    data = await _get("/students", params={"search": query, "page_size": min(page_size, 100), "page": 1})
-    return data.get("items", [])
+    return await _run(_sync_search_students, query, min(page_size, 100))
 
 
 async def get_payment_summary(student_id: int, month: int | None = None, year: int | None = None) -> dict:
-    params = {}
-    if month:
-        params["month"] = month
-    if year:
-        params["year"] = year
-    return await _get(f"/students/{student_id}/payments/summary", params=params)
+    return await _run(_sync_get_payment_summary, student_id, month, year)
