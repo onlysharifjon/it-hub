@@ -12,6 +12,7 @@ class Role(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(64), unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_parent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     employees: Mapped[list["Employee"]] = relationship(back_populates="role")
@@ -54,6 +55,9 @@ class FineTemplate(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     text: Mapped[str] = mapped_column(String(255), unique=True)
+    short_name: Mapped[str] = mapped_column(String(64))
+    owner: Mapped[str] = mapped_column(String(16))
+    shared_with_audit: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -71,3 +75,43 @@ class Fine(Base):
 
     employee: Mapped["Employee"] = relationship(foreign_keys=[employee_id], back_populates="fines_received")
     issued_by: Mapped["Employee"] = relationship(foreign_keys=[issued_by_id])
+
+
+class Attendance(Base):
+    __tablename__ = "attendance"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    crm_student_id: Mapped[int] = mapped_column(Integer, index=True)
+    student_name: Mapped[str] = mapped_column(String(255))
+    crm_group_id: Mapped[int] = mapped_column(Integer, index=True)
+    group_name: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(10))
+    marked_by_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    marked_by: Mapped["Employee"] = relationship()
+
+
+class Setting(Base):
+    __tablename__ = "settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True)
+    value: Mapped[str] = mapped_column(String(255))
+
+
+class ParentLink(Base):
+    """Ota-ona (Employee) va CRM o'quvchisi orasidagi bog'lanish — botning o'z bazasida
+    saqlanadi, CRMga yozish shart emas (CRM roli yetarli bo'lmasa ham ishlaydi)."""
+
+    __tablename__ = "parent_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
+    crm_student_id: Mapped[int] = mapped_column(Integer, index=True)
+    student_name: Mapped[str] = mapped_column(String(255))
+    crm_group_id: Mapped[int] = mapped_column(Integer)
+    group_name: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    employee: Mapped["Employee"] = relationship()

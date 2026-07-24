@@ -4,17 +4,32 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import func, select
 
 from database import async_session
-from keyboards import audit_menu_keyboard, employees_keyboard, fine_templates_keyboard
+from keyboards import (
+    BTN_FINE_GIVE,
+    BTN_FINE_REPORT,
+    BTN_MY_TEMPLATES,
+    audit_menu_keyboard,
+    audit_templates_manage_keyboard,
+    employees_keyboard,
+    fine_templates_keyboard,
+    fine_totals_keyboard,
+    photo_prompt_keyboard,
+)
 from models import Employee, Fine, FineTemplate
-from states import AuditAuth, FineFlow, ReportFlow
+from states import AuditAuth, FineFlow, NewFineTemplate, ReportFlow
 from utils import (
+    apply_bot_commands,
     get_active_audit_account,
     get_employee,
+    get_setting,
     is_privileged,
     list_admins,
     list_employees_with_fines,
-    list_workers,
+    list_staff,
+    reply_keyboard_for_employee,
+    safe_edit_text,
     verify_password,
+    visible_fine_templates,
 )
 
 router = Router(name="audit")
@@ -60,7 +75,11 @@ async def audit_password(message: Message, state: FSMContext) -> None:
             await message.answer("Parol noto'g'ri.")
             await state.clear()
             return
+        reply_keyboard = await reply_keyboard_for_employee(session, employee)
+        await apply_bot_commands(message.bot, session, employee)
     await state.clear()
+    if reply_keyboard is not None:
+        await message.answer("Pastdagi tugmalar yangilandi.", reply_markup=reply_keyboard)
     await message.answer("✅ Kirish muvaffaqiyatli.", reply_markup=audit_menu_keyboard())
 
 
@@ -72,7 +91,7 @@ async def panel_audit_entry(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer("Avval botga /start bosing.", show_alert=True)
             return
         if employee.is_admin:
-            await callback.message.edit_text("Audit paneli:", reply_markup=audit_menu_keyboard())
+            await safe_edit_text(callback.message, "Audit paneli:", reply_markup=audit_menu_keyboard())
             await callback.answer()
             return
         account = await get_active_audit_account(session, employee.id)
@@ -80,7 +99,7 @@ async def panel_audit_entry(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer("Sizga audit huquqi berilmagan.", show_alert=True)
             return
     await state.set_state(AuditAuth.login)
-    await callback.message.edit_text("Login kiriting:")
+    await safe_edit_text(callback.message, "Login kiriting:")
     await callback.answer()
 
 
@@ -92,7 +111,7 @@ async def back_to_audit_menu(callback: CallbackQuery, state: FSMContext) -> None
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
     await state.clear()
-    await callback.message.edit_text("Audit paneli:", reply_markup=audit_menu_keyboard())
+    await safe_edit_text(callback.message, "Audit paneli:", reply_markup=audit_menu_keyboard())
     await callback.answer()
 
 
@@ -103,32 +122,47 @@ async def fine_start(callback: CallbackQuery, state: FSMContext) -> None:
         if not await is_privileged(session, employee):
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
-        employees = [e for e in await list_workers(session) if e.id != employee.id]
+        employees = [e for e in await list_staff(session) if e.id != employee.id]
     if not employees:
         await callback.answer("Xodimlar ro'yxati bo'sh.", show_alert=True)
         return
     await state.set_state(FineFlow.choosing_employee)
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         "Shtraf beriladigan xodimni tanlang:",
         reply_markup=employees_keyboard(employees, "fine_emp", back_callback="audit_menu"),
     )
     await callback.answer()
 
 
+@router.message(F.text == BTN_FINE_GIVE)
+async def fine_start_msg(message: Message, state: FSMContext) -> None:
+    async with async_session() as session:
+        employee = await get_employee(session, message.from_user.id)
+        if not await is_privileged(session, employee):
+            return
+        employees = [e for e in await list_staff(session) if e.id != employee.id]
+    if not employees:
+        await message.answer("Xodimlar ro'yxati bo'sh.")
+        return
+    await state.set_state(FineFlow.choosing_employee)
+    await message.answer(
+        "Shtraf beriladigan xodimni tanlang:",
+        reply_markup=employees_keyboard(employees, "fine_emp", back_callback="audit_menu"),
+    )
+
+
 @router.callback_query(FineFlow.choosing_employee, F.data.startswith("fine_emp:"))
 async def fine_choose_employee(callback: CallbackQuery, state: FSMContext) -> None:
     employee_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        result = await session.execute(
-            select(FineTemplate).where(FineTemplate.is_active.is_(True)).order_by(FineTemplate.text)
-        )
-        templates = result.scalars().all()
+        requester = await get_employee(session, callback.from_user.id)
+        templates = await visible_fine_templates(session, requester)
     if not templates:
-        await callback.answer("Avval admin /shablonlar orqali shablon qo'shishi kerak.", show_alert=True)
+        await callback.answer("Avval shablon qo'shilishi kerak.", show_alert=True)
         return
     await state.update_data(fine_employee_id=employee_id)
     await state.set_state(FineFlow.choosing_template)
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         "Shtraf sababini tanlang:",
         reply_markup=fine_templates_keyboard(templates, "fine_template", back_callback="audit_menu"),
     )
@@ -144,9 +178,25 @@ async def fine_choose_template(callback: CallbackQuery, state: FSMContext) -> No
             await callback.answer("Shablon topilmadi.", show_alert=True)
             return
         reason = template.text
+        photo_required = await get_setting(session, "fine_photo_required", "false")
     await state.update_data(reason=reason)
     await state.set_state(FineFlow.waiting_photo)
-    await callback.message.edit_text("Endi shtraf uchun rasm yuboring.")
+    if photo_required == "true":
+        await safe_edit_text(callback.message, "Endi shtraf uchun rasm yuboring.")
+    else:
+        await safe_edit_text(
+            callback.message,
+            "Xohlasangiz shtraf uchun rasm yuboring (ixtiyoriy):",
+            reply_markup=photo_prompt_keyboard(),
+        )
+    await callback.answer()
+
+
+@router.callback_query(FineFlow.waiting_photo, F.data == "fine_skip_photo")
+async def fine_skip_photo(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(photo_file_id="")
+    await state.set_state(FineFlow.waiting_amount)
+    await safe_edit_text(callback.message, "Shtraf summasini kiriting (so'm, faqat raqam):")
     await callback.answer()
 
 
@@ -160,7 +210,12 @@ async def fine_receive_photo(message: Message, state: FSMContext) -> None:
 
 @router.message(FineFlow.waiting_photo)
 async def fine_wrong_photo(message: Message) -> None:
-    await message.answer("Iltimos, rasm yuboring.")
+    async with async_session() as session:
+        photo_required = await get_setting(session, "fine_photo_required", "false")
+    if photo_required == "true":
+        await message.answer("Iltimos, rasm yuboring.")
+    else:
+        await message.answer("Iltimos, rasm yuboring yoki yuqoridagi tugma orqali o'tkazib yuboring.")
 
 
 @router.message(FineFlow.waiting_amount, F.text)
@@ -202,7 +257,10 @@ async def fine_receive_amount(message: Message, state: FSMContext) -> None:
     )
     employee_caption = f"Sizga shtraf berildi.\nSabab: {reason}\nSumma: {amount_str} so'm"
     try:
-        await message.bot.send_photo(employee_tg_id, photo=photo_file_id, caption=employee_caption)
+        if photo_file_id:
+            await message.bot.send_photo(employee_tg_id, photo=photo_file_id, caption=employee_caption)
+        else:
+            await message.bot.send_message(employee_tg_id, employee_caption)
     except Exception:
         pass
 
@@ -214,9 +272,23 @@ async def fine_receive_amount(message: Message, state: FSMContext) -> None:
     )
     for admin in admins:
         try:
-            await message.bot.send_photo(admin.telegram_id, photo=photo_file_id, caption=admin_caption)
+            if photo_file_id:
+                await message.bot.send_photo(admin.telegram_id, photo=photo_file_id, caption=admin_caption)
+            else:
+                await message.bot.send_message(admin.telegram_id, admin_caption)
         except Exception:
             continue
+
+
+async def _employee_fine_totals(session, employees: list[Employee]) -> dict[int, tuple[int, int]]:
+    if not employees:
+        return {}
+    result = await session.execute(
+        select(Fine.employee_id, func.coalesce(func.sum(Fine.amount), 0), func.count(Fine.id))
+        .where(Fine.employee_id.in_([e.id for e in employees]))
+        .group_by(Fine.employee_id)
+    )
+    return {row[0]: (row[1], row[2]) for row in result.all()}
 
 
 @router.callback_query(F.data == "report_start")
@@ -227,31 +299,39 @@ async def report_start(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
         employees = await list_employees_with_fines(session)
-    if not employees:
-        await callback.answer("Hozircha shtraflar yo'q.", show_alert=True)
-        return
+        if not employees:
+            await callback.answer("Hozircha shtraflar yo'q.", show_alert=True)
+            return
+        totals = await _employee_fine_totals(session, employees)
+    grand_total = sum(amount for amount, _ in totals.values())
+    grand_total_str = f"{grand_total:,}".replace(",", " ")
     await state.set_state(ReportFlow.choosing_employee)
-    await callback.message.edit_text(
-        "Hisobot uchun xodimni tanlang:",
-        reply_markup=employees_keyboard(employees, "report_emp", back_callback="audit_menu"),
+    await safe_edit_text(callback.message,
+        f"\U0001f4ca Shtraflar hisoboti — jami: {grand_total_str} so'm\n\n"
+        "Batafsil tarix uchun xodimni tanlang:",
+        reply_markup=fine_totals_keyboard(employees, totals, back_callback="audit_menu"),
     )
     await callback.answer()
 
 
-@router.message(F.text == "/hisobot")
+@router.message(F.text.in_({"/hisobot", BTN_FINE_REPORT}))
 async def hisobot_command(message: Message, state: FSMContext) -> None:
     async with async_session() as session:
         employee = await get_employee(session, message.from_user.id)
         if not await is_privileged(session, employee):
             return
         employees = await list_employees_with_fines(session)
-    if not employees:
-        await message.answer("Hozircha shtraflar yo'q.")
-        return
+        if not employees:
+            await message.answer("Hozircha shtraflar yo'q.")
+            return
+        totals = await _employee_fine_totals(session, employees)
+    grand_total = sum(amount for amount, _ in totals.values())
+    grand_total_str = f"{grand_total:,}".replace(",", " ")
     await state.set_state(ReportFlow.choosing_employee)
     await message.answer(
-        "Hisobot uchun xodimni tanlang:",
-        reply_markup=employees_keyboard(employees, "report_emp", back_callback="audit_menu"),
+        f"\U0001f4ca Shtraflar hisoboti — jami: {grand_total_str} so'm\n\n"
+        "Batafsil tarix uchun xodimni tanlang:",
+        reply_markup=fine_totals_keyboard(employees, totals, back_callback="audit_menu"),
     )
 
 
@@ -270,7 +350,7 @@ async def report_show(callback: CallbackQuery, state: FSMContext) -> None:
         total = total_result.scalar_one()
     await state.clear()
     if not fines:
-        await callback.message.edit_text(
+        await safe_edit_text(callback.message,
             f"{employee.full_name} uchun shtraflar topilmadi.", reply_markup=audit_menu_keyboard()
         )
         await callback.answer()
@@ -280,5 +360,77 @@ async def report_show(callback: CallbackQuery, state: FSMContext) -> None:
     for fine in fines:
         amount_str = f"{fine.amount:,}".replace(",", " ")
         lines.append(f"• {fine.created_at:%d.%m.%Y %H:%M} — {amount_str} so'm ({fine.reason})")
-    await callback.message.edit_text("\n".join(lines), reply_markup=audit_menu_keyboard())
+    await safe_edit_text(callback.message, "\n".join(lines), reply_markup=audit_menu_keyboard())
+    await callback.answer()
+
+
+async def _audit_owned_templates(session) -> list[FineTemplate]:
+    result = await session.execute(
+        select(FineTemplate).where(FineTemplate.owner == "audit").order_by(FineTemplate.short_name)
+    )
+    return list(result.scalars().all())
+
+
+@router.callback_query(F.data == "audit_templates_menu")
+async def audit_templates_menu(callback: CallbackQuery) -> None:
+    async with async_session() as session:
+        employee = await get_employee(session, callback.from_user.id)
+        if not await is_privileged(session, employee):
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        templates = await _audit_owned_templates(session)
+    await safe_edit_text(
+        callback.message,
+        "Mening shablonlarim:",
+        reply_markup=audit_templates_manage_keyboard(templates, back_callback="audit_menu"),
+    )
+    await callback.answer()
+
+
+@router.message(F.text == BTN_MY_TEMPLATES)
+async def audit_templates_menu_msg(message: Message) -> None:
+    async with async_session() as session:
+        employee = await get_employee(session, message.from_user.id)
+        if not await is_privileged(session, employee):
+            return
+        templates = await _audit_owned_templates(session)
+    await message.answer(
+        "Mening shablonlarim:",
+        reply_markup=audit_templates_manage_keyboard(templates, back_callback="audit_menu"),
+    )
+
+
+@router.callback_query(F.data.startswith("toggle_audit_template:"))
+async def toggle_audit_template(callback: CallbackQuery) -> None:
+    template_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        employee = await get_employee(session, callback.from_user.id)
+        if not await is_privileged(session, employee):
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        template = await session.get(FineTemplate, template_id)
+        if template is None or template.owner != "audit":
+            await callback.answer("Shablon topilmadi.", show_alert=True)
+            return
+        template.is_active = not template.is_active
+        await session.commit()
+        templates = await _audit_owned_templates(session)
+    await safe_edit_text(
+        callback.message,
+        "Mening shablonlarim:",
+        reply_markup=audit_templates_manage_keyboard(templates, back_callback="audit_menu"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "new_audit_template")
+async def new_audit_template_start(callback: CallbackQuery, state: FSMContext) -> None:
+    async with async_session() as session:
+        employee = await get_employee(session, callback.from_user.id)
+        if not await is_privileged(session, employee):
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+    await state.update_data(template_owner="audit")
+    await state.set_state(NewFineTemplate.text)
+    await callback.message.answer("Yangi shablon matnini kiriting:")
     await callback.answer()

@@ -13,11 +13,33 @@ async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 def _add_missing_columns(sync_conn) -> None:
-    inspector_columns = {
-        row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(fines)").fetchall()
-    }
-    if inspector_columns and "reason" not in inspector_columns:
+    fines_columns = {row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(fines)").fetchall()}
+    if fines_columns and "reason" not in fines_columns:
         sync_conn.exec_driver_sql("ALTER TABLE fines ADD COLUMN reason VARCHAR(255) NOT NULL DEFAULT ''")
+
+    roles_columns = {row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(roles)").fetchall()}
+    if roles_columns and "is_parent" not in roles_columns:
+        sync_conn.exec_driver_sql("ALTER TABLE roles ADD COLUMN is_parent BOOLEAN NOT NULL DEFAULT 0")
+
+    template_columns = {
+        row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(fine_templates)").fetchall()
+    }
+    if template_columns:
+        if "short_name" not in template_columns:
+            sync_conn.exec_driver_sql(
+                "ALTER TABLE fine_templates ADD COLUMN short_name VARCHAR(64) NOT NULL DEFAULT ''"
+            )
+            sync_conn.exec_driver_sql(
+                "UPDATE fine_templates SET short_name = substr(text, 1, 24) WHERE short_name = ''"
+            )
+        if "owner" not in template_columns:
+            sync_conn.exec_driver_sql(
+                "ALTER TABLE fine_templates ADD COLUMN owner VARCHAR(16) NOT NULL DEFAULT 'admin'"
+            )
+        if "shared_with_audit" not in template_columns:
+            sync_conn.exec_driver_sql(
+                "ALTER TABLE fine_templates ADD COLUMN shared_with_audit BOOLEAN NOT NULL DEFAULT 0"
+            )
 
 
 async def init_db() -> None:

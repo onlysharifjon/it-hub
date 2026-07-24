@@ -4,7 +4,7 @@ from aiogram.types import CallbackQuery, Message
 from database import async_session
 from keyboards import panel_choice_keyboard
 from models import Employee
-from utils import get_active_audit_account, get_employee
+from utils import get_active_audit_account, get_employee, safe_edit_text
 
 router = Router(name="panel")
 
@@ -38,7 +38,7 @@ async def panel_root(callback: CallbackQuery) -> None:
     if employee is None or (not show_admin and not show_audit):
         await callback.answer("Sizda panel uchun ruxsat yo'q.", show_alert=True)
         return
-    await callback.message.edit_text(
-        "Panelni tanlang:", reply_markup=panel_choice_keyboard(show_admin, show_audit)
+    await safe_edit_text(
+        callback.message, "Panelni tanlang:", reply_markup=panel_choice_keyboard(show_admin, show_audit)
     )
     await callback.answer()

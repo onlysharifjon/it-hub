@@ -22,6 +22,7 @@ class ResetAuditPassword(StatesGroup):
 
 class NewFineTemplate(StatesGroup):
     text = State()
+    short_name = State()
 
 
 class FineFlow(StatesGroup):
@@ -33,3 +34,30 @@ class FineFlow(StatesGroup):
 
 class ReportFlow(StatesGroup):
     choosing_employee = State()
+
+
+class Broadcast(StatesGroup):
+    text = State()
+
+
+class LinkParent(StatesGroup):
+    choosing_employee = State()
+    choosing_group = State()
+    choosing_student = State()
+
+
+class AttendanceFlow(StatesGroup):
+    choosing_group = State()
+    choosing_mode = State()
+    marking_arrived = State()
+    marking_left = State()
+    choosing_view_student = State()
+
+
+class BotSettings(StatesGroup):
+    default_parent_id = State()
+
+
+class PaymentFlow(StatesGroup):
+    choosing_group = State()
+    choosing_student = State()

@@ -4,22 +4,47 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 from sqlalchemy import select
 
-from config import ADMIN_IDS, AUDIT_SEED_ID, AUDIT_SEED_LOGIN, AUDIT_SEED_PASSWORD, BOT_TOKEN
+from config import (
+    ADMIN_IDS,
+    AUDIT_SEED_ID,
+    AUDIT_SEED_LOGIN,
+    AUDIT_SEED_PASSWORD,
+    BOT_TOKEN,
+    DEFAULT_PARENT_CHAT_ID,
+)
 from database import async_session, init_db
-from handlers import admin, audit, panel, profile, start
+from handlers import admin, audit, crm, panel, profile, start
+from handlers.crm import payment_reminder_loop
 from models import AuditAccount, Employee, FineTemplate, Role
-from utils import hash_password
+from utils import apply_bot_commands, get_setting, hash_password, set_setting
 
-DEFAULT_ROLES = ["Main teacher", "Support teacher", "Reception", "Oddiy foydalanuvchi (Ota-ona)"]
+DEFAULT_ROLES = [
+    ("Main teacher", False),
+    ("Support teacher", False),
+    ("Reception", False),
+    ("Oddiy foydalanuvchi (Ota-ona)", True),
+]
 
 DEFAULT_FINE_TEMPLATES = [
-    "Kechikish",
-    "Ishga kelmaslik",
-    "Intizom buzilishi",
-    "Formadan tashqari kiyinish",
-    "Mijoz bilan noto'g'ri muomala",
+    ("Kechikish", "Kechikish"),
+    ("Ishga kelmaslik", "Kelmaslik"),
+    ("Intizom buzilishi", "Intizom"),
+    ("Formadan tashqari kiyinish", "Kiyim"),
+    ("Mijoz bilan noto'g'ri muomala", "Muomala"),
+]
+
+DEFAULT_AUDIT_FINE_TEMPLATES = [
+    ("Ishga kech kelish", "Kech kelish"),
+    ("Ish joyini ruxsatsiz tark etish", "Joy tashlash"),
+    ("O'quvchi/mijoz bilan qo'pol muomala qilish", "Qo'pol muomala"),
+    ("Ishxona ichki tartibini buzish", "Tartib buzish"),
+    ("Ish vaqtida telefondan ortiqcha foydalanish", "Telefon"),
+    ("Hisobot yoki vazifani vaqtida topshirmaslik", "Kech hisobot"),
+    ("Ishxona mulkiga beparvo munosabat", "Mulkka beparvo"),
+    ("Xavfsizlik qoidalarini buzish", "Xavfsizlik"),
 ]
 
 
@@ -69,11 +94,14 @@ async def seed_audit_account() -> None:
 
 async def seed_roles() -> None:
     async with async_session() as session:
-        result = await session.execute(select(Role.name))
-        existing = set(result.scalars().all())
-        for name in DEFAULT_ROLES:
-            if name not in existing:
-                session.add(Role(name=name))
+        result = await session.execute(select(Role))
+        existing = {role.name: role for role in result.scalars().all()}
+        for name, is_parent in DEFAULT_ROLES:
+            role = existing.get(name)
+            if role is None:
+                session.add(Role(name=name, is_parent=is_parent))
+            elif role.is_parent != is_parent:
+                role.is_parent = is_parent
         await session.commit()
 
 
@@ -81,10 +109,27 @@ async def seed_fine_templates() -> None:
     async with async_session() as session:
         result = await session.execute(select(FineTemplate.text))
         existing = set(result.scalars().all())
-        for text in DEFAULT_FINE_TEMPLATES:
+        for text, short_name in DEFAULT_FINE_TEMPLATES:
             if text not in existing:
-                session.add(FineTemplate(text=text))
+                session.add(FineTemplate(text=text, short_name=short_name, owner="admin"))
+        for text, short_name in DEFAULT_AUDIT_FINE_TEMPLATES:
+            if text not in existing:
+                session.add(FineTemplate(text=text, short_name=short_name, owner="audit"))
         await session.commit()
+
+
+async def seed_settings() -> None:
+    async with async_session() as session:
+        if await get_setting(session, "default_parent_chat_id") is None:
+            await set_setting(session, "default_parent_chat_id", DEFAULT_PARENT_CHAT_ID)
+
+
+async def refresh_all_bot_commands(bot: Bot) -> None:
+    await bot.set_my_commands([BotCommand(command="start", description="Botni ishga tushirish")])
+    async with async_session() as session:
+        employees = (await session.execute(select(Employee))).scalars().all()
+        for employee in employees:
+            await apply_bot_commands(bot, session, employee)
 
 
 async def main() -> None:
@@ -98,14 +143,19 @@ async def main() -> None:
     await seed_fine_templates()
     await seed_admins()
     await seed_audit_account()
+    await seed_settings()
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
     dp.include_router(start.router)
     dp.include_router(admin.router)
     dp.include_router(audit.router)
+    dp.include_router(crm.router)
     dp.include_router(panel.router)
     dp.include_router(profile.router)
+
+    asyncio.create_task(payment_reminder_loop(bot))
+    await refresh_all_bot_commands(bot)
 
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)

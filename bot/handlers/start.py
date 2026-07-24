@@ -7,7 +7,7 @@ from config import ADMIN_IDS
 from database import async_session
 from keyboards import roles_keyboard
 from models import Employee, Role
-from utils import get_active_audit_account, get_employee, list_admins
+from utils import apply_bot_commands, get_active_audit_account, get_employee, list_admins, reply_keyboard_for_employee
 
 router = Router(name="start")
 
@@ -31,17 +31,21 @@ async def cmd_start(message: Message) -> None:
             created = True
 
         if employee.is_admin:
-            await message.answer("Xush kelibsiz, admin!\n\n/panel — boshqaruv paneli")
+            text = (
+                f"\U0001f44b Xush kelibsiz, {employee.full_name}!\n\n"
+                "Siz — admin. Pastdagi tugmalar orqali boshqaring."
+            )
+        elif employee.role_id or (await get_active_audit_account(session, employee.id)):
+            text = f"\U0001f44b Xush kelibsiz, {employee.full_name}!\n\nPastdagi tugmalar orqali davom eting."
         else:
-            has_audit = await get_active_audit_account(session, employee.id) is not None
-            lines = [f"Xush kelibsiz, {employee.full_name}!"] if employee.role_id else [
-                "Xush kelibsiz! Hozircha sizga rol berilmagan, admin tez orada rol beradi."
-            ]
-            if has_audit:
-                lines.append("\n/panel — audit paneli")
-            elif employee.role_id:
-                lines.append("\n/shtraflarim — mening shtraflarim")
-            await message.answer("\n".join(lines))
+            text = (
+                f"\U0001f44b Xush kelibsiz, {employee.full_name}!\n\n"
+                "Hozircha sizga rol berilmagan — admin tez orada rol beradi."
+            )
+
+        keyboard = await reply_keyboard_for_employee(session, employee)
+        await message.answer(text, reply_markup=keyboard)
+        await apply_bot_commands(message.bot, session, employee)
 
         if created and not employee.is_admin:
             await _notify_admins(message, session, employee)
