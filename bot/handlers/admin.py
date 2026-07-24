@@ -30,7 +30,15 @@ from keyboards import (
     template_detail_keyboard,
 )
 from models import AuditAccount, Employee, FineTemplate, Role
-from states import Broadcast, NewAudit, NewFineTemplate, NewRole, ReportFlow, ResetAuditPassword
+from states import (
+    Broadcast,
+    EditFineTemplate,
+    NewAudit,
+    NewFineTemplate,
+    NewRole,
+    ReportFlow,
+    ResetAuditPassword,
+)
 from utils import (
     apply_bot_commands,
     get_employee,
@@ -497,6 +505,56 @@ async def toggle_template_share(callback: CallbackQuery) -> None:
         callback.message, text, reply_markup=template_detail_keyboard(template, back_callback="adm_templates")
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("edit_template:"))
+async def edit_template_start(callback: CallbackQuery, state: FSMContext) -> None:
+    template_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        admin = await _require_admin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        template = await session.get(FineTemplate, template_id)
+        if template is None:
+            await callback.answer("Shablon topilmadi.", show_alert=True)
+            return
+        current_text = template.text
+    await state.update_data(edit_template_id=template_id)
+    await state.set_state(EditFineTemplate.text)
+    await callback.message.answer(
+        f"Hozirgi matn:\n{current_text}\n\nYangi matnni kiriting:"
+    )
+    await callback.answer()
+
+
+@router.message(EditFineTemplate.text, F.text)
+async def edit_template_save(message: Message, state: FSMContext) -> None:
+    text = message.text.strip()
+    if not text:
+        await message.answer("Shablon matni bo'sh bo'lishi mumkin emas. Qayta kiriting:")
+        return
+    data = await state.get_data()
+    template_id = data["edit_template_id"]
+    async with async_session() as session:
+        existing = await session.execute(
+            select(FineTemplate).where(FineTemplate.text == text, FineTemplate.id != template_id)
+        )
+        if existing.scalar_one_or_none():
+            await message.answer("Bu shablon matni allaqachon mavjud. Boshqa matn kiriting:")
+            return
+        template = await session.get(FineTemplate, template_id)
+        if template is None:
+            await state.clear()
+            await message.answer("Shablon topilmadi.")
+            return
+        template.text = text
+        await session.commit()
+        detail_text = _template_detail_text(template)
+        keyboard = template_detail_keyboard(template, back_callback="adm_templates")
+    await state.clear()
+    await message.answer("✅ Shablon matni yangilandi.")
+    await message.answer(detail_text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data == "new_template")
