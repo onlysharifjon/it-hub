@@ -7,6 +7,7 @@ from aiogram.types import (
     BotCommand,
     BotCommandScopeChat,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
 )
@@ -14,7 +15,13 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from keyboards import admin_reply_keyboard, audit_reply_keyboard, parent_reply_keyboard, worker_reply_keyboard
+from keyboards import (
+    BTN_REQUEST_CHILD,
+    admin_reply_keyboard,
+    audit_reply_keyboard,
+    parent_reply_keyboard,
+    worker_reply_keyboard,
+)
 from models import AuditAccount, Employee, Fine, FineTemplate, ParentLink, Role, Setting
 
 
@@ -169,6 +176,7 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
             ("jadval", "Farzandim dars jadvali"),
             ("farzandim", "Farzandim kelish/ketish tarixi"),
         ]
+    commands.append(("farzandbiriktir", "Farzand biriktirish so'rovi yuborish"))
     return commands
 
 
@@ -189,16 +197,14 @@ async def reply_keyboard_for_employee(
     if employee.is_admin:
         return admin_reply_keyboard()
 
+    rows = []
     account = await get_active_audit_account(session, employee.id)
     if account is not None:
-        return audit_reply_keyboard()
-
-    rows = []
+        rows.extend(audit_reply_keyboard().keyboard)
     if employee.role_id:
         rows.extend(worker_reply_keyboard().keyboard)
     result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
     if result.scalar_one_or_none() is not None:
         rows.extend(parent_reply_keyboard().keyboard)
-    if not rows:
-        return None
+    rows.append([KeyboardButton(text=BTN_REQUEST_CHILD)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)

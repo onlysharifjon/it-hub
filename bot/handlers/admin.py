@@ -44,9 +44,11 @@ from utils import (
     get_employee,
     get_setting,
     hash_password,
+    list_admins,
     list_employees_with_fines,
     list_parents,
     list_staff,
+    list_workers,
     reply_keyboard_for_employee,
     safe_edit_text,
     set_setting,
@@ -856,3 +858,107 @@ async def settings_menu(message: Message) -> None:
         if not admin:
             return
     await message.answer("Qaysi sozlamani o'zgartirmoqchisiz?", reply_markup=settings_choice_keyboard())
+
+
+@router.callback_query(F.data == "new_admin_start")
+async def new_admin_start(callback: CallbackQuery) -> None:
+    async with async_session() as session:
+        admin = await _require_admin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        candidates = await list_workers(session)
+    if not candidates:
+        await callback.answer("Admin qilib bo'ladigan foydalanuvchi yo'q. Avval u botga /start bosishi kerak.", show_alert=True)
+        return
+    await safe_edit_text(
+        callback.message,
+        "Kimni admin qilmoqchisiz?",
+        reply_markup=employees_keyboard(candidates, "set_admin", back_callback="adm_menu"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("set_admin:"))
+async def new_admin_pick(callback: CallbackQuery) -> None:
+    employee_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        admin = await _require_admin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        employee = await session.get(Employee, employee_id)
+        if employee is None:
+            await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
+            return
+        employee.is_admin = True
+        await session.commit()
+        employee_name = employee.full_name
+        employee_telegram_id = employee.telegram_id
+        await apply_bot_commands(callback.bot, session, employee)
+        keyboard = await reply_keyboard_for_employee(session, employee)
+    try:
+        await callback.bot.send_message(
+            employee_telegram_id,
+            "\U0001f451 Sizga admin huquqi berildi. Pastdagi tugmalar orqali boshqaring.",
+            reply_markup=keyboard,
+        )
+    except Exception:
+        pass
+    await safe_edit_text(
+        callback.message, f"✅ {employee_name} endi admin.", reply_markup=admin_menu_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "remove_admin_start")
+async def remove_admin_start(callback: CallbackQuery) -> None:
+    async with async_session() as session:
+        admin = await _require_admin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        admins = await list_admins(session)
+    if len(admins) <= 1:
+        await callback.answer("Bu yagona admin, uni adminlikdan olib bo'lmaydi.", show_alert=True)
+        return
+    await safe_edit_text(
+        callback.message,
+        "Kimni adminlikdan olmoqchisiz?",
+        reply_markup=employees_keyboard(admins, "unset_admin", back_callback="adm_menu"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("unset_admin:"))
+async def remove_admin_pick(callback: CallbackQuery) -> None:
+    employee_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        admin = await _require_admin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        admins = await list_admins(session)
+        if len(admins) <= 1:
+            await callback.answer("Bu yagona admin, uni adminlikdan olib bo'lmaydi.", show_alert=True)
+            return
+        employee = await session.get(Employee, employee_id)
+        if employee is None or not employee.is_admin:
+            await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
+            return
+        employee.is_admin = False
+        await session.commit()
+        employee_name = employee.full_name
+        employee_telegram_id = employee.telegram_id
+        await apply_bot_commands(callback.bot, session, employee)
+        keyboard = await reply_keyboard_for_employee(session, employee)
+    try:
+        await callback.bot.send_message(
+            employee_telegram_id, "Sizning admin huquqingiz olib tashlandi.", reply_markup=keyboard
+        )
+    except Exception:
+        pass
+    await safe_edit_text(
+        callback.message, f"✅ {employee_name} endi admin emas.", reply_markup=admin_menu_keyboard()
+    )
+    await callback.answer()

@@ -106,6 +106,13 @@ async def get_student(student_id: int) -> dict:
     return await _get(f"/students/{student_id}")
 
 
+async def search_students(query: str, page_size: int = 20) -> list[dict]:
+    """Guruhga bog'liq bo'lmagan holda, ism/telefon bo'yicha to'g'ridan-to'g'ri qidirish
+    (guruhga hali qo'shilmagan o'quvchilarni ham topish uchun)."""
+    data = await _get("/students", params={"search": query, "page_size": min(page_size, 100), "page": 1})
+    return data.get("items", [])
+
+
 async def get_payment_summary(student_id: int, month: int | None = None, year: int | None = None) -> dict:
     params = {}
     if month:
