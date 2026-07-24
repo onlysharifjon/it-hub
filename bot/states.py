@@ -25,6 +25,10 @@ class NewFineTemplate(StatesGroup):
     short_name = State()
 
 
+class EditFineTemplate(StatesGroup):
+    text = State()
+
+
 class FineFlow(StatesGroup):
     choosing_employee = State()
     choosing_template = State()

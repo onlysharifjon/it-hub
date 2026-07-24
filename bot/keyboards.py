@@ -208,6 +208,7 @@ def admin_templates_keyboard(
 
 def template_detail_keyboard(template: FineTemplate, back_callback: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.button(text="✏️ Matnni tahrirlash", callback_data=f"edit_template:{template.id}")
     active_text = "\U0001f6ab Nofaol qilish" if template.is_active else "✅ Faol qilish"
     builder.button(text=active_text, callback_data=f"toggle_template:{template.id}")
     share_text = "\U0001f465 Auditdan yashirish" if template.shared_with_audit else "\U0001f465 Auditga ko'rsatish"
