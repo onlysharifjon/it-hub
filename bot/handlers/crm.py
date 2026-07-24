@@ -19,6 +19,7 @@ from keyboards import (
     crm_groups_keyboard,
     crm_students_keyboard,
     employees_keyboard,
+    payment_report_choice_keyboard,
 )
 from handlers.profile import _student_detail_text
 from models import Attendance, Employee, ParentLink
@@ -546,7 +547,8 @@ async def payment_choose_student(callback: CallbackQuery, state: FSMContext) -> 
     await callback.answer()
 
 
-async def _build_payment_report(groups: list[dict]) -> str:
+async def _collect_payment_status(groups: list[dict]) -> tuple[list[str], list[str], int, int]:
+    """Returns (paid_names, debtor_names, total_students, errors)."""
     students: dict[int, str] = {}
     for group in groups:
         try:
@@ -557,10 +559,12 @@ async def _build_payment_report(groups: list[dict]) -> str:
             students[member["student_id"]] = member["student_name"]
 
     if not students:
-        return "O'quvchilar topilmadi."
+        return [], [], 0, 0
 
     semaphore = asyncio.Semaphore(8)
-    paid, debtors, errors = [], [], 0
+    paid: list[str] = []
+    debtors: list[str] = []
+    errors = 0
 
     async def _check(student_id: int, name: str) -> None:
         nonlocal errors
@@ -576,19 +580,20 @@ async def _build_payment_report(groups: list[dict]) -> str:
                 debtors.append(name)
 
     await asyncio.gather(*(_check(sid, name) for sid, name in students.items()))
+    return paid, debtors, len(students), errors
 
-    lines = [
-        f"\U0001f4ca To'lov hisoboti — jami {len(students)} o'quvchi",
-        f"✅ To'lagan: {len(paid)}",
-        f"\U0001f534 Qarzdor: {len(debtors)}",
-    ]
+
+def _format_payment_list(kind: str, names: list[str], total: int, errors: int) -> str:
+    label = "✅ To'lagan" if kind == "paid" else "\U0001f534 Qarzdor"
+    lines = [f"\U0001f4ca To'lov hisoboti — {label} o'quvchilar: {len(names)}/{total}", ""]
+    if not names:
+        lines.append("Hech kim topilmadi.")
+    else:
+        lines.extend(f"• {name}" for name in names[:60])
+        if len(names) > 60:
+            lines.append(f"... va yana {len(names) - 60} kishi")
     if errors:
-        lines.append(f"⚠️ {errors} ta o'quvchi uchun ma'lumot olinmadi.")
-    if debtors:
-        lines.append("\nQarzdorlar:")
-        lines.extend(f"• {name}" for name in debtors[:40])
-        if len(debtors) > 40:
-            lines.append(f"... va yana {len(debtors) - 40} kishi")
+        lines.append(f"\n⚠️ {errors} ta o'quvchi uchun ma'lumot olinmadi.")
     return "\n".join(lines)
 
 
@@ -598,18 +603,29 @@ async def payment_report(message: Message) -> None:
         admin = await _require_admin(session, message.from_user.id)
         if not admin:
             return
-    try:
-        groups = await crm_client.get_groups()
-    except crm_client.CRMError as error:
-        await _reply_crm_error(message, error)
-        return
-    await message.answer("Hisobot tayyorlanmoqda, biroz kuting...")
-    text = await _build_payment_report(groups)
-    await message.answer(text)
+    await message.answer(
+        "To'lov hisoboti: kimlarni ko'rmoqchisiz?", reply_markup=payment_report_choice_keyboard()
+    )
 
 
 @router.callback_query(F.data == "rpt_payment")
 async def payment_report_cb(callback: CallbackQuery) -> None:
+    async with async_session() as session:
+        admin = await _require_admin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+    await safe_edit_text(
+        callback.message,
+        "To'lov hisoboti: kimlarni ko'rmoqchisiz?",
+        reply_markup=payment_report_choice_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("payrep:"))
+async def payment_report_show(callback: CallbackQuery) -> None:
+    kind = callback.data.split(":")[1]
     async with async_session() as session:
         admin = await _require_admin(session, callback.from_user.id)
         if not admin:
@@ -621,8 +637,9 @@ async def payment_report_cb(callback: CallbackQuery) -> None:
         await _show_crm_error(callback, error)
         return
     await callback.answer("Hisobot tayyorlanmoqda, biroz kuting...")
-    text = await _build_payment_report(groups)
-    await callback.message.answer(text)
+    paid, debtors, total, errors = await _collect_payment_status(groups)
+    names = paid if kind == "paid" else debtors
+    await callback.message.answer(_format_payment_list(kind, names, total, errors))
 
 
 # ── To'lov eslatmasi (oy boshida avtomatik) ─────────────────────────────────────
