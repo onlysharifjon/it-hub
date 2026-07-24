@@ -1,3 +1,5 @@
+import asyncio
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -736,6 +738,7 @@ async def _broadcast_dispatch(
             sent += 1
         except Exception:
             continue
+        await asyncio.sleep(0.05)
     await message.answer(
         f"✅ Xabar {sent}/{len(recipients)} kishiga yuborildi.", reply_markup=admin_menu_keyboard()
     )

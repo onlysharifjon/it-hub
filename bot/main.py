@@ -1,10 +1,11 @@
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, ErrorEvent
 from sqlalchemy import select
 
 from config import (
@@ -12,6 +13,7 @@ from config import (
     AUDIT_SEED_ID,
     AUDIT_SEED_LOGIN,
     AUDIT_SEED_PASSWORD,
+    BASE_DIR,
     BOT_TOKEN,
     DEFAULT_PARENT_CHAT_ID,
 )
@@ -20,6 +22,8 @@ from handlers import admin, audit, crm, panel, profile, start
 from handlers.crm import payment_reminder_loop
 from models import AuditAccount, Employee, FineTemplate, Role
 from utils import apply_bot_commands, get_setting, hash_password, set_setting
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_ROLES = [
     ("Main teacher", False),
@@ -132,8 +136,21 @@ async def refresh_all_bot_commands(bot: Bot) -> None:
             await apply_bot_commands(bot, session, employee)
 
 
+def _setup_logging() -> None:
+    log_dir = BASE_DIR / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = RotatingFileHandler(
+        log_dir / "bot.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.StreamHandler(), file_handler],
+    )
+
+
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    _setup_logging()
 
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN bot/.env faylida topilmadi")
@@ -154,10 +171,16 @@ async def main() -> None:
     dp.include_router(panel.router)
     dp.include_router(profile.router)
 
+    @dp.errors()
+    async def handle_errors(event: ErrorEvent) -> bool:
+        logger.exception("Update handling failed: %s", event.update, exc_info=event.exception)
+        return True
+
     asyncio.create_task(payment_reminder_loop(bot))
     await refresh_all_bot_commands(bot)
 
     await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Bot polling boshlanmoqda...")
     await dp.start_polling(bot)
 
 

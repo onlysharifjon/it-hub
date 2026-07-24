@@ -25,15 +25,15 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DATA_DIR / 'bot.db'}")
 
-# CRM (backend) bilan bog'lanish uchun — guruhlar/o'quvchilar va davomat shu orqali olinadi
+# CRM (backend) bilan bog'lanish uchun — guruhlar/o'quvchilar va to'lovlar FAQAT shu orqali o'qiladi
 CRM_BASE_URL = os.getenv("CRM_BASE_URL", "http://localhost:8000")
 # Production'da nginx API so'rovlarini /api ostida backendga yo'naltiradi; to'g'ridan-to'g'ri
 # uvicorn (masalan lokal http://localhost:8000) uchun bo'sh qoldiring: CRM_API_PREFIX=
 CRM_API_PREFIX = os.getenv("CRM_API_PREFIX", "/api")
-CRM_USERNAME = os.getenv("CRM_USERNAME", "admin")
-CRM_PASSWORD = os.getenv("CRM_PASSWORD", "Admin@2026")
+CRM_USERNAME = os.getenv("CRM_USERNAME", "")
+CRM_PASSWORD = os.getenv("CRM_PASSWORD", "")
 
 # Davomat xabarlari yuboriladigan standart ota-ona Telegram ID (har bir o'quvchi uchun
 # alohida biriktirish ishlamaguncha, hammasi shu bitta ID ga boradi). Admin panel orqali
 # keyinchalik o'zgartirish mumkin — bu faqat birinchi marta urug'lash uchun.
-DEFAULT_PARENT_CHAT_ID = os.getenv("DEFAULT_PARENT_CHAT_ID", "8213783370")
+DEFAULT_PARENT_CHAT_ID = os.getenv("DEFAULT_PARENT_CHAT_ID", "")
