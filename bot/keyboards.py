@@ -75,6 +75,14 @@ def reports_choice_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def payment_report_choice_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ To'laganlar", callback_data="payrep:paid")
+    builder.button(text="\U0001f534 To'lamaganlar", callback_data="payrep:debtors")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def broadcast_choice_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="\U0001f46a Ota-onalarga", callback_data="bc_parents_start")
