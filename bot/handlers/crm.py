@@ -13,22 +13,30 @@ from keyboards import (
     BTN_ATTENDANCE,
     BTN_LINK_PARENT,
     BTN_PAYMENT,
+    BTN_REQUEST_CHILD,
     admin_menu_keyboard,
     attendance_mode_keyboard,
     attendance_select_keyboard,
     crm_groups_keyboard,
     crm_students_keyboard,
     employees_keyboard,
+    link_method_keyboard,
+    link_source_keyboard,
+    parent_link_request_keyboard,
     payment_report_choice_keyboard,
+    payment_students_keyboard,
+    student_search_results_keyboard,
 )
 from handlers.profile import _student_detail_text
-from models import Attendance, Employee, ParentLink
-from states import AttendanceFlow, BotSettings, LinkParent, PaymentFlow
+from models import Attendance, Employee, ParentLink, ParentLinkRequest
+from states import AttendanceFlow, BotSettings, ChildLinkRequest, LinkParent, PaymentFlow
 from utils import (
     apply_bot_commands,
     get_employee,
     get_setting,
-    list_workers,
+    list_admins,
+    list_parents,
+    list_staff,
     reply_keyboard_for_employee,
     safe_edit_text,
     set_setting,
@@ -131,27 +139,97 @@ async def _notify_targets(session, crm_student_id: int) -> list[int]:
 # ── Ota-onani biriktirish (botning o'z bazasida, CRMga yozmaydi) ────────────────
 
 
+async def _finalize_parent_link(
+    bot: Bot, employee_id: int, student_id: int, student_name: str, group_id: int, group_name: str
+) -> str | None:
+    """ParentLink yozuvini yaratadi (agar hali bo'lmasa) va xodimga xabar beradi.
+    Xodim topilmasa None qaytaradi, aks holda uning ismini qaytaradi."""
+    async with async_session() as session:
+        employee = await session.get(Employee, employee_id)
+        if employee is None:
+            return None
+        result = await session.execute(
+            select(ParentLink).where(
+                ParentLink.employee_id == employee.id, ParentLink.crm_student_id == student_id
+            )
+        )
+        if result.scalar_one_or_none() is None:
+            session.add(
+                ParentLink(
+                    employee_id=employee.id,
+                    crm_student_id=student_id,
+                    student_name=student_name,
+                    crm_group_id=group_id,
+                    group_name=group_name,
+                )
+            )
+            await session.commit()
+        employee_name = employee.full_name
+        employee_telegram_id = employee.telegram_id
+        await apply_bot_commands(bot, session, employee)
+        keyboard = await reply_keyboard_for_employee(session, employee)
+    try:
+        await bot.send_message(
+            employee_telegram_id,
+            f"Siz {student_name}ning ota-onasi sifatida biriktirildingiz. Pastdagi tugmalar orqali davom eting.",
+            reply_markup=keyboard,
+        )
+    except Exception:
+        pass
+    return employee_name
+
+
 @router.message(F.text.in_({"/otaona", BTN_LINK_PARENT}))
 async def crm_link_start(message: Message, state: FSMContext) -> None:
     async with async_session() as session:
         admin = await _require_admin(session, message.from_user.id)
         if not admin:
             return
-        employees = await list_workers(session)
+    await state.set_state(LinkParent.choosing_source)
+    await message.answer(
+        "Kimni biriktirmoqchisiz?", reply_markup=link_source_keyboard(back_callback="adm_menu")
+    )
+
+
+@router.callback_query(LinkParent.choosing_source, F.data.startswith("linksrc:"))
+async def crm_link_choose_source(callback: CallbackQuery, state: FSMContext) -> None:
+    source = callback.data.split(":")[1]
+    async with async_session() as session:
+        employees = await list_parents(session) if source == "parents" else await list_staff(session)
     if not employees:
-        await message.answer("Hozircha botga start bergan xodimlar yo'q.")
+        label = "ota-onalar" if source == "parents" else "xodimlar"
+        await callback.answer(f"Hozircha {label} ro'yxati bo'sh.", show_alert=True)
         return
     await state.set_state(LinkParent.choosing_employee)
-    await message.answer(
-        "Qaysi foydalanuvchini ota-ona sifatida biriktirmoqchisiz?",
+    await safe_edit_text(
+        callback.message,
+        "Qaysi foydalanuvchini biriktirmoqchisiz?",
         reply_markup=employees_keyboard(employees, "link_emp", back_callback="adm_menu"),
     )
+    await callback.answer()
 
 
 @router.callback_query(LinkParent.choosing_employee, F.data.startswith("link_emp:"))
 async def crm_link_choose_employee(callback: CallbackQuery, state: FSMContext) -> None:
     employee_id = int(callback.data.split(":")[1])
     await state.update_data(link_employee_id=employee_id)
+    await state.set_state(LinkParent.choosing_method)
+    await safe_edit_text(
+        callback.message,
+        "O'quvchini qanday topamiz?",
+        reply_markup=link_method_keyboard(back_callback="adm_menu"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(LinkParent.choosing_method, F.data.startswith("linkmethod:"))
+async def crm_link_choose_method(callback: CallbackQuery, state: FSMContext) -> None:
+    method = callback.data.split(":")[1]
+    if method == "search":
+        await state.set_state(LinkParent.searching)
+        await safe_edit_text(callback.message, "O'quvchining to'liq ismini kiriting:")
+        await callback.answer()
+        return
     try:
         groups = await crm_client.get_groups()
     except crm_client.CRMError as error:
@@ -199,46 +277,242 @@ async def crm_link_choose_student(callback: CallbackQuery, state: FSMContext) ->
     data = await state.get_data()
     members = {m["student_id"]: m["student_name"] for m in data.get("link_members", [])}
     student_name = members.get(student_id, str(student_id))
-    async with async_session() as session:
-        employee = await session.get(Employee, data["link_employee_id"])
-        if employee is None:
-            await state.clear()
-            await callback.answer("Xodim topilmadi.", show_alert=True)
-            return
-        result = await session.execute(
-            select(ParentLink).where(
-                ParentLink.employee_id == employee.id, ParentLink.crm_student_id == student_id
-            )
-        )
-        if result.scalar_one_or_none() is None:
-            session.add(
-                ParentLink(
-                    employee_id=employee.id,
-                    crm_student_id=student_id,
-                    student_name=student_name,
-                    crm_group_id=data.get("link_group_id", 0),
-                    group_name=data.get("link_group_name", ""),
-                )
-            )
-            await session.commit()
-        employee_name = employee.full_name
-        employee_telegram_id = employee.telegram_id
-        await apply_bot_commands(callback.bot, session, employee)
-        try:
-            keyboard = await reply_keyboard_for_employee(session, employee)
-            await callback.bot.send_message(
-                employee_telegram_id,
-                f"Siz {student_name}ning ota-onasi sifatida biriktirildingiz. Pastdagi tugmalar orqali davom eting.",
-                reply_markup=keyboard,
-            )
-        except Exception:
-            pass
+    employee_name = await _finalize_parent_link(
+        callback.bot,
+        data["link_employee_id"],
+        student_id,
+        student_name,
+        data.get("link_group_id", 0),
+        data.get("link_group_name", ""),
+    )
     await state.clear()
+    if employee_name is None:
+        await callback.answer("Xodim topilmadi.", show_alert=True)
+        return
     await safe_edit_text(
         callback.message,
         f"✅ {employee_name} — {student_name}ning ota-onasi sifatida biriktirildi.",
         reply_markup=admin_menu_keyboard(),
     )
+    await callback.answer()
+
+
+@router.message(LinkParent.searching, F.text)
+async def crm_link_search_receive(message: Message, state: FSMContext) -> None:
+    query = message.text.strip()
+    if not query:
+        await message.answer("Ism kiriting:")
+        return
+    try:
+        results = await crm_client.search_students(query)
+    except crm_client.CRMError as error:
+        await _reply_crm_error(message, error)
+        return
+    if not results:
+        await message.answer("Hech kim topilmadi. Boshqa ism bilan qidiring:")
+        return
+    await state.update_data(link_search_results=results[:25])
+    await state.set_state(LinkParent.choosing_search_student)
+    await message.answer(
+        "Topilgan o'quvchilar:",
+        reply_markup=student_search_results_keyboard(
+            results[:25], "link_search_pick", back_callback="adm_menu"
+        ),
+    )
+
+
+@router.callback_query(LinkParent.choosing_search_student, F.data.startswith("link_search_pick:"))
+async def crm_link_search_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    results = data.get("link_search_results", [])
+    if idx >= len(results):
+        await callback.answer("Topilmadi.", show_alert=True)
+        return
+    student = results[idx]
+    group_name = ", ".join(student.get("group_names") or [])
+    employee_name = await _finalize_parent_link(
+        callback.bot, data["link_employee_id"], student["id"], student["full_name"], 0, group_name
+    )
+    await state.clear()
+    if employee_name is None:
+        await callback.answer("Xodim topilmadi.", show_alert=True)
+        return
+    await safe_edit_text(
+        callback.message,
+        f"✅ {employee_name} — {student['full_name']}ning ota-onasi sifatida biriktirildi.",
+        reply_markup=admin_menu_keyboard(),
+    )
+    await callback.answer()
+
+
+# ── Farzand biriktirish so'rovi (ota-ona o'zi so'raydi, admin tasdiqlaydi) ───────
+
+
+async def _notify_admins_link_request(
+    bot: Bot, session, req: ParentLinkRequest, requester_name: str
+) -> None:
+    admins = await list_admins(session)
+    text = (
+        f"\U0001f514 {requester_name} \"{req.student_name}\" bilan bog'lanishni so'radi.\n"
+        f"Guruh: {req.group_name or 'Guruhsiz'}"
+    )
+    for admin in admins:
+        try:
+            await bot.send_message(admin.telegram_id, text, reply_markup=parent_link_request_keyboard(req.id))
+        except Exception:
+            continue
+
+
+@router.message(F.text.in_({BTN_REQUEST_CHILD, "/farzandbiriktir"}))
+async def child_link_request_start(message: Message, state: FSMContext) -> None:
+    async with async_session() as session:
+        employee = await get_employee(session, message.from_user.id)
+    if employee is None:
+        await message.answer("Avval botga /start bosing.")
+        return
+    await state.set_state(ChildLinkRequest.searching)
+    await message.answer("Farzandingizning to'liq ismini kiriting (CRM'da yozilgani kabi):")
+
+
+@router.message(ChildLinkRequest.searching, F.text)
+async def child_link_request_search(message: Message, state: FSMContext) -> None:
+    query = message.text.strip()
+    if not query:
+        await message.answer("Ism kiriting:")
+        return
+    try:
+        results = await crm_client.search_students(query)
+    except crm_client.CRMError as error:
+        await _reply_crm_error(message, error)
+        return
+    if not results:
+        await message.answer("Hech kim topilmadi. Boshqa ism bilan yoki to'liqroq yozib qidiring:")
+        return
+    await state.update_data(child_search_results=results[:25])
+    await state.set_state(ChildLinkRequest.choosing_student)
+    await message.answer(
+        "Farzandingizni tanlang:",
+        reply_markup=student_search_results_keyboard(results[:25], "child_pick", back_callback="child_cancel"),
+    )
+
+
+@router.callback_query(ChildLinkRequest.choosing_student, F.data.startswith("child_pick:"))
+async def child_link_request_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    idx = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    results = data.get("child_search_results", [])
+    if idx >= len(results):
+        await callback.answer("Topilmadi.", show_alert=True)
+        return
+    student = results[idx]
+    group_name = ", ".join(student.get("group_names") or [])
+    async with async_session() as session:
+        employee = await get_employee(session, callback.from_user.id)
+        if employee is None:
+            await state.clear()
+            await callback.answer("Xodim topilmadi.", show_alert=True)
+            return
+        existing = await session.execute(
+            select(ParentLink).where(
+                ParentLink.employee_id == employee.id, ParentLink.crm_student_id == student["id"]
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            await state.clear()
+            await safe_edit_text(callback.message, "Siz allaqachon shu farzand bilan bog'langansiz.")
+            await callback.answer()
+            return
+        pending = await session.execute(
+            select(ParentLinkRequest).where(
+                ParentLinkRequest.employee_id == employee.id,
+                ParentLinkRequest.crm_student_id == student["id"],
+            )
+        )
+        if pending.scalar_one_or_none() is not None:
+            await state.clear()
+            await safe_edit_text(callback.message, "Bu so'rov allaqachon yuborilgan, admin javobini kuting.")
+            await callback.answer()
+            return
+        req = ParentLinkRequest(
+            employee_id=employee.id,
+            crm_student_id=student["id"],
+            student_name=student["full_name"],
+            crm_group_id=0,
+            group_name=group_name,
+        )
+        session.add(req)
+        await session.commit()
+        await session.refresh(req)
+        requester_name = employee.full_name
+        await _notify_admins_link_request(callback.bot, session, req, requester_name)
+    await state.clear()
+    await safe_edit_text(
+        callback.message, f"✅ So'rovingiz yuborildi: {student['full_name']}. Admin tasdiqlashini kuting."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "child_cancel")
+async def child_link_request_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await safe_edit_text(callback.message, "Bekor qilindi.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("apprlink:"))
+async def approve_link_request(callback: CallbackQuery) -> None:
+    request_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        admin = await _require_admin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        req = await session.get(ParentLinkRequest, request_id)
+        if req is None:
+            await safe_edit_text(callback.message, "Bu so'rov allaqachon ko'rib chiqilgan.")
+            await callback.answer()
+            return
+        employee_id, student_id, student_name = req.employee_id, req.crm_student_id, req.student_name
+        group_id, group_name = req.crm_group_id, req.group_name
+        await session.delete(req)
+        await session.commit()
+    employee_name = await _finalize_parent_link(
+        callback.bot, employee_id, student_id, student_name, group_id, group_name
+    )
+    if employee_name is None:
+        await safe_edit_text(callback.message, "Xodim topilmadi.")
+        await callback.answer()
+        return
+    await safe_edit_text(callback.message, f"✅ Tasdiqlandi: {employee_name} — {student_name}.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rejlink:"))
+async def reject_link_request(callback: CallbackQuery) -> None:
+    request_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        admin = await _require_admin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        req = await session.get(ParentLinkRequest, request_id)
+        if req is None:
+            await safe_edit_text(callback.message, "Bu so'rov allaqachon ko'rib chiqilgan.")
+            await callback.answer()
+            return
+        employee = await session.get(Employee, req.employee_id)
+        student_name = req.student_name
+        await session.delete(req)
+        await session.commit()
+    if employee:
+        try:
+            await callback.bot.send_message(
+                employee.telegram_id, f"❌ \"{student_name}\" bilan bog'lash so'rovingiz rad etildi."
+            )
+        except Exception:
+            pass
+    await safe_edit_text(callback.message, f"❌ Rad etildi: {student_name}.")
     await callback.answer()
 
 
@@ -513,6 +787,21 @@ async def payment_start(message: Message, state: FSMContext) -> None:
     )
 
 
+async def _annotate_payment_status(members: list[dict]) -> list[dict]:
+    semaphore = asyncio.Semaphore(8)
+
+    async def _check(member: dict) -> dict:
+        async with semaphore:
+            try:
+                summary = await crm_client.get_payment_summary(member["student_id"])
+                paid = summary["payment_status"] == "paid"
+            except crm_client.CRMError:
+                paid = None
+            return {**member, "paid": paid}
+
+    return list(await asyncio.gather(*(_check(m) for m in members)))
+
+
 @router.callback_query(PaymentFlow.choosing_group, F.data.startswith("pay_group:"))
 async def payment_choose_group(callback: CallbackQuery, state: FSMContext) -> None:
     group_id = int(callback.data.split(":")[1])
@@ -525,13 +814,14 @@ async def payment_choose_group(callback: CallbackQuery, state: FSMContext) -> No
     if not members:
         await callback.answer("Bu guruhda o'quvchi yo'q.", show_alert=True)
         return
+    await callback.answer("Yuklanmoqda...")
+    annotated = await _annotate_payment_status(members)
     await state.set_state(PaymentFlow.choosing_student)
     await safe_edit_text(
         callback.message,
-        "O'quvchini tanlang:",
-        reply_markup=crm_students_keyboard(members, "pay_student", back_callback="adm_menu"),
+        "O'quvchini tanlang (✅ shu oy to'lagan, \U0001f534 to'lamagan):",
+        reply_markup=payment_students_keyboard(annotated, back_callback="adm_menu"),
     )
-    await callback.answer()
 
 
 @router.callback_query(PaymentFlow.choosing_student, F.data.startswith("pay_student:"))
@@ -639,7 +929,9 @@ async def payment_report_show(callback: CallbackQuery) -> None:
     await callback.answer("Hisobot tayyorlanmoqda, biroz kuting...")
     paid, debtors, total, errors = await _collect_payment_status(groups)
     names = paid if kind == "paid" else debtors
-    await callback.message.answer(_format_payment_list(kind, names, total, errors))
+    await callback.message.answer(
+        _format_payment_list(kind, names, total, errors), reply_markup=admin_menu_keyboard()
+    )
 
 
 # ── To'lov eslatmasi (oy boshida avtomatik) ─────────────────────────────────────

@@ -45,8 +45,17 @@ class Broadcast(StatesGroup):
 
 
 class LinkParent(StatesGroup):
+    choosing_source = State()
     choosing_employee = State()
+    choosing_method = State()
     choosing_group = State()
+    choosing_student = State()
+    searching = State()
+    choosing_search_student = State()
+
+
+class ChildLinkRequest(StatesGroup):
+    searching = State()
     choosing_student = State()
 
 

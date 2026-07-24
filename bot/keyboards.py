@@ -25,6 +25,8 @@ BTN_MY_FINES = "\U0001f4b5 Mening shtraflarim"
 BTN_MY_CHILD = "\U0001f476 Farzandim"
 BTN_SCHEDULE = "\U0001f4c5 Jadval"
 
+BTN_REQUEST_CHILD = "\U0001f517 Farzand biriktirish"
+
 
 def admin_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -95,6 +97,8 @@ def settings_choice_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="\U0001f46a Standart ota-ona ID", callback_data="set_default_parent")
     builder.button(text="\U0001f5bc Shtrafda rasm majburiymi", callback_data="toggle_fine_photo")
+    builder.button(text="➕ Yangi admin qo'shish", callback_data="new_admin_start")
+    builder.button(text="➖ Adminlikdan olish", callback_data="remove_admin_start")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -262,6 +266,58 @@ def admin_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="\U0001f4e2 Ota-onalarga xabar", callback_data="bc_parents_start")
     builder.button(text="\U0001f4e2 Xodimlarga xabar", callback_data="bc_workers_start")
     builder.button(text="⬅️ Orqaga", callback_data="panel_root")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def payment_students_keyboard(members: list[dict], back_callback: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for member in members:
+        paid = member.get("paid")
+        icon = "✅" if paid is True else ("\U0001f534" if paid is False else "❓")
+        builder.button(
+            text=f"{icon} {member['student_name']}", callback_data=f"pay_student:{member['student_id']}"
+        )
+    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def link_source_keyboard(back_callback: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="\U0001f9d1‍\U0001f91d‍\U0001f9d1 Ota-onalar ro'yxatidan", callback_data="linksrc:parents")
+    builder.button(text="\U0001f465 Xodimlar ro'yxatidan", callback_data="linksrc:staff")
+    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def link_method_keyboard(back_callback: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="\U0001f3eb Guruh orqali", callback_data="linkmethod:group")
+    builder.button(text="\U0001f50d Ism bo'yicha qidirish", callback_data="linkmethod:search")
+    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def student_search_results_keyboard(
+    students: list[dict], prefix: str, back_callback: str
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for idx, student in enumerate(students):
+        group_names = student.get("group_names") or []
+        group_part = ", ".join(group_names) if group_names else "Guruhsiz"
+        builder.button(text=f"{student['full_name']} — {group_part}", callback_data=f"{prefix}:{idx}")
+    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def parent_link_request_keyboard(request_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Tasdiqlash", callback_data=f"apprlink:{request_id}")
+    builder.button(text="❌ Rad etish", callback_data=f"rejlink:{request_id}")
     builder.adjust(1)
     return builder.as_markup()
 
