@@ -60,6 +60,10 @@ class FineTemplate(Base):
     shared_with_audit: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Ichki tartib qoidalari kodeksidan: bob-band kodi va darajasi (gray/yellow/red).
+    # Berilganda bu shablon pulsiz ogohlantirish hisoblanadi (Fine.amount = 0).
+    code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class Fine(Base):
@@ -72,6 +76,9 @@ class Fine(Base):
     reason: Mapped[str] = mapped_column(String(255))
     photo_file_id: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Tartib qoidalari kodeksidan berilgan bo'lsa: "gray"|"yellow"|"red". Oddiy pullik
+    # shtraflarda None — amount maydoni ishlatiladi.
+    severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     employee: Mapped["Employee"] = relationship(foreign_keys=[employee_id], back_populates="fines_received")
     issued_by: Mapped["Employee"] = relationship(foreign_keys=[issued_by_id])

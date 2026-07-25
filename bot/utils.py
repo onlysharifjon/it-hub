@@ -78,6 +78,22 @@ async def list_staff(session: AsyncSession) -> list[Employee]:
     return list(result.scalars().all())
 
 
+SEVERITY_LABELS = {
+    "gray": "⚪ Kulrang eslatma",
+    "yellow": "\U0001f7e1 Sariq ogohlantirish",
+    "red": "\U0001f534 Qizil ogohlantirish",
+}
+
+
+def fine_line(fine: Fine) -> str:
+    timestamp = f"{fine.created_at:%d.%m.%Y %H:%M}"
+    if fine.severity:
+        label = SEVERITY_LABELS.get(fine.severity, fine.severity)
+        return f"• {timestamp} — {label} ({fine.reason})"
+    amount_str = f"{fine.amount:,}".replace(",", " ")
+    return f"• {timestamp} — {amount_str} so'm ({fine.reason})"
+
+
 async def list_employees_with_fines(session: AsyncSession) -> list[Employee]:
     result = await session.execute(
         select(Employee)

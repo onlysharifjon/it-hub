@@ -2,13 +2,13 @@ from datetime import timedelta
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 import crm_client
 from database import async_session
 from keyboards import children_keyboard
 from models import Attendance, Fine, ParentLink
-from utils import get_employee
+from utils import SEVERITY_LABELS, fine_line, get_employee
 
 router = Router(name="profile")
 
@@ -126,18 +126,23 @@ async def my_fines(message: Message) -> None:
             select(Fine).where(Fine.employee_id == employee.id).order_by(Fine.created_at.desc())
         )
         fines = result.scalars().all()
-        total_result = await session.execute(
-            select(func.coalesce(func.sum(Fine.amount), 0)).where(Fine.employee_id == employee.id)
-        )
-        total = total_result.scalar_one()
 
     if not fines:
         await message.answer("Sizda shtraflar yo'q.")
         return
 
-    total_str = f"{total:,}".replace(",", " ")
-    lines = [f"\U0001f4ca Sizning shtraflaringiz — jami: {total_str} so'm", ""]
+    money_total = sum(fine.amount for fine in fines if not fine.severity)
+    money_str = f"{money_total:,}".replace(",", " ")
+    warning_counts: dict[str, int] = {}
     for fine in fines:
-        amount_str = f"{fine.amount:,}".replace(",", " ")
-        lines.append(f"• {fine.created_at:%d.%m.%Y %H:%M} — {amount_str} so'm ({fine.reason})")
+        if fine.severity:
+            warning_counts[fine.severity] = warning_counts.get(fine.severity, 0) + 1
+    header = f"\U0001f4ca Sizning shtraflaringiz — jami: {money_str} so'm"
+    if warning_counts:
+        header += "\n" + " | ".join(
+            f"{SEVERITY_LABELS.get(sev, sev)}: {count}" for sev, count in warning_counts.items()
+        )
+    lines = [header, ""]
+    for fine in fines:
+        lines.append(fine_line(fine))
     await message.answer("\n".join(lines))

@@ -18,7 +18,9 @@ from keyboards import (
 from models import Employee, Fine, FineTemplate
 from states import AuditAuth, FineFlow, NewFineTemplate, ReportFlow
 from utils import (
+    SEVERITY_LABELS,
     apply_bot_commands,
+    fine_line,
     get_active_audit_account,
     get_employee,
     get_setting,
@@ -178,8 +180,10 @@ async def fine_choose_template(callback: CallbackQuery, state: FSMContext) -> No
             await callback.answer("Shablon topilmadi.", show_alert=True)
             return
         reason = template.text
+        severity = template.severity
+        code = template.code
         photo_required = await get_setting(session, "fine_photo_required", "false")
-    await state.update_data(reason=reason)
+    await state.update_data(reason=reason, severity=severity, code=code)
     await state.set_state(FineFlow.waiting_photo)
     if photo_required == "true":
         await safe_edit_text(callback.message, "Endi shtraf uchun rasm yuboring.")
@@ -195,6 +199,16 @@ async def fine_choose_template(callback: CallbackQuery, state: FSMContext) -> No
 @router.callback_query(FineFlow.waiting_photo, F.data == "fine_skip_photo")
 async def fine_skip_photo(callback: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(photo_file_id="")
+    data = await state.get_data()
+    if data.get("severity"):
+        text = await _finalize_fine(callback.bot, callback.from_user.id, data, 0)
+        await state.clear()
+        if text is None:
+            await callback.answer("Xatolik yuz berdi.", show_alert=True)
+            return
+        await safe_edit_text(callback.message, text, reply_markup=audit_menu_keyboard())
+        await callback.answer()
+        return
     await state.set_state(FineFlow.waiting_amount)
     await safe_edit_text(callback.message, "Shtraf summasini kiriting (so'm, faqat raqam):")
     await callback.answer()
@@ -204,6 +218,15 @@ async def fine_skip_photo(callback: CallbackQuery, state: FSMContext) -> None:
 async def fine_receive_photo(message: Message, state: FSMContext) -> None:
     photo_file_id = message.photo[-1].file_id
     await state.update_data(photo_file_id=photo_file_id)
+    data = await state.get_data()
+    if data.get("severity"):
+        text = await _finalize_fine(message.bot, message.from_user.id, data, 0)
+        await state.clear()
+        if text is None:
+            await message.answer("Xatolik yuz berdi, qaytadan urinib ko'ring.")
+            return
+        await message.answer(text, reply_markup=audit_menu_keyboard())
+        return
     await state.set_state(FineFlow.waiting_amount)
     await message.answer("Shtraf summasini kiriting (so'm, faqat raqam):")
 
@@ -218,6 +241,70 @@ async def fine_wrong_photo(message: Message) -> None:
         await message.answer("Iltimos, rasm yuboring yoki yuqoridagi tugma orqali o'tkazib yuboring.")
 
 
+async def _finalize_fine(bot, from_user_id: int, data: dict, amount: int) -> str | None:
+    """Fine yozuvini yaratadi, xodim va adminlarga xabar beradi. Tasdiqlash matnini
+    qaytaradi (xodim/beruvchi topilmasa None)."""
+    reason = data["reason"]
+    severity = data.get("severity")
+    async with async_session() as session:
+        issued_by = await get_employee(session, from_user_id)
+        employee = await session.get(Employee, data["fine_employee_id"])
+        if employee is None or issued_by is None:
+            return None
+        session.add(
+            Fine(
+                employee_id=employee.id,
+                issued_by_id=issued_by.id,
+                amount=amount,
+                reason=reason,
+                photo_file_id=data["photo_file_id"],
+                severity=severity,
+            )
+        )
+        await session.commit()
+        employee_name = employee.full_name
+        employee_tg_id = employee.telegram_id
+        issued_by_name = issued_by.full_name
+        admins = await list_admins(session)
+    photo_file_id = data["photo_file_id"]
+
+    if severity:
+        label = SEVERITY_LABELS.get(severity, severity)
+        confirm_text = f"✅ {employee_name} uchun qayd etildi: {label} ({reason})"
+        employee_caption = f"{label}\nSabab: {reason}"
+        admin_caption = (
+            f"\U0001f4cc {issued_by_name} tomonidan qayd etildi:\n"
+            f"Xodim: {employee_name}\n{label}\nSabab: {reason}"
+        )
+    else:
+        amount_str = f"{amount:,}".replace(",", " ")
+        confirm_text = f"✅ Shtraf berildi: {employee_name} — {amount_str} so'm ({reason})"
+        employee_caption = f"Sizga shtraf berildi.\nSabab: {reason}\nSumma: {amount_str} so'm"
+        admin_caption = (
+            f"\U0001f4cc {issued_by_name} tomonidan shtraf berildi:\n"
+            f"Xodim: {employee_name}\n"
+            f"Sabab: {reason}\n"
+            f"Summa: {amount_str} so'm"
+        )
+
+    try:
+        if photo_file_id:
+            await bot.send_photo(employee_tg_id, photo=photo_file_id, caption=employee_caption)
+        else:
+            await bot.send_message(employee_tg_id, employee_caption)
+    except Exception:
+        pass
+    for admin in admins:
+        try:
+            if photo_file_id:
+                await bot.send_photo(admin.telegram_id, photo=photo_file_id, caption=admin_caption)
+            else:
+                await bot.send_message(admin.telegram_id, admin_caption)
+        except Exception:
+            continue
+    return confirm_text
+
+
 @router.message(FineFlow.waiting_amount, F.text)
 async def fine_receive_amount(message: Message, state: FSMContext) -> None:
     raw = message.text.strip().replace(" ", "")
@@ -226,58 +313,12 @@ async def fine_receive_amount(message: Message, state: FSMContext) -> None:
         return
     amount = int(raw)
     data = await state.get_data()
-    reason = data["reason"]
-    async with async_session() as session:
-        issued_by = await get_employee(session, message.from_user.id)
-        employee = await session.get(Employee, data["fine_employee_id"])
-        if employee is None or issued_by is None:
-            await state.clear()
-            await message.answer("Xatolik yuz berdi, qaytadan urinib ko'ring.")
-            return
-        session.add(
-            Fine(
-                employee_id=employee.id,
-                issued_by_id=issued_by.id,
-                amount=amount,
-                reason=reason,
-                photo_file_id=data["photo_file_id"],
-            )
-        )
-        await session.commit()
-        employee_name = employee.full_name
-        employee_tg_id = employee.telegram_id
-        issued_by_name = issued_by.full_name
-        photo_file_id = data["photo_file_id"]
-        admins = await list_admins(session)
+    text = await _finalize_fine(message.bot, message.from_user.id, data, amount)
     await state.clear()
-    amount_str = f"{amount:,}".replace(",", " ")
-    await message.answer(
-        f"✅ Shtraf berildi: {employee_name} — {amount_str} so'm ({reason})",
-        reply_markup=audit_menu_keyboard(),
-    )
-    employee_caption = f"Sizga shtraf berildi.\nSabab: {reason}\nSumma: {amount_str} so'm"
-    try:
-        if photo_file_id:
-            await message.bot.send_photo(employee_tg_id, photo=photo_file_id, caption=employee_caption)
-        else:
-            await message.bot.send_message(employee_tg_id, employee_caption)
-    except Exception:
-        pass
-
-    admin_caption = (
-        f"\U0001f4cc {issued_by_name} tomonidan shtraf berildi:\n"
-        f"Xodim: {employee_name}\n"
-        f"Sabab: {reason}\n"
-        f"Summa: {amount_str} so'm"
-    )
-    for admin in admins:
-        try:
-            if photo_file_id:
-                await message.bot.send_photo(admin.telegram_id, photo=photo_file_id, caption=admin_caption)
-            else:
-                await message.bot.send_message(admin.telegram_id, admin_caption)
-        except Exception:
-            continue
+    if text is None:
+        await message.answer("Xatolik yuz berdi, qaytadan urinib ko'ring.")
+        return
+    await message.answer(text, reply_markup=audit_menu_keyboard())
 
 
 async def _employee_fine_totals(session, employees: list[Employee]) -> dict[int, tuple[int, int]]:
@@ -344,10 +385,6 @@ async def report_show(callback: CallbackQuery, state: FSMContext) -> None:
             select(Fine).where(Fine.employee_id == employee_id).order_by(Fine.created_at.desc())
         )
         fines = result.scalars().all()
-        total_result = await session.execute(
-            select(func.coalesce(func.sum(Fine.amount), 0)).where(Fine.employee_id == employee_id)
-        )
-        total = total_result.scalar_one()
     await state.clear()
     if not fines:
         await safe_edit_text(callback.message,
@@ -355,11 +392,20 @@ async def report_show(callback: CallbackQuery, state: FSMContext) -> None:
         )
         await callback.answer()
         return
-    total_str = f"{total:,}".replace(",", " ")
-    lines = [f"\U0001f4ca {employee.full_name} — jami: {total_str} so'm", ""]
+    money_total = sum(fine.amount for fine in fines if not fine.severity)
+    money_str = f"{money_total:,}".replace(",", " ")
+    warning_counts: dict[str, int] = {}
     for fine in fines:
-        amount_str = f"{fine.amount:,}".replace(",", " ")
-        lines.append(f"• {fine.created_at:%d.%m.%Y %H:%M} — {amount_str} so'm ({fine.reason})")
+        if fine.severity:
+            warning_counts[fine.severity] = warning_counts.get(fine.severity, 0) + 1
+    header = f"\U0001f4ca {employee.full_name} — jami: {money_str} so'm"
+    if warning_counts:
+        header += "\n" + " | ".join(
+            f"{SEVERITY_LABELS.get(sev, sev)}: {count}" for sev, count in warning_counts.items()
+        )
+    lines = [header, ""]
+    for fine in fines:
+        lines.append(fine_line(fine))
     await safe_edit_text(callback.message, "\n".join(lines), reply_markup=audit_menu_keyboard())
     await callback.answer()
 
