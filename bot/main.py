@@ -149,16 +149,16 @@ async def seed_fine_templates() -> None:
         await session.commit()
 
         # Audit endi faqat bandga asoslangan (pulsiz) shablonlardan foydalanadi — eski
-        # pullik audit shablonlari (severity yo'q) faolsizlantiriladi, tarix uchun saqlanadi.
+        # pullik audit shablonlari butunlay o'chiriladi (Fine yozuvlari reason/severity/code'ni
+        # o'z ustunlarida alohida saqlaydi, shablonga bog'liq emas — o'chirish tarixga ta'sir qilmaydi).
         legacy_result = await session.execute(
             select(FineTemplate).where(
                 FineTemplate.owner == "audit",
                 FineTemplate.severity.is_(None),
-                FineTemplate.is_active.is_(True),
             )
         )
         for template in legacy_result.scalars().all():
-            template.is_active = False
+            await session.delete(template)
         await session.commit()
 
 

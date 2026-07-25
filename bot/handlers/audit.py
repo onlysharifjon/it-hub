@@ -467,6 +467,19 @@ async def _audit_owned_templates(session) -> list[FineTemplate]:
     return list(result.scalars().all())
 
 
+async def _show_audit_templates_bob_menu(session, target) -> None:
+    templates = await _audit_owned_templates(session)
+    bob_groups, other = _group_by_bob(templates)
+    summaries = [
+        (bob, BOB_LABELS.get(bob, f"{bob}-Bob"), len(items)) for bob, items in sorted(bob_groups.items())
+    ]
+    keyboard = bob_choice_keyboard(summaries, has_other=bool(other), back_callback="audit_menu")
+    if isinstance(target, CallbackQuery):
+        await safe_edit_text(target.message, "Mening shablonlarim — qaysi bob?", reply_markup=keyboard)
+    else:
+        await target.answer("Mening shablonlarim — qaysi bob?", reply_markup=keyboard)
+
+
 @router.callback_query(F.data == "audit_templates_menu")
 async def audit_templates_menu(callback: CallbackQuery) -> None:
     async with async_session() as session:
@@ -474,12 +487,7 @@ async def audit_templates_menu(callback: CallbackQuery) -> None:
         if not await is_privileged(session, employee):
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
-        templates = await _audit_owned_templates(session)
-    await safe_edit_text(
-        callback.message,
-        "Mening shablonlarim:",
-        reply_markup=audit_templates_manage_keyboard(templates, back_callback="audit_menu"),
-    )
+        await _show_audit_templates_bob_menu(session, callback)
     await callback.answer()
 
 
@@ -489,11 +497,30 @@ async def audit_templates_menu_msg(message: Message) -> None:
         employee = await get_employee(session, message.from_user.id)
         if not await is_privileged(session, employee):
             return
+        await _show_audit_templates_bob_menu(session, message)
+
+
+@router.callback_query(F.data.startswith("audit_tpl_bob:"))
+async def audit_templates_bob_pick(callback: CallbackQuery) -> None:
+    bob_key = callback.data.split(":")[1]
+    async with async_session() as session:
+        employee = await get_employee(session, callback.from_user.id)
+        if not await is_privileged(session, employee):
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
         templates = await _audit_owned_templates(session)
-    await message.answer(
-        "Mening shablonlarim:",
-        reply_markup=audit_templates_manage_keyboard(templates, back_callback="audit_menu"),
+    bob_groups, other = _group_by_bob(templates)
+    filtered = other if bob_key == "other" else bob_groups.get(bob_key, [])
+    if not filtered:
+        await callback.answer("Bu bo'limda shablon topilmadi.", show_alert=True)
+        return
+    title = "Boshqa shablonlar:" if bob_key == "other" else f"{BOB_LABELS.get(bob_key, bob_key + '-Bob')}:"
+    await safe_edit_text(
+        callback.message,
+        title,
+        reply_markup=audit_templates_manage_keyboard(filtered, back_callback="audit_templates_menu"),
     )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("toggle_audit_template:"))
@@ -510,11 +537,15 @@ async def toggle_audit_template(callback: CallbackQuery) -> None:
             return
         template.is_active = not template.is_active
         await session.commit()
+        bob_key = template.code.split(".")[0] if template.code else "other"
         templates = await _audit_owned_templates(session)
+    bob_groups, other = _group_by_bob(templates)
+    filtered = other if bob_key == "other" else bob_groups.get(bob_key, [])
+    title = "Boshqa shablonlar:" if bob_key == "other" else f"{BOB_LABELS.get(bob_key, bob_key + '-Bob')}:"
     await safe_edit_text(
         callback.message,
-        "Mening shablonlarim:",
-        reply_markup=audit_templates_manage_keyboard(templates, back_callback="audit_menu"),
+        title,
+        reply_markup=audit_templates_manage_keyboard(filtered, back_callback="audit_templates_menu"),
     )
     await callback.answer()
 
