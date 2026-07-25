@@ -40,17 +40,6 @@ DEFAULT_FINE_TEMPLATES = [
     ("Mijoz bilan noto'g'ri muomala", "Muomala"),
 ]
 
-DEFAULT_AUDIT_FINE_TEMPLATES = [
-    ("Ishga kech kelish", "Kech kelish"),
-    ("Ish joyini ruxsatsiz tark etish", "Joy tashlash"),
-    ("O'quvchi/mijoz bilan qo'pol muomala qilish", "Qo'pol muomala"),
-    ("Ishxona ichki tartibini buzish", "Tartib buzish"),
-    ("Ish vaqtida telefondan ortiqcha foydalanish", "Telefon"),
-    ("Hisobot yoki vazifani vaqtida topshirmaslik", "Kech hisobot"),
-    ("Ishxona mulkiga beparvo munosabat", "Mulkka beparvo"),
-    ("Xavfsizlik qoidalarini buzish", "Xavfsizlik"),
-]
-
 # Ichki tartib qoidalari kodeksi — (kod, daraja, qisqa nom, to'liq qoida matni).
 # Pulsiz: audit shu shablonni tanlasa, shtraf summasi so'ralmaydi (amount=0),
 # faqat kulrang/sariq/qizil ogohlantirish sifatida qayd etiladi.
@@ -150,9 +139,6 @@ async def seed_fine_templates() -> None:
         for text, short_name in DEFAULT_FINE_TEMPLATES:
             if text not in existing:
                 session.add(FineTemplate(text=text, short_name=short_name, owner="admin"))
-        for text, short_name in DEFAULT_AUDIT_FINE_TEMPLATES:
-            if text not in existing:
-                session.add(FineTemplate(text=text, short_name=short_name, owner="audit"))
         for code, severity, short_name, text in DISCIPLINE_CODE_TEMPLATES:
             if text not in existing:
                 session.add(
@@ -160,6 +146,19 @@ async def seed_fine_templates() -> None:
                         text=text, short_name=short_name, owner="audit", code=code, severity=severity
                     )
                 )
+        await session.commit()
+
+        # Audit endi faqat bandga asoslangan (pulsiz) shablonlardan foydalanadi — eski
+        # pullik audit shablonlari (severity yo'q) faolsizlantiriladi, tarix uchun saqlanadi.
+        legacy_result = await session.execute(
+            select(FineTemplate).where(
+                FineTemplate.owner == "audit",
+                FineTemplate.severity.is_(None),
+                FineTemplate.is_active.is_(True),
+            )
+        )
+        for template in legacy_result.scalars().all():
+            template.is_active = False
         await session.commit()
 
 
