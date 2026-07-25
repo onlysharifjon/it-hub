@@ -13,7 +13,9 @@ from config import CRM_DB_URL
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+    # Oxiriga qo'shiladi (eng past ustuvorlik) — repo ildizidagi boshqa modullarni
+    # (masalan it-hub/main.py) bot o'zining teng nomdagi modullaridan ustun qo'ymasligi uchun.
+    sys.path.append(str(REPO_ROOT))
 
 if CRM_DB_URL:
     os.environ["DATABASE_URL"] = CRM_DB_URL

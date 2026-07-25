@@ -51,6 +51,40 @@ DEFAULT_AUDIT_FINE_TEMPLATES = [
     ("Xavfsizlik qoidalarini buzish", "Xavfsizlik"),
 ]
 
+# Ichki tartib qoidalari kodeksi — (kod, daraja, qisqa nom, to'liq qoida matni).
+# Pulsiz: audit shu shablonni tanlasa, shtraf summasi so'ralmaydi (amount=0),
+# faqat kulrang/sariq/qizil ogohlantirish sifatida qayd etiladi.
+DISCIPLINE_CODE_TEMPLATES = [
+    ("1.1", "gray", "1.1 Bedjik taqmaslik", "Korxona hududida doimo bedjik taqilgan holda bo'lish."),
+    ("1.2", "gray", "1.2 Mijozga sovuqqonlik", "Mijozlar bilan doimo kulib, hushmuomilalikda gaplashish."),
+    ("1.3", "gray", "1.3 Stolda begona buyum", "Administratsiya stoli ustida ortiqcha buyumlar, shaxsiy buyumlar, shaxsiy telefon, qog'ozlar, hujjatlar turishi taqiqlanadi."),
+    ("1.4", "gray", "1.4 Stolga bosh qo'yish", "Administratsiya stoliga bosh qo'yib yotish taqiqlanadi."),
+    ("1.5", "gray", "1.5 Idishsiz ichimlik", "Korxona hududida rangli ichimliklarni faqat shaxsiy kружка (finjon) ga solgan holda ichish talab etiladi."),
+    ("1.6", "gray", "1.6 Kelmaganga bog'lanmaslik", "Darsga kelmagan o'quvchilar bilan bog'lanib ertangi kun soat 12:00 gacha kelmaganlik sababini aniqlash, kelasi darsga chaqirish hamda izohlarda kelmaganlik sababini kiritib o'tish talab etiladi."),
+    ("1.7", "gray", "1.7 Hisobot to'ldirmaslik", "Filial kesmidagi hisobotlarni belgilangan vaqt ichida to'g'ri va to'liq to'ldirish talab etiladi."),
+    ("1.8", "gray", "1.8 Muzlaganga bog'lanmaslik", "Muzlatilgan o'quvchilar bilan kelishi kerak bo'lgan sanada bog'lanish, darsga chaqirish hamda izohlarni yangilash talab etiladi."),
+    ("2.1", "yellow", "2.1 Check-in/out qilmaslik", "Verefixdan to'g'ri va belgilangan tartibda foydalanish. Ishga kelgan vaqtda va ketayotganda o'z vaqtida check-in va check-out qilish talab etiladi."),
+    ("2.2", "yellow", "2.2 Kiyinish tartibi buzilishi", "Kiyinish uslubi va tashqi ko'rinish talablariga rioya qilmaslik (erkaklar/ayollar uchun belgilangan klassik uslub, taqiqlangan kiyimlar)."),
+    ("2.3", "yellow", "2.3 Ish vaqtida telefon", "Ish vaqtida shaxsiy telefondan foydalanish taqiqlanadi."),
+    ("2.4", "yellow", "2.4 Ijtimoiy tarmoq", "Ish kompyuteridan ishga aloqador bo'lmagan ijtimoiy tarmoqlarga kirish taqiqlanadi."),
+    ("2.5", "yellow", "2.5 Shaxsiy ish bilan band", "Ish vaqtida shaxsiy ishlar bilan shug'ullanish taqiqlanadi."),
+    ("2.6", "yellow", "2.6 Kassaga sababsiz o'tish", "Kassa hududiga besabab o'tish taqiqlanadi."),
+    ("2.7", "yellow", "2.7 O'tirib konsultatsiya", "Mijozlarga turgan holda konsultatsiya berish talab etiladi."),
+    ("2.8", "yellow", "2.8 Tushlikda kech qolish", "Tushlikda ajratilgan vaqtdan ko'p qolib ketish, ajratilgan vaqtda emas boshqa vaqtda tushlik qilish taqiqlanadi."),
+    ("2.9", "yellow", "2.9 20 daq gacha kechikish", "Korxonaga o'z vaqtida kelish (20 daqiqagacha kechikish)."),
+    ("2.10", "yellow", "2.10 Ish joyini tark etish", "Ish joyini sababsiz tark etish taqiqlanadi (20 daqiqa va undan ko'p)."),
+    ("2.11", "yellow", "2.11 Bedjiksiz (2-marta)", "Korxona hududida doimo bedjik taqilgan holda bo'lish — kun davomida 2-marotaba buzilgan holat."),
+    ("3.1", "red", "3.1 Ovqatlanish (ma'muriyat)", "Administratsiya hududida ovqatlanish, yegulik yeyish taqiqlanadi."),
+    ("3.2", "red", "3.2 Pardoz/soch tarash", "Administratsiya hududida pardoz qilish va soch tarash, stol ustida pardoz vositalarini turishi taqiqlanadi."),
+    ("3.3", "red", "3.3 Mijozga qo'pol gapirish", "Mijozlar bilan baland ovozda va qo'pol ohangda gaplashish taqiqlanadi."),
+    ("3.4", "red", "3.4 Baland ovozda gaplashish", "Jamoa a'zolari va hamkasblar bilan coworking hududi, administratsiya hududi va dars xonalarida baland ovozda ishdan tashqari mavzuda gaplashish taqiqlanadi."),
+    ("3.5", "red", "3.5 Musiqa tinglash", "Administratsiya hududida musiqa tinglash taqiqlanadi."),
+    ("3.6", "red", "3.6 3+ soat ish joyida yo'q", "Sababsiz va ogohlantirishsiz ish vaqtida 3 soat va undan ko'p ish joyida bo'lmaslik."),
+    ("3.7", "red", "3.7 21+ daq kechikish", "Korxonaga o'z vaqtida kelish (21 daqiqa va undan ko'p kechikish)."),
+    ("3.8", "red", "3.8 Ogohlantirmay kelmaslik", "Eng kamida 1 kun avval ogohlantirmasdan, ruxsat so'ramasdan ishga kelmaslik."),
+    ("3.9", "red", "3.9 Ruxsatsiz ketish", "Ruxsat so'ramasdan, ogohlantirishsiz ish vaqtida korxonadan ketish taqiqlanadi."),
+]
+
 
 async def seed_admins() -> None:
     if not ADMIN_IDS:
@@ -119,6 +153,13 @@ async def seed_fine_templates() -> None:
         for text, short_name in DEFAULT_AUDIT_FINE_TEMPLATES:
             if text not in existing:
                 session.add(FineTemplate(text=text, short_name=short_name, owner="audit"))
+        for code, severity, short_name, text in DISCIPLINE_CODE_TEMPLATES:
+            if text not in existing:
+                session.add(
+                    FineTemplate(
+                        text=text, short_name=short_name, owner="audit", code=code, severity=severity
+                    )
+                )
         await session.commit()
 
 
