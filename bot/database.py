@@ -29,6 +29,8 @@ def _add_missing_columns(sync_conn) -> None:
         sync_conn.exec_driver_sql("ALTER TABLE fines ADD COLUMN reason VARCHAR(255) NOT NULL DEFAULT ''")
     if fines_columns and "severity" not in fines_columns:
         sync_conn.exec_driver_sql("ALTER TABLE fines ADD COLUMN severity VARCHAR(16)")
+    if fines_columns and "code" not in fines_columns:
+        sync_conn.exec_driver_sql("ALTER TABLE fines ADD COLUMN code VARCHAR(16)")
 
     roles_columns = {row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(roles)").fetchall()}
     if roles_columns and "is_parent" not in roles_columns:

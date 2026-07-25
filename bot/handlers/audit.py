@@ -28,6 +28,7 @@ from utils import (
     list_admins,
     list_employees_with_fines,
     list_staff,
+    money_and_warning_summary,
     reply_keyboard_for_employee,
     safe_edit_text,
     verify_password,
@@ -130,7 +131,7 @@ async def fine_start(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.set_state(FineFlow.choosing_employee)
     await safe_edit_text(callback.message,
-        "Shtraf beriladigan xodimni tanlang:",
+        "Kimga beriladi? Xodimni tanlang:",
         reply_markup=employees_keyboard(employees, "fine_emp", back_callback="audit_menu"),
     )
     await callback.answer()
@@ -148,9 +149,27 @@ async def fine_start_msg(message: Message, state: FSMContext) -> None:
         return
     await state.set_state(FineFlow.choosing_employee)
     await message.answer(
-        "Shtraf beriladigan xodimni tanlang:",
+        "Kimga beriladi? Xodimni tanlang:",
         reply_markup=employees_keyboard(employees, "fine_emp", back_callback="audit_menu"),
     )
+
+
+BOB_LABELS = {
+    "1": "1-Bob — ⚪ Eslatma",
+    "2": "2-Bob — \U0001f7e1 Sariq ogohlantirish",
+    "3": "3-Bob — \U0001f534 Qizil ogohlantirish",
+}
+
+
+def _group_by_bob(templates: list[FineTemplate]) -> tuple[dict[str, list[FineTemplate]], list[FineTemplate]]:
+    bob_groups: dict[str, list[FineTemplate]] = {}
+    other: list[FineTemplate] = []
+    for template in templates:
+        if template.code:
+            bob_groups.setdefault(template.code.split(".")[0], []).append(template)
+        else:
+            other.append(template)
+    return bob_groups, other
 
 
 @router.callback_query(FineFlow.choosing_employee, F.data.startswith("fine_emp:"))
@@ -163,10 +182,46 @@ async def fine_choose_employee(callback: CallbackQuery, state: FSMContext) -> No
         await callback.answer("Avval shablon qo'shilishi kerak.", show_alert=True)
         return
     await state.update_data(fine_employee_id=employee_id)
+    bob_groups, other = _group_by_bob(templates)
+    if len(bob_groups) > 1 or (bob_groups and other):
+        await state.set_state(FineFlow.choosing_bob)
+        summaries = [
+            (bob, BOB_LABELS.get(bob, f"{bob}-Bob"), len(items))
+            for bob, items in sorted(bob_groups.items())
+        ]
+        await safe_edit_text(
+            callback.message,
+            "Jarima qaysi bob bo'yicha?",
+            reply_markup=bob_choice_keyboard(summaries, has_other=bool(other), back_callback="audit_menu"),
+        )
+        await callback.answer()
+        return
     await state.set_state(FineFlow.choosing_template)
     await safe_edit_text(callback.message,
-        "Shtraf sababini tanlang:",
+        "Sababni tanlang:",
         reply_markup=fine_templates_keyboard(templates, "fine_template", back_callback="audit_menu"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(FineFlow.choosing_bob, F.data.startswith("fine_bob:"))
+async def fine_choose_bob(callback: CallbackQuery, state: FSMContext) -> None:
+    bob_key = callback.data.split(":")[1]
+    async with async_session() as session:
+        requester = await get_employee(session, callback.from_user.id)
+        templates = await visible_fine_templates(session, requester)
+    if bob_key == "other":
+        filtered = [t for t in templates if not t.code]
+        title = "Sababni tanlang:"
+    else:
+        filtered = [t for t in templates if t.code and t.code.split(".")[0] == bob_key]
+        title = f"{BOB_LABELS.get(bob_key, bob_key + '-Bob')} — bandni tanlang:"
+    if not filtered:
+        await callback.answer("Bu bo'limda shablon topilmadi.", show_alert=True)
+        return
+    await state.set_state(FineFlow.choosing_template)
+    await safe_edit_text(
+        callback.message, title, reply_markup=fine_templates_keyboard(filtered, "fine_template", back_callback="audit_menu")
     )
     await callback.answer()
 
@@ -185,12 +240,13 @@ async def fine_choose_template(callback: CallbackQuery, state: FSMContext) -> No
         photo_required = await get_setting(session, "fine_photo_required", "false")
     await state.update_data(reason=reason, severity=severity, code=code)
     await state.set_state(FineFlow.waiting_photo)
+    noun = "jarima" if severity else "shtraf"
     if photo_required == "true":
-        await safe_edit_text(callback.message, "Endi shtraf uchun rasm yuboring.")
+        await safe_edit_text(callback.message, f"Endi {noun} uchun rasm yuboring.")
     else:
         await safe_edit_text(
             callback.message,
-            "Xohlasangiz shtraf uchun rasm yuboring (ixtiyoriy):",
+            f"Xohlasangiz {noun} uchun rasm yuboring (ixtiyoriy):",
             reply_markup=photo_prompt_keyboard(),
         )
     await callback.answer()
@@ -246,6 +302,7 @@ async def _finalize_fine(bot, from_user_id: int, data: dict, amount: int) -> str
     qaytaradi (xodim/beruvchi topilmasa None)."""
     reason = data["reason"]
     severity = data.get("severity")
+    code = data.get("code")
     async with async_session() as session:
         issued_by = await get_employee(session, from_user_id)
         employee = await session.get(Employee, data["fine_employee_id"])
@@ -259,6 +316,7 @@ async def _finalize_fine(bot, from_user_id: int, data: dict, amount: int) -> str
                 reason=reason,
                 photo_file_id=data["photo_file_id"],
                 severity=severity,
+                code=code,
             )
         )
         await session.commit()
@@ -270,11 +328,12 @@ async def _finalize_fine(bot, from_user_id: int, data: dict, amount: int) -> str
 
     if severity:
         label = SEVERITY_LABELS.get(severity, severity)
-        confirm_text = f"✅ {employee_name} uchun qayd etildi: {label} ({reason})"
-        employee_caption = f"{label}\nSabab: {reason}"
+        band = f"{code}-bandga ko'ra: " if code else ""
+        confirm_text = f"✅ {employee_name} ga jarima berildi: {label}\n{band}{reason}"
+        employee_caption = f"Sizga jarima berildi: {label}\n{band}{reason}"
         admin_caption = (
-            f"\U0001f4cc {issued_by_name} tomonidan qayd etildi:\n"
-            f"Xodim: {employee_name}\n{label}\nSabab: {reason}"
+            f"\U0001f4cc {issued_by_name} tomonidan jarima berildi:\n"
+            f"Xodim: {employee_name}\n{label}\n{band}{reason}"
         )
     else:
         amount_str = f"{amount:,}".replace(",", " ")
@@ -388,21 +447,12 @@ async def report_show(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     if not fines:
         await safe_edit_text(callback.message,
-            f"{employee.full_name} uchun shtraflar topilmadi.", reply_markup=audit_menu_keyboard()
+            f"{employee.full_name} uchun shtraf/jarima topilmadi.", reply_markup=audit_menu_keyboard()
         )
         await callback.answer()
         return
-    money_total = sum(fine.amount for fine in fines if not fine.severity)
-    money_str = f"{money_total:,}".replace(",", " ")
-    warning_counts: dict[str, int] = {}
-    for fine in fines:
-        if fine.severity:
-            warning_counts[fine.severity] = warning_counts.get(fine.severity, 0) + 1
-    header = f"\U0001f4ca {employee.full_name} — jami: {money_str} so'm"
-    if warning_counts:
-        header += "\n" + " | ".join(
-            f"{SEVERITY_LABELS.get(sev, sev)}: {count}" for sev, count in warning_counts.items()
-        )
+    header = f"\U0001f4ca {employee.full_name}"
+    header += "\n" + money_and_warning_summary(fines)
     lines = [header, ""]
     for fine in fines:
         lines.append(fine_line(fine))
