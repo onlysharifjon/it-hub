@@ -8,7 +8,7 @@ import crm_client
 from database import async_session
 from keyboards import children_keyboard
 from models import Attendance, Fine, ParentLink
-from utils import SEVERITY_LABELS, fine_line, get_employee
+from utils import fine_line, get_employee, money_and_warning_summary
 
 router = Router(name="profile")
 
@@ -128,20 +128,10 @@ async def my_fines(message: Message) -> None:
         fines = result.scalars().all()
 
     if not fines:
-        await message.answer("Sizda shtraflar yo'q.")
+        await message.answer("Sizda shtraf/jarima yo'q.")
         return
 
-    money_total = sum(fine.amount for fine in fines if not fine.severity)
-    money_str = f"{money_total:,}".replace(",", " ")
-    warning_counts: dict[str, int] = {}
-    for fine in fines:
-        if fine.severity:
-            warning_counts[fine.severity] = warning_counts.get(fine.severity, 0) + 1
-    header = f"\U0001f4ca Sizning shtraflaringiz — jami: {money_str} so'm"
-    if warning_counts:
-        header += "\n" + " | ".join(
-            f"{SEVERITY_LABELS.get(sev, sev)}: {count}" for sev, count in warning_counts.items()
-        )
+    header = "\U0001f4ca Sizning shtraf/jarimalaringiz\n" + money_and_warning_summary(fines)
     lines = [header, ""]
     for fine in fines:
         lines.append(fine_line(fine))

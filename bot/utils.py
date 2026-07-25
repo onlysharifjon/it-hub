@@ -85,11 +85,28 @@ SEVERITY_LABELS = {
 }
 
 
+def money_and_warning_summary(fines: list[Fine]) -> str:
+    money_total = sum(fine.amount for fine in fines if not fine.severity)
+    money_str = f"{money_total:,}".replace(",", " ")
+    warning_counts: dict[str, int] = {}
+    for fine in fines:
+        if fine.severity:
+            warning_counts[fine.severity] = warning_counts.get(fine.severity, 0) + 1
+    lines = [f"\U0001f4b0 Shtraf (pul): {money_str} so'm"]
+    if warning_counts:
+        lines.append(
+            "⚠️ Jarima (rang bo'yicha): "
+            + " | ".join(f"{SEVERITY_LABELS.get(sev, sev)}: {count}" for sev, count in warning_counts.items())
+        )
+    return "\n".join(lines)
+
+
 def fine_line(fine: Fine) -> str:
     timestamp = f"{fine.created_at:%d.%m.%Y %H:%M}"
     if fine.severity:
         label = SEVERITY_LABELS.get(fine.severity, fine.severity)
-        return f"• {timestamp} — {label} ({fine.reason})"
+        band = f"{fine.code}-bandga ko'ra: " if fine.code else ""
+        return f"• {timestamp} — {label}\n  {band}{fine.reason}"
     amount_str = f"{fine.amount:,}".replace(",", " ")
     return f"• {timestamp} — {amount_str} so'm ({fine.reason})"
 

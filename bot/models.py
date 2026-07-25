@@ -76,9 +76,10 @@ class Fine(Base):
     reason: Mapped[str] = mapped_column(String(255))
     photo_file_id: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    # Tartib qoidalari kodeksidan berilgan bo'lsa: "gray"|"yellow"|"red". Oddiy pullik
-    # shtraflarda None — amount maydoni ishlatiladi.
+    # Tartib qoidalari kodeksidan berilgan bo'lsa: "gray"|"yellow"|"red" + bob-band kodi
+    # (masalan "2.4"). Oddiy pullik shtraflarda ikkalasi ham None — amount ishlatiladi.
     severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    code: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     employee: Mapped["Employee"] = relationship(foreign_keys=[employee_id], back_populates="fines_received")
     issued_by: Mapped["Employee"] = relationship(foreign_keys=[issued_by_id])

@@ -201,6 +201,19 @@ def fine_templates_keyboard(
     return builder.as_markup()
 
 
+def bob_choice_keyboard(
+    summaries: list[tuple[str, str, int]], has_other: bool, back_callback: str
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for bob_key, label, count in summaries:
+        builder.button(text=f"{label} ({count})", callback_data=f"fine_bob:{bob_key}")
+    if has_other:
+        builder.button(text="\U0001f4cb Boshqa shablonlar", callback_data="fine_bob:other")
+    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def admin_templates_keyboard(
     templates: list[FineTemplate], back_callback: str | None = None
 ) -> InlineKeyboardMarkup:

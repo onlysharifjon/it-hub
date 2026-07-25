@@ -31,6 +31,7 @@ class EditFineTemplate(StatesGroup):
 
 class FineFlow(StatesGroup):
     choosing_employee = State()
+    choosing_bob = State()
     choosing_template = State()
     waiting_photo = State()
     waiting_amount = State()
