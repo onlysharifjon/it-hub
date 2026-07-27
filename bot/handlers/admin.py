@@ -24,6 +24,7 @@ from keyboards import (
     broadcast_choice_keyboard,
     broadcast_confirm_keyboard,
     broadcast_prompt_keyboard,
+    broadcast_role_keyboard,
     cancel_keyboard,
     employees_keyboard,
     invite_tier_keyboard,
@@ -781,10 +782,37 @@ async def broadcast_workers_start(callback: CallbackQuery, state: FSMContext) ->
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
-    await state.update_data(broadcast_target="workers")
+        result = await session.execute(
+            select(Role)
+            .where(Role.is_active.is_(True), Role.is_parent.is_(False))
+            .order_by(Role.name)
+        )
+        roles = result.scalars().all()
+    await safe_edit_text(
+        callback.message,
+        "Kimlarga yubormoqchisiz? Kategoriyani tanlang:",
+        reply_markup=broadcast_role_keyboard(roles),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("bc_workers_role:"))
+async def broadcast_workers_choose_role(callback: CallbackQuery, state: FSMContext) -> None:
+    raw = callback.data.split(":")[1]
+    role_id = None if raw == "all" else int(raw)
+    async with async_session() as session:
+        admin = await _require_admin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        role_name = "Barcha xodimlar"
+        if role_id is not None:
+            role = await session.get(Role, role_id)
+            role_name = role.name if role else "Xodimlar"
+    await state.update_data(broadcast_target="workers", broadcast_role_id=role_id)
     await state.set_state(Broadcast.text)
     await safe_edit_text(callback.message,
-        "Xodimlarga yuboriladigan xabarni kiriting.\n"
+        f"\"{role_name}\" toifasiga yuboriladigan xabarni kiriting.\n"
         "Matn yozing yoki rasmni izoh bilan yuboring (rasm shart emas).",
         reply_markup=broadcast_prompt_keyboard(),
     )
@@ -813,13 +841,23 @@ async def broadcast_send_invalid(message: Message) -> None:
     await message.answer("Matn yozing yoki rasm yuboring.")
 
 
+async def _broadcast_recipients(session, target: str, role_id: int | None) -> list[Employee]:
+    if target == "parents":
+        return await list_parents(session)
+    recipients = await list_staff(session)
+    if role_id is not None:
+        recipients = [e for e in recipients if e.role_id == role_id]
+    return recipients
+
+
 async def _broadcast_preview(
     message: Message, state: FSMContext, photo_file_id: str | None, text: str | None
 ) -> None:
     data = await state.get_data()
     target = data["broadcast_target"]
+    role_id = data.get("broadcast_role_id")
     async with async_session() as session:
-        recipients = await list_parents(session) if target == "parents" else await list_staff(session)
+        recipients = await _broadcast_recipients(session, target, role_id)
     if not recipients:
         label = "ota-onalar" if target == "parents" else "xodimlar"
         await state.clear()
@@ -839,10 +877,11 @@ async def _broadcast_preview(
 async def broadcast_confirm_send(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     target = data["broadcast_target"]
+    role_id = data.get("broadcast_role_id")
     photo_file_id = data.get("broadcast_photo_file_id") or None
     text = data.get("broadcast_text") or None
     async with async_session() as session:
-        recipients = await list_parents(session) if target == "parents" else await list_staff(session)
+        recipients = await _broadcast_recipients(session, target, role_id)
     await state.clear()
     if not recipients:
         label = "ota-onalar" if target == "parents" else "xodimlar"

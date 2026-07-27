@@ -84,6 +84,10 @@ class Fine(Base):
     # (masalan "2.4"). Oddiy pullik shtraflarda ikkalasi ham None — amount ishlatiladi.
     severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
     code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Superadmin bekor qilsa to'ldiriladi — yozuv o'chirilmaydi, faqat hisobotlarda
+    # faol summaga/songa qo'shilmay qo'yadi (tarixda "bekor qilingan" deb ko'rinadi).
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_by_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
 
     employee: Mapped["Employee"] = relationship(foreign_keys=[employee_id], back_populates="fines_received")
     issued_by: Mapped["Employee"] = relationship(foreign_keys=[issued_by_id])

@@ -105,10 +105,11 @@ SEVERITY_LABELS = {
 
 
 def money_and_warning_summary(fines: list[Fine]) -> str:
-    money_total = sum(fine.amount for fine in fines if not fine.severity)
+    active = [fine for fine in fines if not fine.cancelled_at]
+    money_total = sum(fine.amount for fine in active if not fine.severity)
     money_str = f"{money_total:,}".replace(",", " ")
     warning_counts: dict[str, int] = {}
-    for fine in fines:
+    for fine in active:
         if fine.severity:
             warning_counts[fine.severity] = warning_counts.get(fine.severity, 0) + 1
     lines = [f"\U0001f4b0 Shtraf (pul): {money_str} so'm"]
@@ -117,17 +118,21 @@ def money_and_warning_summary(fines: list[Fine]) -> str:
             "⚠️ Jarima (rang bo'yicha): "
             + " | ".join(f"{SEVERITY_LABELS.get(sev, sev)}: {count}" for sev, count in warning_counts.items())
         )
+    cancelled_count = len(fines) - len(active)
+    if cancelled_count:
+        lines.append(f"\U0001f5d1 Bekor qilingan: {cancelled_count}")
     return "\n".join(lines)
 
 
 def fine_line(fine: Fine) -> str:
     timestamp = f"{fine.created_at:%d.%m.%Y %H:%M}"
+    prefix = "❌ [BEKOR QILINGAN] " if fine.cancelled_at else ""
     if fine.severity:
         label = SEVERITY_LABELS.get(fine.severity, fine.severity)
         band = f"{fine.code}-bandga ko'ra: " if fine.code else ""
-        return f"• {timestamp} — {label}\n  {band}{fine.reason}"
+        return f"• {timestamp} — {prefix}{label}\n  {band}{fine.reason}"
     amount_str = f"{fine.amount:,}".replace(",", " ")
-    return f"• {timestamp} — {amount_str} so'm ({fine.reason})"
+    return f"• {timestamp} — {prefix}{amount_str} so'm ({fine.reason})"
 
 
 async def list_employees_with_fines(session: AsyncSession) -> list[Employee]:
