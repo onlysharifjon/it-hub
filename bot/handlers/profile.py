@@ -8,7 +8,13 @@ import crm_client
 from database import async_session
 from keyboards import children_keyboard
 from models import Attendance, Fine, ParentLink
-from utils import fine_line, get_employee, money_and_warning_summary
+from utils import (
+    fine_line,
+    format_new_links_notice,
+    get_employee,
+    money_and_warning_summary,
+    sync_parent_links_from_crm,
+)
 
 router = Router(name="profile")
 
@@ -64,6 +70,14 @@ async def my_children_start(message: Message) -> None:
         )
         links = result.scalars().all()
         if not links:
+            newly_linked = await sync_parent_links_from_crm(session, employee)
+            if newly_linked:
+                await message.answer(format_new_links_notice(newly_linked))
+                result = await session.execute(
+                    select(ParentLink).where(ParentLink.employee_id == employee.id)
+                )
+                links = result.scalars().all()
+        if not links:
             await message.answer("Sizga hech qanday farzand biriktirilmagan. Admin bilan bog'laning.")
             return
         if len(links) == 1:
@@ -99,6 +113,14 @@ async def my_children_schedule(message: Message) -> None:
             select(ParentLink).where(ParentLink.employee_id == employee.id)
         )
         links = result.scalars().all()
+        if not links:
+            newly_linked = await sync_parent_links_from_crm(session, employee)
+            if newly_linked:
+                await message.answer(format_new_links_notice(newly_linked))
+                result = await session.execute(
+                    select(ParentLink).where(ParentLink.employee_id == employee.id)
+                )
+                links = result.scalars().all()
 
     if not links:
         await message.answer("Sizga hech qanday farzand biriktirilmagan. Admin bilan bog'laning.")

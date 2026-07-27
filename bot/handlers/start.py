@@ -1,4 +1,4 @@
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
@@ -7,15 +7,18 @@ from sqlalchemy import select
 from config import ADMIN_IDS
 from database import async_session
 from keyboards import roles_keyboard
-from models import Employee, Role
+from models import Employee, ParentLink, Role
 from utils import (
     apply_bot_commands,
+    build_info_text,
     consume_invite_link,
     ensure_audit_account,
+    format_new_links_notice,
     get_active_audit_account,
     get_employee,
     list_admins,
     reply_keyboard_for_employee,
+    sync_parent_links_from_crm,
 )
 
 router = Router(name="start")
@@ -42,6 +45,8 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             await session.commit()
             await session.refresh(employee)
             created = True
+
+        newly_linked = await sync_parent_links_from_crm(session, employee)
 
         invited_tier = None
         if payload and payload.startswith("invite_"):
@@ -72,10 +77,30 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
         keyboard = await reply_keyboard_for_employee(session, employee)
         await message.answer(text, reply_markup=keyboard)
+        if newly_linked:
+            await message.answer(format_new_links_notice(newly_linked))
+
+        parent_result = await session.execute(
+            select(ParentLink).where(ParentLink.employee_id == employee.id)
+        )
+        is_parent = parent_result.scalar_one_or_none() is not None
+        if employee.is_admin or is_parent:
+            await message.answer(await build_info_text(session, employee))
+
         await apply_bot_commands(message.bot, session, employee)
 
         if created and not employee.is_admin:
             await _notify_admins(message, session, employee)
+
+
+@router.message(F.text == "/info")
+async def cmd_info(message: Message) -> None:
+    async with async_session() as session:
+        employee = await get_employee(session, message.from_user.id)
+        if employee is None:
+            await message.answer("Avval botga /start bosing.")
+            return
+        await message.answer(await build_info_text(session, employee))
 
 
 async def _notify_admins(message: Message, session, employee: Employee) -> None:

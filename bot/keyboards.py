@@ -1,7 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from models import AuditAccount, Employee, FineTemplate, ParentLink, Role
+from models import AuditAccount, Employee, Fine, FineTemplate, ParentLink, Role
 
 # Doimiy pastki tugmalar tarkibi o'zgarganda shu qiymatni oshiring — bot ishga tushganda
 # eski qiymat bilan solishtirib, farq bo'lsa hamma foydalanuvchiga jim (bildirishnomasiz)
@@ -153,16 +153,65 @@ def children_keyboard(links: list[ParentLink]) -> InlineKeyboardMarkup:
 
 
 def fine_totals_keyboard(
-    employees: list[Employee], totals: dict[int, tuple[int, int]], back_callback: str
+    employees: list[Employee], totals: dict[int, dict[str, int]], back_callback: str
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    idx = 0
     for employee in employees:
-        amount, _count = totals.get(employee.id, (0, 0))
-        amount_str = f"{amount:,}".replace(",", " ")
+        stats = totals.get(employee.id)
+        if not stats or not stats.get("count"):
+            continue
+        idx += 1
+        parts = []
+        if stats.get("gray"):
+            parts.append(f"⚪{stats['gray']}")
+        if stats.get("yellow"):
+            parts.append(f"\U0001f7e1{stats['yellow']}")
+        if stats.get("red"):
+            parts.append(f"\U0001f534{stats['red']}")
+        if stats.get("money"):
+            parts.append(f"{stats['money']:,}".replace(",", " ") + "so'm")
+        summary = " ".join(parts)
         builder.button(
-            text=f"\U0001f464 {employee.full_name} — {amount_str} so'm",
+            text=f"{idx}. {employee.full_name} — {summary}",
             callback_data=f"report_emp:{employee.id}",
         )
+    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def report_detail_keyboard(employee_id: int, back_callback: str) -> InlineKeyboardMarkup:
+    """Faqat superadmin uchun — xodimning jarima/shtraf tarixi ostida ko'rinadi."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="\U0001f5d1 Ogohlantirishni bekor qilish", callback_data=f"cancel_fine_menu:{employee_id}"
+    )
+    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def fine_cancel_keyboard(fines: list[Fine], back_callback: str) -> InlineKeyboardMarkup:
+    icons = {"gray": "⚪", "yellow": "\U0001f7e1", "red": "\U0001f534"}
+    builder = InlineKeyboardBuilder()
+    for idx, fine in enumerate(fines, start=1):
+        if fine.severity:
+            label = icons.get(fine.severity, "")
+        else:
+            label = f"{fine.amount:,}".replace(",", " ") + " so'm"
+        builder.button(
+            text=f"{idx}. {fine.created_at:%d.%m %H:%M} — {label}",
+            callback_data=f"cancel_fine_pick:{fine.id}",
+        )
+    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def fine_cancel_confirm_keyboard(fine_id: int, back_callback: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="\U0001f5d1 Ha, bekor qilish", callback_data=f"cancel_fine_confirm:{fine_id}")
     builder.button(text="⬅️ Orqaga", callback_data=back_callback)
     builder.adjust(1)
     return builder.as_markup()
@@ -375,10 +424,9 @@ def student_search_results_keyboard(
     return builder.as_markup()
 
 
-def parent_link_request_keyboard(request_id: int) -> InlineKeyboardMarkup:
+def child_link_check_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Tasdiqlash", callback_data=f"apprlink:{request_id}")
-    builder.button(text="❌ Rad etish", callback_data=f"rejlink:{request_id}")
+    builder.button(text="✅ Tekshirish", callback_data="child_link_check")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -436,6 +484,16 @@ def broadcast_prompt_keyboard() -> InlineKeyboardMarkup:
 def broadcast_confirm_keyboard(recipient_count: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text=f"✅ Yuborish ({recipient_count} kishiga)", callback_data="bc_confirm_send")
+    builder.button(text="❌ Bekor qilish", callback_data="bc_cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def broadcast_role_keyboard(roles: list[Role]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="\U0001f310 Barcha xodimlar", callback_data="bc_workers_role:all")
+    for role in roles:
+        builder.button(text=role.name, callback_data=f"bc_workers_role:{role.id}")
     builder.button(text="❌ Bekor qilish", callback_data="bc_cancel")
     builder.adjust(1)
     return builder.as_markup()

@@ -56,9 +56,6 @@ class LinkParent(StatesGroup):
     choosing_search_student = State()
 
 
-class ChildLinkRequest(StatesGroup):
-    searching = State()
-    choosing_student = State()
 
 
 class AttendanceFlow(StatesGroup):

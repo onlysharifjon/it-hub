@@ -84,6 +84,10 @@ class Fine(Base):
     # (masalan "2.4"). Oddiy pullik shtraflarda ikkalasi ham None — amount ishlatiladi.
     severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
     code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Superadmin bekor qilsa to'ldiriladi — yozuv o'chirilmaydi, faqat hisobotlarda
+    # faol summaga/songa qo'shilmay qo'yadi (tarixda "bekor qilingan" deb ko'rinadi).
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_by_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
 
     employee: Mapped["Employee"] = relationship(foreign_keys=[employee_id], back_populates="fines_received")
     issued_by: Mapped["Employee"] = relationship(foreign_keys=[issued_by_id])
@@ -125,23 +129,6 @@ class AdminInviteLink(Base):
     used_by_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-
-class ParentLinkRequest(Base):
-    """Ota-ona '\U0001f517 Farzand biriktirish' orqali o'zi so'ragan, admin tasdiqlashini
-    kutayotgan bog'lanish so'rovi — tasdiqlangach ParentLink'ga aylanadi."""
-
-    __tablename__ = "parent_link_requests"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
-    crm_student_id: Mapped[int] = mapped_column(Integer)
-    student_name: Mapped[str] = mapped_column(String(255))
-    crm_group_id: Mapped[int] = mapped_column(Integer, default=0)
-    group_name: Mapped[str] = mapped_column(String(255), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-    employee: Mapped["Employee"] = relationship()
 
 
 class ParentLink(Base):

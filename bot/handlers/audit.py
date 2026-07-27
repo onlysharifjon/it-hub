@@ -1,7 +1,9 @@
+from datetime import datetime
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from database import async_session
 from keyboards import (
@@ -13,9 +15,12 @@ from keyboards import (
     bob_choice_keyboard,
     cancel_keyboard,
     employees_keyboard,
+    fine_cancel_confirm_keyboard,
+    fine_cancel_keyboard,
     fine_templates_keyboard,
     fine_totals_keyboard,
     photo_prompt_keyboard,
+    report_detail_keyboard,
 )
 from models import Employee, Fine, FineTemplate
 from states import AuditAuth, FineFlow, NewFineTemplate, ReportFlow
@@ -382,15 +387,28 @@ async def fine_receive_amount(message: Message, state: FSMContext) -> None:
     await message.answer(text, reply_markup=audit_menu_keyboard())
 
 
-async def _employee_fine_totals(session, employees: list[Employee]) -> dict[int, tuple[int, int]]:
+async def _employee_fine_totals(session, employees: list[Employee]) -> dict[int, dict[str, int]]:
+    """employee_id -> {"money", "count", "gray", "yellow", "red"} — bekor qilinganlar
+    kirmaydi (faol yozuvlar bo'yicha)."""
     if not employees:
         return {}
     result = await session.execute(
-        select(Fine.employee_id, func.coalesce(func.sum(Fine.amount), 0), func.count(Fine.id))
-        .where(Fine.employee_id.in_([e.id for e in employees]))
-        .group_by(Fine.employee_id)
+        select(Fine).where(
+            Fine.employee_id.in_([e.id for e in employees]),
+            Fine.cancelled_at.is_(None),
+        )
     )
-    return {row[0]: (row[1], row[2]) for row in result.all()}
+    totals: dict[int, dict[str, int]] = {}
+    for fine in result.scalars().all():
+        entry = totals.setdefault(
+            fine.employee_id, {"money": 0, "count": 0, "gray": 0, "yellow": 0, "red": 0}
+        )
+        entry["count"] += 1
+        if fine.severity:
+            entry[fine.severity] = entry.get(fine.severity, 0) + 1
+        else:
+            entry["money"] += fine.amount
+    return totals
 
 
 @router.callback_query(F.data == "report_start")
@@ -405,11 +423,10 @@ async def report_start(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer("Hozircha shtraflar yo'q.", show_alert=True)
             return
         totals = await _employee_fine_totals(session, employees)
-    grand_total = sum(amount for amount, _ in totals.values())
-    grand_total_str = f"{grand_total:,}".replace(",", " ")
+    grand_count = sum(stats["count"] for stats in totals.values())
     await state.set_state(ReportFlow.choosing_employee)
     await safe_edit_text(callback.message,
-        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_total_str} so'm\n\n"
+        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_count} ta\n\n"
         "Batafsil tarix uchun xodimni tanlang:",
         reply_markup=fine_totals_keyboard(employees, totals, back_callback="audit_menu"),
     )
@@ -427,11 +444,10 @@ async def hisobot_command(message: Message, state: FSMContext) -> None:
             await message.answer("Hozircha shtraflar yo'q.")
             return
         totals = await _employee_fine_totals(session, employees)
-    grand_total = sum(amount for amount, _ in totals.values())
-    grand_total_str = f"{grand_total:,}".replace(",", " ")
+    grand_count = sum(stats["count"] for stats in totals.values())
     await state.set_state(ReportFlow.choosing_employee)
     await message.answer(
-        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_total_str} so'm\n\n"
+        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_count} ta\n\n"
         "Batafsil tarix uchun xodimni tanlang:",
         reply_markup=fine_totals_keyboard(employees, totals, back_callback="audit_menu"),
     )
@@ -441,6 +457,7 @@ async def hisobot_command(message: Message, state: FSMContext) -> None:
 async def report_show(callback: CallbackQuery, state: FSMContext) -> None:
     employee_id = int(callback.data.split(":")[1])
     async with async_session() as session:
+        viewer = await get_employee(session, callback.from_user.id)
         employee = await session.get(Employee, employee_id)
         result = await session.execute(
             select(Fine).where(Fine.employee_id == employee_id).order_by(Fine.created_at.desc())
@@ -458,7 +475,85 @@ async def report_show(callback: CallbackQuery, state: FSMContext) -> None:
     lines = [header, ""]
     for fine in fines:
         lines.append(fine_line(fine))
-    await safe_edit_text(callback.message, "\n".join(lines), reply_markup=audit_menu_keyboard())
+    keyboard = audit_menu_keyboard()
+    if viewer and viewer.is_admin and viewer.is_superadmin:
+        keyboard = report_detail_keyboard(employee_id, back_callback="audit_menu")
+    await safe_edit_text(callback.message, "\n".join(lines), reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cancel_fine_menu:"))
+async def cancel_fine_menu(callback: CallbackQuery) -> None:
+    employee_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        viewer = await get_employee(session, callback.from_user.id)
+        if not (viewer and viewer.is_admin and viewer.is_superadmin):
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        result = await session.execute(
+            select(Fine)
+            .where(Fine.employee_id == employee_id, Fine.cancelled_at.is_(None))
+            .order_by(Fine.created_at.desc())
+        )
+        fines = result.scalars().all()
+    if not fines:
+        await callback.answer("Bekor qilinadigan narsa yo'q.", show_alert=True)
+        return
+    await safe_edit_text(
+        callback.message,
+        "Qaysi ogohlantirish/shtrafni bekor qilamiz?",
+        reply_markup=fine_cancel_keyboard(fines, back_callback=f"report_emp:{employee_id}"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cancel_fine_pick:"))
+async def cancel_fine_pick(callback: CallbackQuery) -> None:
+    fine_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        viewer = await get_employee(session, callback.from_user.id)
+        if not (viewer and viewer.is_admin and viewer.is_superadmin):
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        fine = await session.get(Fine, fine_id)
+        if fine is None:
+            await callback.answer("Topilmadi.", show_alert=True)
+            return
+        text = fine_line(fine)
+        employee_id = fine.employee_id
+    await safe_edit_text(
+        callback.message,
+        f"Shuni bekor qilasizmi?\n\n{text}",
+        reply_markup=fine_cancel_confirm_keyboard(fine_id, back_callback=f"cancel_fine_menu:{employee_id}"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cancel_fine_confirm:"))
+async def cancel_fine_confirm(callback: CallbackQuery) -> None:
+    fine_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        viewer = await get_employee(session, callback.from_user.id)
+        if not (viewer and viewer.is_admin and viewer.is_superadmin):
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        fine = await session.get(Fine, fine_id)
+        if fine is None or fine.cancelled_at is not None:
+            await callback.answer("Topilmadi yoki allaqachon bekor qilingan.", show_alert=True)
+            return
+        fine.cancelled_at = datetime.utcnow()
+        fine.cancelled_by_id = viewer.id
+        employee = await session.get(Employee, fine.employee_id)
+        employee_tg_id = employee.telegram_id if employee else None
+        await session.commit()
+    try:
+        if employee_tg_id:
+            await callback.bot.send_message(
+                employee_tg_id, "\U0001f5d1 Sizga berilgan bir ogohlantirish/shtraf bekor qilindi."
+            )
+    except Exception:
+        pass
+    await safe_edit_text(callback.message, "✅ Bekor qilindi.", reply_markup=audit_menu_keyboard())
     await callback.answer()
 
 

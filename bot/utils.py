@@ -15,9 +15,11 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import crm_client
 from keyboards import (
     BTN_REQUEST_CHILD,
     admin_reply_keyboard,
@@ -105,10 +107,11 @@ SEVERITY_LABELS = {
 
 
 def money_and_warning_summary(fines: list[Fine]) -> str:
-    money_total = sum(fine.amount for fine in fines if not fine.severity)
+    active = [fine for fine in fines if not fine.cancelled_at]
+    money_total = sum(fine.amount for fine in active if not fine.severity)
     money_str = f"{money_total:,}".replace(",", " ")
     warning_counts: dict[str, int] = {}
-    for fine in fines:
+    for fine in active:
         if fine.severity:
             warning_counts[fine.severity] = warning_counts.get(fine.severity, 0) + 1
     lines = [f"\U0001f4b0 Shtraf (pul): {money_str} so'm"]
@@ -117,17 +120,21 @@ def money_and_warning_summary(fines: list[Fine]) -> str:
             "⚠️ Jarima (rang bo'yicha): "
             + " | ".join(f"{SEVERITY_LABELS.get(sev, sev)}: {count}" for sev, count in warning_counts.items())
         )
+    cancelled_count = len(fines) - len(active)
+    if cancelled_count:
+        lines.append(f"\U0001f5d1 Bekor qilingan: {cancelled_count}")
     return "\n".join(lines)
 
 
 def fine_line(fine: Fine) -> str:
     timestamp = f"{fine.created_at:%d.%m.%Y %H:%M}"
+    prefix = "❌ [BEKOR QILINGAN] " if fine.cancelled_at else ""
     if fine.severity:
         label = SEVERITY_LABELS.get(fine.severity, fine.severity)
         band = f"{fine.code}-bandga ko'ra: " if fine.code else ""
-        return f"• {timestamp} — {label}\n  {band}{fine.reason}"
+        return f"• {timestamp} — {prefix}{label}\n  {band}{fine.reason}"
     amount_str = f"{fine.amount:,}".replace(",", " ")
-    return f"• {timestamp} — {amount_str} so'm ({fine.reason})"
+    return f"• {timestamp} — {prefix}{amount_str} so'm ({fine.reason})"
 
 
 async def list_employees_with_fines(session: AsyncSession) -> list[Employee]:
@@ -219,6 +226,58 @@ async def is_privileged(session: AsyncSession, employee: Employee | None) -> boo
     return await get_active_audit_account(session, employee.id) is not None
 
 
+def format_new_links_notice(names: list[str]) -> str:
+    if len(names) == 1:
+        return (
+            f"\U0001f465 Farzandingiz {names[0]} sizga ulandi!\n"
+            "Endi \"Farzandim\" tugmasi orqali uning davomati va dars jadvalini kuzatib borishingiz mumkin."
+        )
+    joined = ", ".join(names)
+    return (
+        f"\U0001f465 Farzandlaringiz sizga ulandi: {joined}.\n"
+        "Endi \"Farzandim\" tugmasi orqali ularning davomati va dars jadvalini kuzatib borishingiz mumkin."
+    )
+
+
+async def sync_parent_links_from_crm(session: AsyncSession, employee: Employee) -> list[str]:
+    """CRM administratori o'quvchining telegram_user_id maydoniga shu xodimning Telegram
+    ID'sini kiritgan bo'lsa (CRM'ning o'zida, botdan tashqarida), topilgan o'quvchi(lar)
+    uchun avtomatik ParentLink yaratadi (agar hali bo'lmasa, botning o'z bazasida).
+    Yangi bog'langan o'quvchilar ismlarini qaytaradi."""
+    try:
+        students = await crm_client.get_students_by_telegram_id(employee.telegram_id)
+    except crm_client.CRMError:
+        return []
+    if not students:
+        return []
+    newly_linked: list[str] = []
+    for student in students:
+        existing = await session.execute(
+            select(ParentLink).where(
+                ParentLink.employee_id == employee.id, ParentLink.crm_student_id == student["id"]
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            continue
+        session.add(
+            ParentLink(
+                employee_id=employee.id,
+                crm_student_id=student["id"],
+                student_name=student["full_name"],
+                crm_group_id=student.get("group_id", 0),
+                group_name=student.get("group_name", ""),
+            )
+        )
+        newly_linked.append(student["full_name"])
+    if newly_linked:
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return []
+    return newly_linked
+
+
 async def visible_fine_templates(session: AsyncSession, employee: Employee) -> list[FineTemplate]:
     query = select(FineTemplate).where(FineTemplate.is_active.is_(True))
     if not employee.is_admin:
@@ -244,7 +303,10 @@ async def set_setting(session: AsyncSession, key: str, value: str) -> None:
 
 
 async def commands_for_employee(session: AsyncSession, employee: Employee) -> list[tuple[str, str]]:
-    commands: list[tuple[str, str]] = [("start", "Botni qayta ishga tushirish")]
+    commands: list[tuple[str, str]] = [
+        ("start", "Botni qayta ishga tushirish"),
+        ("info", "Yordam / imkoniyatlar ro'yxati"),
+    ]
     if employee.is_admin:
         commands += [
             ("panel", "Boshqaruv paneli"),
@@ -282,6 +344,33 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
             ("farzandim", "Farzandim kelish/ketish tarixi"),
         ]
     return commands
+
+
+async def build_info_text(session: AsyncSession, employee: Employee) -> str:
+    """Xodimning roliga mos, u nima qila olishi haqidagi to'liq ma'lumot matni —
+    /info komandasi va tegishli rollar uchun /start'da avtomatik yuboriladi."""
+    commands = await commands_for_employee(session, employee)
+
+    roles_present: list[str] = []
+    if employee.is_admin:
+        roles_present.append("Superadmin (CEO)" if employee.is_superadmin else "Admin")
+    if await get_active_audit_account(session, employee.id) is not None:
+        roles_present.append("Audit")
+    if employee.role_id:
+        roles_present.append(employee.role.name if employee.role else "Xodim")
+    result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
+    if result.scalar_one_or_none() is not None:
+        roles_present.append("Ota-ona")
+    role_line = ", ".join(roles_present) if roles_present else "Foydalanuvchi"
+
+    lines = [f"\U00002139\U0000fe0f Siz: {role_line}", "", "Sizda quyidagi imkoniyatlar bor:", ""]
+    for name, description in commands:
+        if name in ("start", "info"):
+            continue
+        lines.append(f"/{name} — {description}")
+    lines.append("")
+    lines.append("Bularning aksariyatini pastdagi doimiy tugmalar orqali ham bajarish mumkin.")
+    return "\n".join(lines)
 
 
 async def apply_bot_commands(bot: Bot, session: AsyncSession, employee: Employee) -> None:
