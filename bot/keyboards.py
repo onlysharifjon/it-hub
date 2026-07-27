@@ -157,10 +157,9 @@ def fine_totals_keyboard(
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for employee in employees:
-        amount, _count = totals.get(employee.id, (0, 0))
-        amount_str = f"{amount:,}".replace(",", " ")
+        _amount, count = totals.get(employee.id, (0, 0))
         builder.button(
-            text=f"\U0001f464 {employee.full_name} — {amount_str} so'm",
+            text=f"\U0001f464 {employee.full_name} ({count} ta)",
             callback_data=f"report_emp:{employee.id}",
         )
     builder.button(text="⬅️ Orqaga", callback_data=back_callback)

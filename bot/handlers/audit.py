@@ -405,11 +405,10 @@ async def report_start(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer("Hozircha shtraflar yo'q.", show_alert=True)
             return
         totals = await _employee_fine_totals(session, employees)
-    grand_total = sum(amount for amount, _ in totals.values())
-    grand_total_str = f"{grand_total:,}".replace(",", " ")
+    grand_count = sum(count for _, count in totals.values())
     await state.set_state(ReportFlow.choosing_employee)
     await safe_edit_text(callback.message,
-        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_total_str} so'm\n\n"
+        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_count} ta\n\n"
         "Batafsil tarix uchun xodimni tanlang:",
         reply_markup=fine_totals_keyboard(employees, totals, back_callback="audit_menu"),
     )
@@ -427,11 +426,10 @@ async def hisobot_command(message: Message, state: FSMContext) -> None:
             await message.answer("Hozircha shtraflar yo'q.")
             return
         totals = await _employee_fine_totals(session, employees)
-    grand_total = sum(amount for amount, _ in totals.values())
-    grand_total_str = f"{grand_total:,}".replace(",", " ")
+    grand_count = sum(count for _, count in totals.values())
     await state.set_state(ReportFlow.choosing_employee)
     await message.answer(
-        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_total_str} so'm\n\n"
+        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_count} ta\n\n"
         "Batafsil tarix uchun xodimni tanlang:",
         reply_markup=fine_totals_keyboard(employees, totals, back_callback="audit_menu"),
     )
