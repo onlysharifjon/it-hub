@@ -26,6 +26,7 @@ from keyboards import (
     broadcast_prompt_keyboard,
     cancel_keyboard,
     employees_keyboard,
+    invite_tier_keyboard,
     reports_choice_keyboard,
     roles_keyboard,
     roles_manage_keyboard,
@@ -44,6 +45,7 @@ from states import (
 )
 from utils import (
     apply_bot_commands,
+    create_invite_link,
     ensure_audit_account,
     get_employee,
     get_setting,
@@ -1052,5 +1054,40 @@ async def remove_admin_pick(callback: CallbackQuery) -> None:
         pass
     await safe_edit_text(
         callback.message, f"✅ {employee_name} endi admin emas.", reply_markup=admin_menu_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "invite_link_start")
+async def invite_link_start(callback: CallbackQuery) -> None:
+    async with async_session() as session:
+        admin = await _require_superadmin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+    await safe_edit_text(
+        callback.message, "Qaysi daraja uchun havola yarataylik?", reply_markup=invite_tier_keyboard()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("invite_tier:"))
+async def invite_link_generate(callback: CallbackQuery) -> None:
+    tier = callback.data.split(":")[1]
+    async with async_session() as session:
+        admin = await _require_superadmin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        token = await create_invite_link(session, tier, admin.id)
+    bot_user = await callback.bot.get_me()
+    link = f"https://t.me/{bot_user.username}?start=invite_{token}"
+    tier_label = "Superadmin (CEO)" if tier == "superadmin" else "Admin"
+    await safe_edit_text(
+        callback.message,
+        f"\U0001f517 {tier_label} uchun bir martalik havola:\n\n{link}\n\n"
+        "Bu havolani ishonchli odamga yuboring — u shu havola orqali botga /start bossa, "
+        "avtomatik shu darajaga ko'tariladi. Havola faqat bir marta ishlaydi.",
+        reply_markup=admin_menu_keyboard(),
     )
     await callback.answer()

@@ -2,6 +2,7 @@ import hashlib
 import os as _os
 import secrets
 import string
+from datetime import datetime
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -25,7 +26,7 @@ from keyboards import (
     parent_reply_keyboard,
     worker_reply_keyboard,
 )
-from models import AuditAccount, Employee, Fine, FineTemplate, ParentLink, Role, Setting
+from models import AdminInviteLink, AuditAccount, Employee, Fine, FineTemplate, ParentLink, Role, Setting
 
 
 async def safe_edit_text(
@@ -173,6 +174,32 @@ async def ensure_audit_account(session: AsyncSession, employee: Employee) -> tup
     )
     await session.commit()
     return login, password
+
+
+async def create_invite_link(session: AsyncSession, tier: str, created_by_id: int) -> str:
+    """Bir martalik admin/superadmin taklif tokeni yaratadi va qaytaradi."""
+    token = secrets.token_urlsafe(16)
+    session.add(AdminInviteLink(token=token, tier=tier, created_by_id=created_by_id))
+    await session.commit()
+    return token
+
+
+async def consume_invite_link(session: AsyncSession, token: str, employee: Employee) -> str | None:
+    """Token to'g'ri va hali ishlatilmagan bo'lsa, employee'ni shu darajaga ko'taradi
+    va havolani 'ishlatilgan' deb belgilaydi. Muvaffaqiyatli bo'lsa daraja nomini
+    ("admin"|"superadmin") qaytaradi, aks holda (token yaroqsiz) None."""
+    result = await session.execute(
+        select(AdminInviteLink).where(AdminInviteLink.token == token, AdminInviteLink.used_at.is_(None))
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        return None
+    employee.is_admin = True
+    employee.is_superadmin = link.tier == "superadmin"
+    link.used_by_id = employee.id
+    link.used_at = datetime.utcnow()
+    await session.commit()
+    return link.tier
 
 
 async def get_active_audit_account(session: AsyncSession, employee_id: int) -> AuditAccount | None:
