@@ -226,6 +226,19 @@ async def is_privileged(session: AsyncSession, employee: Employee | None) -> boo
     return await get_active_audit_account(session, employee.id) is not None
 
 
+def format_new_links_notice(names: list[str]) -> str:
+    if len(names) == 1:
+        return (
+            f"\U0001f465 Farzandingiz {names[0]} sizga ulandi!\n"
+            "Endi \"Farzandim\" tugmasi orqali uning davomati va dars jadvalini kuzatib borishingiz mumkin."
+        )
+    joined = ", ".join(names)
+    return (
+        f"\U0001f465 Farzandlaringiz sizga ulandi: {joined}.\n"
+        "Endi \"Farzandim\" tugmasi orqali ularning davomati va dars jadvalini kuzatib borishingiz mumkin."
+    )
+
+
 async def sync_parent_links_from_crm(session: AsyncSession, employee: Employee) -> list[str]:
     """CRM administratori o'quvchining telegram_user_id maydoniga shu xodimning Telegram
     ID'sini kiritgan bo'lsa (CRM'ning o'zida, botdan tashqarida), topilgan o'quvchi(lar)

@@ -12,6 +12,7 @@ from utils import (
     apply_bot_commands,
     consume_invite_link,
     ensure_audit_account,
+    format_new_links_notice,
     get_active_audit_account,
     get_employee,
     list_admins,
@@ -73,15 +74,10 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
                 "Hozircha sizga rol berilmagan — admin tez orada rol beradi."
             )
 
-        if newly_linked:
-            names = ", ".join(newly_linked)
-            text += (
-                f"\n\n\U0001f465 CRM orqali avtomatik aniqlandi: {names}. "
-                "\"Farzandim\" tugmasi orqali ko'rishingiz mumkin."
-            )
-
         keyboard = await reply_keyboard_for_employee(session, employee)
         await message.answer(text, reply_markup=keyboard)
+        if newly_linked:
+            await message.answer(format_new_links_notice(newly_linked))
         await apply_bot_commands(message.bot, session, employee)
 
         if created and not employee.is_admin:
