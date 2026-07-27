@@ -54,6 +54,11 @@ async def _require_admin(session, telegram_id: int) -> Employee | None:
     return employee if employee and employee.is_admin else None
 
 
+async def _require_superadmin(session, telegram_id: int) -> Employee | None:
+    employee = await get_employee(session, telegram_id)
+    return employee if employee and employee.is_admin and employee.is_superadmin else None
+
+
 async def _show_crm_error(callback: CallbackQuery, error: Exception) -> None:
     await callback.answer(f"CRM xatosi: {error}", show_alert=True)
 
@@ -1011,7 +1016,7 @@ async def payment_reminder_loop(bot: Bot) -> None:
 @router.message(F.text == "/otaonaid")
 async def set_default_parent_start(message: Message, state: FSMContext) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, message.from_user.id)
+        admin = await _require_superadmin(session, message.from_user.id)
         if not admin:
             return
         current = await get_setting(session, "default_parent_chat_id")
@@ -1025,7 +1030,7 @@ async def set_default_parent_start(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data == "set_default_parent")
 async def set_default_parent_start_cb(callback: CallbackQuery, state: FSMContext) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return

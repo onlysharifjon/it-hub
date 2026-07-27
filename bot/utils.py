@@ -21,6 +21,7 @@ from keyboards import (
     BTN_REQUEST_CHILD,
     admin_reply_keyboard,
     audit_reply_keyboard,
+    limited_admin_reply_keyboard,
     parent_reply_keyboard,
     worker_reply_keyboard,
 )
@@ -224,14 +225,17 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
             ("davomat", "Kelish/ketish belgilash"),
             ("tolov", "O'quvchi to'lov holati"),
             ("tolovhisoboti", "To'lov hisoboti"),
-            ("otaonaid", "Standart ota-ona ID"),
-            ("rasmsozlama", "Shtrafda rasm majburiymi"),
-            ("ishchilar", "Xodimlar va rollar"),
-            ("rollar", "Rollarni boshqarish"),
-            ("auditlar", "Audit akkauntlari"),
-            ("shablonlar", "Shtraf shablonlari"),
             ("hisobot", "Jarima/shtraf hisoboti"),
         ]
+        if employee.is_superadmin:
+            commands += [
+                ("otaonaid", "Standart ota-ona ID"),
+                ("rasmsozlama", "Shtrafda rasm majburiymi"),
+                ("ishchilar", "Xodimlar va rollar"),
+                ("rollar", "Rollarni boshqarish"),
+                ("auditlar", "Audit akkauntlari"),
+                ("shablonlar", "Shtraf shablonlari"),
+            ]
     else:
         account = await get_active_audit_account(session, employee.id)
         if account is not None:
@@ -271,7 +275,8 @@ async def reply_keyboard_for_employee(
     is_parent = result.scalar_one_or_none() is not None
 
     if employee.is_admin:
-        rows = list(admin_reply_keyboard().keyboard)
+        base = admin_reply_keyboard() if employee.is_superadmin else limited_admin_reply_keyboard()
+        rows = list(base.keyboard)
         if is_parent:
             rows.extend(parent_reply_keyboard().keyboard)
         return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)

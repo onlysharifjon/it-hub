@@ -69,6 +69,8 @@ DISCIPLINE_CODE_TEMPLATES = [
 
 
 async def seed_admins() -> None:
+    """.env'dagi ADMIN_IDS — botning boshlang'ich (bootstrap) egalari, shuning uchun
+    to'liq huquqli superadmin sifatida urug'lanadi."""
     if not ADMIN_IDS:
         return
     async with async_session() as session:
@@ -76,12 +78,15 @@ async def seed_admins() -> None:
             result = await session.execute(select(Employee).where(Employee.telegram_id == tg_id))
             employee = result.scalar_one_or_none()
             if employee is None:
-                employee = Employee(telegram_id=tg_id, full_name=f"Admin {tg_id}", is_admin=True)
+                employee = Employee(
+                    telegram_id=tg_id, full_name=f"Admin {tg_id}", is_admin=True, is_superadmin=True
+                )
                 session.add(employee)
                 await session.commit()
                 await session.refresh(employee)
-            elif not employee.is_admin:
+            elif not employee.is_admin or not employee.is_superadmin:
                 employee.is_admin = True
+                employee.is_superadmin = True
                 await session.commit()
             await ensure_audit_account(session, employee)
 

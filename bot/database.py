@@ -24,6 +24,14 @@ def _set_sqlite_pragmas(dbapi_connection, _record) -> None:
 
 
 def _add_missing_columns(sync_conn) -> None:
+    employees_columns = {
+        row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(employees)").fetchall()
+    }
+    if employees_columns and "is_superadmin" not in employees_columns:
+        sync_conn.exec_driver_sql(
+            "ALTER TABLE employees ADD COLUMN is_superadmin BOOLEAN NOT NULL DEFAULT 0"
+        )
+
     fines_columns = {row[1] for row in sync_conn.exec_driver_sql("PRAGMA table_info(fines)").fetchall()}
     if fines_columns and "reason" not in fines_columns:
         sync_conn.exec_driver_sql("ALTER TABLE fines ADD COLUMN reason VARCHAR(255) NOT NULL DEFAULT ''")

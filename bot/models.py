@@ -27,6 +27,9 @@ class Employee(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id"), nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # To'liq huquqli admin — boshqa adminlarni qo'shish/olib tashlash, rollar, audit
+    # akkauntlari, shablonlar va sozlamalarni faqat superadmin boshqaradi.
+    is_superadmin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     role: Mapped["Role | None"] = relationship(back_populates="employees")
@@ -107,6 +110,21 @@ class Setting(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     key: Mapped[str] = mapped_column(String(64), unique=True)
     value: Mapped[str] = mapped_column(String(255))
+
+
+class AdminInviteLink(Base):
+    """Superadmin yaratadigan, bir martalik admin/superadmin taklif havolasi —
+    kimdir shu token bilan /start bossa, avtomatik shu darajaga ko'tariladi."""
+
+    __tablename__ = "admin_invite_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True)
+    tier: Mapped[str] = mapped_column(String(16))  # "admin" | "superadmin"
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    used_by_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ParentLinkRequest(Base):

@@ -17,6 +17,7 @@ from keyboards import (
     BTN_WORKERS,
     admin_menu_keyboard,
     admin_templates_keyboard,
+    admin_tier_keyboard,
     audit_account_detail_keyboard,
     audit_accounts_keyboard,
     audit_templates_manage_keyboard,
@@ -66,10 +67,15 @@ async def _require_admin(session, telegram_id: int) -> Employee | None:
     return employee if employee and employee.is_admin else None
 
 
+async def _require_superadmin(session, telegram_id: int) -> Employee | None:
+    employee = await get_employee(session, telegram_id)
+    return employee if employee and employee.is_admin and employee.is_superadmin else None
+
+
 @router.message(F.text.in_({"/ishchilar", BTN_WORKERS}))
 async def list_employees(message: Message) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, message.from_user.id)
+        admin = await _require_superadmin(session, message.from_user.id)
         if not admin:
             return
         employees = await list_staff_without_audit(session)
@@ -86,7 +92,7 @@ async def list_employees(message: Message) -> None:
 async def choose_role_for_employee(callback: CallbackQuery) -> None:
     employee_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -107,7 +113,7 @@ async def set_role(callback: CallbackQuery) -> None:
     _, employee_id, role_id = callback.data.split(":")
     employee_id, role_id = int(employee_id), int(role_id)
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -150,7 +156,7 @@ async def set_role(callback: CallbackQuery) -> None:
 @router.message(F.text.in_({"/rollar", BTN_ROLES}))
 async def manage_roles(message: Message) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, message.from_user.id)
+        admin = await _require_superadmin(session, message.from_user.id)
         if not admin:
             return
         result = await session.execute(select(Role).order_by(Role.name))
@@ -164,7 +170,7 @@ async def manage_roles(message: Message) -> None:
 async def toggle_role(callback: CallbackQuery) -> None:
     role_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -185,7 +191,7 @@ async def toggle_role(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "new_role")
 async def new_role_start(callback: CallbackQuery, state: FSMContext) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -221,7 +227,7 @@ async def new_role_save(message: Message, state: FSMContext) -> None:
 @router.message(F.text.in_({"/auditlar", BTN_AUDIT_ACCOUNTS}))
 async def list_audit_accounts(message: Message) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, message.from_user.id)
+        admin = await _require_superadmin(session, message.from_user.id)
         if not admin:
             return
         accounts = await _all_audit_accounts(session)
@@ -251,7 +257,7 @@ async def _audit_detail_text(session, account: AuditAccount) -> str:
 async def audit_detail(callback: CallbackQuery) -> None:
     account_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -270,7 +276,7 @@ async def audit_detail(callback: CallbackQuery) -> None:
 async def toggle_audit(callback: CallbackQuery) -> None:
     account_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -291,7 +297,7 @@ async def toggle_audit(callback: CallbackQuery) -> None:
 async def reset_audit_password_start(callback: CallbackQuery, state: FSMContext) -> None:
     account_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -337,7 +343,7 @@ async def reset_audit_password_save(message: Message, state: FSMContext) -> None
 @router.callback_query(F.data == "new_audit")
 async def new_audit_start(callback: CallbackQuery, state: FSMContext) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -433,7 +439,7 @@ async def new_audit_password(message: Message, state: FSMContext) -> None:
 @router.message(F.text.in_({"/shablonlar", BTN_TEMPLATES}))
 async def manage_fine_templates(message: Message) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, message.from_user.id)
+        admin = await _require_superadmin(session, message.from_user.id)
         if not admin:
             return
         templates = await _admin_fine_templates(session)
@@ -465,7 +471,7 @@ def _template_detail_text(template: FineTemplate) -> str:
 async def template_detail(callback: CallbackQuery) -> None:
     template_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -484,7 +490,7 @@ async def template_detail(callback: CallbackQuery) -> None:
 async def toggle_fine_template(callback: CallbackQuery) -> None:
     template_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -505,7 +511,7 @@ async def toggle_fine_template(callback: CallbackQuery) -> None:
 async def toggle_template_share(callback: CallbackQuery) -> None:
     template_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -526,7 +532,7 @@ async def toggle_template_share(callback: CallbackQuery) -> None:
 async def edit_template_start(callback: CallbackQuery, state: FSMContext) -> None:
     template_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -580,7 +586,7 @@ async def edit_template_save(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data == "new_template")
 async def new_fine_template_start(callback: CallbackQuery, state: FSMContext) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -667,7 +673,7 @@ async def admin_menu(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "adm_workers")
 async def list_employees_cb(callback: CallbackQuery) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -688,7 +694,7 @@ async def list_employees_cb(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "adm_roles")
 async def manage_roles_cb(callback: CallbackQuery) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -703,7 +709,7 @@ async def manage_roles_cb(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "adm_audits")
 async def list_audit_accounts_cb(callback: CallbackQuery) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -717,7 +723,7 @@ async def list_audit_accounts_cb(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "adm_templates")
 async def manage_fine_templates_cb(callback: CallbackQuery) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -868,7 +874,7 @@ async def _toggle_fine_photo_required(session) -> str:
 @router.message(F.text == "/rasmsozlama")
 async def toggle_fine_photo_setting(message: Message) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, message.from_user.id)
+        admin = await _require_superadmin(session, message.from_user.id)
         if not admin:
             return
         status = await _toggle_fine_photo_required(session)
@@ -878,7 +884,7 @@ async def toggle_fine_photo_setting(message: Message) -> None:
 @router.callback_query(F.data == "toggle_fine_photo")
 async def toggle_fine_photo_cb(callback: CallbackQuery) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -908,7 +914,7 @@ async def broadcast_menu(message: Message) -> None:
 @router.message(F.text == BTN_SETTINGS)
 async def settings_menu(message: Message) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, message.from_user.id)
+        admin = await _require_superadmin(session, message.from_user.id)
         if not admin:
             return
     await message.answer("Qaysi sozlamani o'zgartirmoqchisiz?", reply_markup=settings_choice_keyboard())
@@ -917,7 +923,7 @@ async def settings_menu(message: Message) -> None:
 @router.callback_query(F.data == "new_admin_start")
 async def new_admin_start(callback: CallbackQuery) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -928,16 +934,39 @@ async def new_admin_start(callback: CallbackQuery) -> None:
     await safe_edit_text(
         callback.message,
         "Kimni admin qilmoqchisiz?",
-        reply_markup=employees_keyboard(candidates, "set_admin", back_callback="adm_menu"),
+        reply_markup=employees_keyboard(candidates, "set_admin_pick", back_callback="adm_menu"),
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("set_admin:"))
-async def new_admin_pick(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith("set_admin_pick:"))
+async def new_admin_pick_tier(callback: CallbackQuery) -> None:
     employee_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
+        if not admin:
+            await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
+            return
+        employee = await session.get(Employee, employee_id)
+        if employee is None:
+            await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
+            return
+        employee_name = employee.full_name
+    await safe_edit_text(
+        callback.message,
+        f"{employee_name} qaysi darajada admin bo'lsin?",
+        reply_markup=admin_tier_keyboard(employee_id, back_callback="new_admin_start"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("set_admin_final:"))
+async def new_admin_finalize(callback: CallbackQuery) -> None:
+    _, employee_id_str, tier = callback.data.split(":")
+    employee_id = int(employee_id_str)
+    is_superadmin = tier == "superadmin"
+    async with async_session() as session:
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -946,21 +975,23 @@ async def new_admin_pick(callback: CallbackQuery) -> None:
             await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
             return
         employee.is_admin = True
+        employee.is_superadmin = is_superadmin
         await session.commit()
         employee_name = employee.full_name
         employee_telegram_id = employee.telegram_id
         audit_creds = await ensure_audit_account(session, employee)
         await apply_bot_commands(callback.bot, session, employee)
         keyboard = await reply_keyboard_for_employee(session, employee)
+    tier_label = "Superadmin (CEO)" if is_superadmin else "Admin"
     try:
         await callback.bot.send_message(
             employee_telegram_id,
-            "\U0001f451 Sizga admin huquqi berildi. Pastdagi tugmalar orqali boshqaring.",
+            f"\U0001f451 Sizga {tier_label} huquqi berildi. Pastdagi tugmalar orqali boshqaring.",
             reply_markup=keyboard,
         )
     except Exception:
         pass
-    confirm_text = f"✅ {employee_name} endi admin."
+    confirm_text = f"✅ {employee_name} endi {tier_label}."
     if audit_creds:
         login, password = audit_creds
         confirm_text += f"\n\U0001f511 Audit login: <code>{login}</code>, parol: <code>{password}</code>"
@@ -971,7 +1002,7 @@ async def new_admin_pick(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "remove_admin_start")
 async def remove_admin_start(callback: CallbackQuery) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -991,7 +1022,7 @@ async def remove_admin_start(callback: CallbackQuery) -> None:
 async def remove_admin_pick(callback: CallbackQuery) -> None:
     employee_id = int(callback.data.split(":")[1])
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -1003,7 +1034,11 @@ async def remove_admin_pick(callback: CallbackQuery) -> None:
         if employee is None or not employee.is_admin:
             await callback.answer("Foydalanuvchi topilmadi.", show_alert=True)
             return
+        if employee.is_superadmin and sum(1 for a in admins if a.is_superadmin) <= 1:
+            await callback.answer("Bu yagona superadmin, uni olib bo'lmaydi.", show_alert=True)
+            return
         employee.is_admin = False
+        employee.is_superadmin = False
         await session.commit()
         employee_name = employee.full_name
         employee_telegram_id = employee.telegram_id
