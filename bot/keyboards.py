@@ -424,10 +424,9 @@ def student_search_results_keyboard(
     return builder.as_markup()
 
 
-def parent_link_request_keyboard(request_id: int) -> InlineKeyboardMarkup:
+def child_link_check_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Tasdiqlash", callback_data=f"apprlink:{request_id}")
-    builder.button(text="❌ Rad etish", callback_data=f"rejlink:{request_id}")
+    builder.button(text="✅ Tekshirish", callback_data="child_link_check")
     builder.adjust(1)
     return builder.as_markup()
 

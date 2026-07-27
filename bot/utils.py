@@ -303,7 +303,10 @@ async def set_setting(session: AsyncSession, key: str, value: str) -> None:
 
 
 async def commands_for_employee(session: AsyncSession, employee: Employee) -> list[tuple[str, str]]:
-    commands: list[tuple[str, str]] = [("start", "Botni qayta ishga tushirish")]
+    commands: list[tuple[str, str]] = [
+        ("start", "Botni qayta ishga tushirish"),
+        ("info", "Yordam / imkoniyatlar ro'yxati"),
+    ]
     if employee.is_admin:
         commands += [
             ("panel", "Boshqaruv paneli"),
@@ -341,6 +344,33 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
             ("farzandim", "Farzandim kelish/ketish tarixi"),
         ]
     return commands
+
+
+async def build_info_text(session: AsyncSession, employee: Employee) -> str:
+    """Xodimning roliga mos, u nima qila olishi haqidagi to'liq ma'lumot matni —
+    /info komandasi va tegishli rollar uchun /start'da avtomatik yuboriladi."""
+    commands = await commands_for_employee(session, employee)
+
+    roles_present: list[str] = []
+    if employee.is_admin:
+        roles_present.append("Superadmin (CEO)" if employee.is_superadmin else "Admin")
+    if await get_active_audit_account(session, employee.id) is not None:
+        roles_present.append("Audit")
+    if employee.role_id:
+        roles_present.append(employee.role.name if employee.role else "Xodim")
+    result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
+    if result.scalar_one_or_none() is not None:
+        roles_present.append("Ota-ona")
+    role_line = ", ".join(roles_present) if roles_present else "Foydalanuvchi"
+
+    lines = [f"\U00002139\U0000fe0f Siz: {role_line}", "", "Sizda quyidagi imkoniyatlar bor:", ""]
+    for name, description in commands:
+        if name in ("start", "info"):
+            continue
+        lines.append(f"/{name} — {description}")
+    lines.append("")
+    lines.append("Bularning aksariyatini pastdagi doimiy tugmalar orqali ham bajarish mumkin.")
+    return "\n".join(lines)
 
 
 async def apply_bot_commands(bot: Bot, session: AsyncSession, employee: Employee) -> None:

@@ -131,23 +131,6 @@ class AdminInviteLink(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
-class ParentLinkRequest(Base):
-    """Ota-ona '\U0001f517 Farzand biriktirish' orqali o'zi so'ragan, admin tasdiqlashini
-    kutayotgan bog'lanish so'rovi — tasdiqlangach ParentLink'ga aylanadi."""
-
-    __tablename__ = "parent_link_requests"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)
-    crm_student_id: Mapped[int] = mapped_column(Integer)
-    student_name: Mapped[str] = mapped_column(String(255))
-    crm_group_id: Mapped[int] = mapped_column(Integer, default=0)
-    group_name: Mapped[str] = mapped_column(String(255), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-    employee: Mapped["Employee"] = relationship()
-
-
 class ParentLink(Base):
     """Ota-ona (Employee) va CRM o'quvchisi orasidagi bog'lanish — botning o'z bazasida
     saqlanadi, CRMga yozish shart emas (CRM roli yetarli bo'lmasa ham ishlaydi)."""
