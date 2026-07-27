@@ -15,9 +15,11 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import crm_client
 from keyboards import (
     BTN_REQUEST_CHILD,
     admin_reply_keyboard,
@@ -222,6 +224,45 @@ async def is_privileged(session: AsyncSession, employee: Employee | None) -> boo
     if employee.is_admin:
         return True
     return await get_active_audit_account(session, employee.id) is not None
+
+
+async def sync_parent_links_from_crm(session: AsyncSession, employee: Employee) -> list[str]:
+    """CRM administratori o'quvchining telegram_user_id maydoniga shu xodimning Telegram
+    ID'sini kiritgan bo'lsa (CRM'ning o'zida, botdan tashqarida), topilgan o'quvchi(lar)
+    uchun avtomatik ParentLink yaratadi (agar hali bo'lmasa, botning o'z bazasida).
+    Yangi bog'langan o'quvchilar ismlarini qaytaradi."""
+    try:
+        students = await crm_client.get_students_by_telegram_id(employee.telegram_id)
+    except crm_client.CRMError:
+        return []
+    if not students:
+        return []
+    newly_linked: list[str] = []
+    for student in students:
+        existing = await session.execute(
+            select(ParentLink).where(
+                ParentLink.employee_id == employee.id, ParentLink.crm_student_id == student["id"]
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            continue
+        session.add(
+            ParentLink(
+                employee_id=employee.id,
+                crm_student_id=student["id"],
+                student_name=student["full_name"],
+                crm_group_id=student.get("group_id", 0),
+                group_name=student.get("group_name", ""),
+            )
+        )
+        newly_linked.append(student["full_name"])
+    if newly_linked:
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            return []
+    return newly_linked
 
 
 async def visible_fine_templates(session: AsyncSession, employee: Employee) -> list[FineTemplate]:

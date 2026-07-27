@@ -117,6 +117,35 @@ def _sync_search_students(query: str, page_size: int) -> list[dict]:
         return results
 
 
+def _sync_get_students_by_telegram_id(telegram_id: str) -> list[dict]:
+    """CRM administratori Student.telegram_user_id maydoniga ota-onaning Telegram ID'sini
+    kiritadi — shu maydon orqali qaysi o'quvchi(lar) shu ota-onaga tegishli ekanini topamiz.
+    Bitta ID bir nechta o'quvchiga (aka-uka/opa-singil) tegishli bo'lishi mumkin."""
+    with SessionLocal() as db:
+        students = (
+            db.query(bm.Student)
+            .filter(bm.Student.telegram_user_id == telegram_id)
+            .filter(bm.Student.is_archived.is_(False))
+            .all()
+        )
+        results = []
+        for student in students:
+            membership = (
+                db.query(bm.GroupStudent).filter(bm.GroupStudent.student_id == student.id).first()
+            )
+            group_id = membership.group_id if membership else 0
+            group_name = (membership.group.name if membership and membership.group else "") or ""
+            results.append(
+                {
+                    "id": student.id,
+                    "full_name": student.full_name,
+                    "group_id": group_id,
+                    "group_name": group_name,
+                }
+            )
+        return results
+
+
 def _sync_get_payment_summary(student_id: int, month: int | None, year: int | None) -> dict:
     now = _tashkent_now()
     month = month or now.month
@@ -167,3 +196,7 @@ async def search_students(query: str, page_size: int = 20) -> list[dict]:
 
 async def get_payment_summary(student_id: int, month: int | None = None, year: int | None = None) -> dict:
     return await _run(_sync_get_payment_summary, student_id, month, year)
+
+
+async def get_students_by_telegram_id(telegram_id: int) -> list[dict]:
+    return await _run(_sync_get_students_by_telegram_id, str(telegram_id))

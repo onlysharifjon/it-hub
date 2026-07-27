@@ -16,6 +16,7 @@ from utils import (
     get_employee,
     list_admins,
     reply_keyboard_for_employee,
+    sync_parent_links_from_crm,
 )
 
 router = Router(name="start")
@@ -43,6 +44,8 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             await session.refresh(employee)
             created = True
 
+        newly_linked = await sync_parent_links_from_crm(session, employee)
+
         invited_tier = None
         if payload and payload.startswith("invite_"):
             invited_tier = await consume_invite_link(session, payload[len("invite_"):], employee)
@@ -68,6 +71,13 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             text = (
                 f"\U0001f44b Xush kelibsiz, {employee.full_name}!\n\n"
                 "Hozircha sizga rol berilmagan — admin tez orada rol beradi."
+            )
+
+        if newly_linked:
+            names = ", ".join(newly_linked)
+            text += (
+                f"\n\n\U0001f465 CRM orqali avtomatik aniqlandi: {names}. "
+                "\"Farzandim\" tugmasi orqali ko'rishingiz mumkin."
             )
 
         keyboard = await reply_keyboard_for_employee(session, employee)
