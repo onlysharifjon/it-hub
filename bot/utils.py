@@ -1,5 +1,7 @@
 import hashlib
 import os as _os
+import secrets
+import string
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -78,6 +80,21 @@ async def list_staff(session: AsyncSession) -> list[Employee]:
     return list(result.scalars().all())
 
 
+async def list_staff_without_audit(session: AsyncSession) -> list[Employee]:
+    """/ishchilar ("Xodimlar") ro'yxati uchun — audit huquqi berilganlar bu yerda
+    ko'rinmaydi (ular "Audit akkauntlari" bo'limida boshqariladi)."""
+    active_audit_ids = select(AuditAccount.employee_id).where(AuditAccount.is_active.is_(True))
+    result = await session.execute(
+        select(Employee)
+        .options(selectinload(Employee.role))
+        .outerjoin(Role, Employee.role_id == Role.id)
+        .where(Employee.is_admin.is_(False))
+        .where((Employee.role_id.is_(None)) | (Role.is_parent.is_(False)))
+        .where(Employee.id.not_in(active_audit_ids))
+    )
+    return list(result.scalars().all())
+
+
 SEVERITY_LABELS = {
     "gray": "⚪ Kulrang eslatma",
     "yellow": "\U0001f7e1 Sariq ogohlantirish",
@@ -131,6 +148,30 @@ def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
 def verify_password(password: str, salt: str, password_hash: str) -> bool:
     digest, _ = hash_password(password, salt)
     return digest == password_hash
+
+
+async def ensure_audit_account(session: AsyncSession, employee: Employee) -> tuple[str, str] | None:
+    """Employee uchun audit akkaunt bo'lmasa, avtomatik login/parol bilan yaratadi
+    (masalan admin qilib tayinlanganda — keyin adminlikdan olinsa ham audit huquqi
+    saqlanib qolishi uchun). Yangi yaratilgan bo'lsa (login, parol) qaytaradi,
+    aks holda (allaqachon bor bo'lsa) None."""
+    existing = await session.execute(select(AuditAccount).where(AuditAccount.employee_id == employee.id))
+    if existing.scalar_one_or_none() is not None:
+        return None
+    login = f"audit{employee.id}"
+    while True:
+        taken = await session.execute(select(AuditAccount).where(AuditAccount.login == login))
+        if taken.scalar_one_or_none() is None:
+            break
+        login = f"audit{employee.id}_{secrets.token_hex(2)}"
+    alphabet = string.ascii_letters + string.digits
+    password = "".join(secrets.choice(alphabet) for _ in range(10))
+    password_hash, salt = hash_password(password)
+    session.add(
+        AuditAccount(employee_id=employee.id, login=login, password_hash=password_hash, salt=salt)
+    )
+    await session.commit()
+    return login, password
 
 
 async def get_active_audit_account(session: AsyncSession, employee_id: int) -> AuditAccount | None:

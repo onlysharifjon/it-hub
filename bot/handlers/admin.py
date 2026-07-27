@@ -43,6 +43,7 @@ from states import (
 )
 from utils import (
     apply_bot_commands,
+    ensure_audit_account,
     get_employee,
     get_setting,
     hash_password,
@@ -50,6 +51,7 @@ from utils import (
     list_employees_with_fines,
     list_parents,
     list_staff,
+    list_staff_without_audit,
     list_workers,
     reply_keyboard_for_employee,
     safe_edit_text,
@@ -70,7 +72,7 @@ async def list_employees(message: Message) -> None:
         admin = await _require_admin(session, message.from_user.id)
         if not admin:
             return
-        employees = await list_staff(session)
+        employees = await list_staff_without_audit(session)
         if not employees:
             await message.answer("Hozircha botga start bergan xodimlar yo'q.")
             return
@@ -339,7 +341,7 @@ async def new_audit_start(callback: CallbackQuery, state: FSMContext) -> None:
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
-        employees = await list_staff(session)
+        employees = await list_staff_without_audit(session)
     if not employees:
         await callback.answer("Avval /ishchilar ro'yxatida xodim bo'lishi kerak.", show_alert=True)
         return
@@ -669,7 +671,7 @@ async def list_employees_cb(callback: CallbackQuery) -> None:
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
-        employees = await list_staff(session)
+        employees = await list_staff_without_audit(session)
     if not employees:
         await safe_edit_text(callback.message,
             "Hozircha botga start bergan xodimlar yo'q.", reply_markup=admin_menu_keyboard()
@@ -947,6 +949,7 @@ async def new_admin_pick(callback: CallbackQuery) -> None:
         await session.commit()
         employee_name = employee.full_name
         employee_telegram_id = employee.telegram_id
+        audit_creds = await ensure_audit_account(session, employee)
         await apply_bot_commands(callback.bot, session, employee)
         keyboard = await reply_keyboard_for_employee(session, employee)
     try:
@@ -957,9 +960,11 @@ async def new_admin_pick(callback: CallbackQuery) -> None:
         )
     except Exception:
         pass
-    await safe_edit_text(
-        callback.message, f"✅ {employee_name} endi admin.", reply_markup=admin_menu_keyboard()
-    )
+    confirm_text = f"✅ {employee_name} endi admin."
+    if audit_creds:
+        login, password = audit_creds
+        confirm_text += f"\n\U0001f511 Audit login: <code>{login}</code>, parol: <code>{password}</code>"
+    await safe_edit_text(callback.message, confirm_text, reply_markup=admin_menu_keyboard())
     await callback.answer()
 
 

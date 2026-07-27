@@ -14,7 +14,7 @@ from handlers import admin, audit, crm, panel, profile, start
 from handlers.crm import payment_reminder_loop
 from keyboards import KEYBOARD_VERSION
 from models import Employee, FineTemplate, Role
-from utils import apply_bot_commands, get_setting, reply_keyboard_for_employee, set_setting
+from utils import apply_bot_commands, ensure_audit_account, get_setting, reply_keyboard_for_employee, set_setting
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +76,14 @@ async def seed_admins() -> None:
             result = await session.execute(select(Employee).where(Employee.telegram_id == tg_id))
             employee = result.scalar_one_or_none()
             if employee is None:
-                session.add(Employee(telegram_id=tg_id, full_name=f"Admin {tg_id}", is_admin=True))
+                employee = Employee(telegram_id=tg_id, full_name=f"Admin {tg_id}", is_admin=True)
+                session.add(employee)
+                await session.commit()
+                await session.refresh(employee)
             elif not employee.is_admin:
                 employee.is_admin = True
-        await session.commit()
+                await session.commit()
+            await ensure_audit_account(session, employee)
 
 
 async def seed_roles() -> None:
