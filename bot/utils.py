@@ -189,19 +189,19 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
             ("rollar", "Rollarni boshqarish"),
             ("auditlar", "Audit akkauntlari"),
             ("shablonlar", "Shtraf shablonlari"),
-            ("hisobot", "Shtraflar hisoboti"),
+            ("hisobot", "Jarima/shtraf hisoboti"),
         ]
-        return commands
-
-    account = await get_active_audit_account(session, employee.id)
-    if account is not None:
-        commands += [
-            ("panel", "Audit paneli"),
-            ("audit", "Audit rejimiga kirish"),
-            ("hisobot", "Shtraflar hisoboti"),
-        ]
-    if employee.role_id:
-        commands.append(("shtraflarim", "Mening shtraflarim"))
+    else:
+        account = await get_active_audit_account(session, employee.id)
+        if account is not None:
+            commands += [
+                ("panel", "Audit paneli"),
+                ("audit", "Audit rejimiga kirish"),
+                ("hisobot", "Jarima/shtraf hisoboti"),
+            ]
+        if employee.role_id:
+            commands.append(("shtraflarim", "Mening jarima/shtraflarim"))
+        commands.append(("farzandbiriktir", "Farzand biriktirish so'rovi yuborish"))
 
     result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
     if result.scalar_one_or_none() is not None:
@@ -209,7 +209,6 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
             ("jadval", "Farzandim dars jadvali"),
             ("farzandim", "Farzandim kelish/ketish tarixi"),
         ]
-    commands.append(("farzandbiriktir", "Farzand biriktirish so'rovi yuborish"))
     return commands
 
 
@@ -227,8 +226,14 @@ async def apply_bot_commands(bot: Bot, session: AsyncSession, employee: Employee
 async def reply_keyboard_for_employee(
     session: AsyncSession, employee: Employee
 ) -> ReplyKeyboardMarkup | None:
+    result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
+    is_parent = result.scalar_one_or_none() is not None
+
     if employee.is_admin:
-        return admin_reply_keyboard()
+        rows = list(admin_reply_keyboard().keyboard)
+        if is_parent:
+            rows.extend(parent_reply_keyboard().keyboard)
+        return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 
     rows = []
     account = await get_active_audit_account(session, employee.id)
@@ -236,8 +241,7 @@ async def reply_keyboard_for_employee(
         rows.extend(audit_reply_keyboard().keyboard)
     if employee.role_id:
         rows.extend(worker_reply_keyboard().keyboard)
-    result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
-    if result.scalar_one_or_none() is not None:
+    if is_parent:
         rows.extend(parent_reply_keyboard().keyboard)
     rows.append([KeyboardButton(text=BTN_REQUEST_CHILD)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)

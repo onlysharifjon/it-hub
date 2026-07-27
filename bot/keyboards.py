@@ -3,6 +3,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from models import AuditAccount, Employee, FineTemplate, ParentLink, Role
 
+# Doimiy pastki tugmalar tarkibi o'zgarganda shu qiymatni oshiring — bot ishga tushganda
+# eski qiymat bilan solishtirib, farq bo'lsa hamma foydalanuvchiga jim (bildirishnomasiz)
+# yangilangan tugmalarni qayta yuboradi (main.py: refresh_reply_keyboards_if_changed).
+KEYBOARD_VERSION = "4"
+
 # ── Doimiy pastki menyu tugma matnlari (komandalar bilan bir xil ishlaydi) ──────
 
 BTN_WORKERS = "\U0001f465 Xodimlar"
@@ -16,11 +21,11 @@ BTN_ATTENDANCE = "\U0001f4cb Davomat"
 BTN_PAYMENT = "\U0001f4b0 To'lov holati"
 BTN_SETTINGS = "\U00002699 Sozlamalar"
 
-BTN_FINE_GIVE = "\U0001f9fe Shtraf berish"
+BTN_FINE_GIVE = "\U000026a0\U0000fe0f Jarima/Shtraf berish"
 BTN_FINE_REPORT = "\U0001f4ca Hisobot"
 BTN_MY_TEMPLATES = "\U0001f5c2 Mening shablonlarim"
 
-BTN_MY_FINES = "\U0001f4b5 Mening shtraflarim"
+BTN_MY_FINES = "\U0001f4cb Mening jarima/shtraflarim"
 
 BTN_MY_CHILD = "\U0001f476 Farzandim"
 BTN_SCHEDULE = "\U0001f4c5 Jadval"
@@ -314,6 +319,13 @@ def link_method_keyboard(back_callback: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def cancel_keyboard(callback_data: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Bekor qilish", callback_data=callback_data)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def student_search_results_keyboard(
     students: list[dict], prefix: str, back_callback: str
 ) -> InlineKeyboardMarkup:
@@ -380,6 +392,14 @@ def attendance_select_keyboard(
 
 def broadcast_prompt_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Bekor qilish", callback_data="bc_cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def broadcast_confirm_keyboard(recipient_count: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=f"✅ Yuborish ({recipient_count} kishiga)", callback_data="bc_confirm_send")
     builder.button(text="❌ Bekor qilish", callback_data="bc_cancel")
     builder.adjust(1)
     return builder.as_markup()

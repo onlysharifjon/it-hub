@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -52,9 +52,10 @@ class AuditAccount(Base):
 
 class FineTemplate(Base):
     __tablename__ = "fine_templates"
+    __table_args__ = (UniqueConstraint("owner", "text", name="uq_fine_templates_owner_text"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    text: Mapped[str] = mapped_column(String(255), unique=True)
+    text: Mapped[str] = mapped_column(String(255))
     short_name: Mapped[str] = mapped_column(String(64))
     owner: Mapped[str] = mapped_column(String(16))
     shared_with_audit: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -130,6 +131,7 @@ class ParentLink(Base):
     saqlanadi, CRMga yozish shart emas (CRM roli yetarli bo'lmasa ham ishlaydi)."""
 
     __tablename__ = "parent_links"
+    __table_args__ = (UniqueConstraint("employee_id", "crm_student_id", name="uq_parent_links_employee_student"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)

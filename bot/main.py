@@ -8,20 +8,13 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, ErrorEvent
 from sqlalchemy import select
 
-from config import (
-    ADMIN_IDS,
-    AUDIT_SEED_ID,
-    AUDIT_SEED_LOGIN,
-    AUDIT_SEED_PASSWORD,
-    BASE_DIR,
-    BOT_TOKEN,
-    DEFAULT_PARENT_CHAT_ID,
-)
+from config import ADMIN_IDS, BASE_DIR, BOT_TOKEN, DEFAULT_PARENT_CHAT_ID
 from database import async_session, init_db
 from handlers import admin, audit, crm, panel, profile, start
 from handlers.crm import payment_reminder_loop
-from models import AuditAccount, Employee, FineTemplate, Role
-from utils import apply_bot_commands, get_setting, hash_password, set_setting
+from keyboards import KEYBOARD_VERSION
+from models import Employee, FineTemplate, Role
+from utils import apply_bot_commands, get_setting, reply_keyboard_for_employee, set_setting
 
 logger = logging.getLogger(__name__)
 
@@ -89,36 +82,6 @@ async def seed_admins() -> None:
         await session.commit()
 
 
-async def seed_audit_account() -> None:
-    if not (AUDIT_SEED_ID and AUDIT_SEED_LOGIN and AUDIT_SEED_PASSWORD):
-        return
-    tg_id = int(AUDIT_SEED_ID)
-    async with async_session() as session:
-        result = await session.execute(select(Employee).where(Employee.telegram_id == tg_id))
-        employee = result.scalar_one_or_none()
-        if employee is None:
-            employee = Employee(telegram_id=tg_id, full_name=f"Audit {tg_id}")
-            session.add(employee)
-            await session.commit()
-            await session.refresh(employee)
-
-        result = await session.execute(select(AuditAccount).where(AuditAccount.employee_id == employee.id))
-        account = result.scalar_one_or_none()
-        if account is not None:
-            return
-
-        password_hash, salt = hash_password(AUDIT_SEED_PASSWORD)
-        session.add(
-            AuditAccount(
-                employee_id=employee.id,
-                login=AUDIT_SEED_LOGIN,
-                password_hash=password_hash,
-                salt=salt,
-            )
-        )
-        await session.commit()
-
-
 async def seed_roles() -> None:
     async with async_session() as session:
         result = await session.execute(select(Role))
@@ -176,6 +139,31 @@ async def refresh_all_bot_commands(bot: Bot) -> None:
             await apply_bot_commands(bot, session, employee)
 
 
+async def refresh_reply_keyboards_if_changed(bot: Bot) -> None:
+    """Doimiy pastki tugmalar tarkibi (KEYBOARD_VERSION) o'zgargan bo'lsa, hamma
+    foydalanuvchiga jim (bildirishnomasiz) yangilangan tugmalarni qayta yuboradi —
+    aks holda Telegram eski tugmalarni saqlab qoladi (faqat yangi xabar bilan yangilanadi)."""
+    async with async_session() as session:
+        stored_version = await get_setting(session, "keyboard_version")
+        if stored_version == KEYBOARD_VERSION:
+            return
+        employees = (await session.execute(select(Employee))).scalars().all()
+        for employee in employees:
+            keyboard = await reply_keyboard_for_employee(session, employee)
+            if keyboard is None:
+                continue
+            try:
+                await bot.send_message(
+                    employee.telegram_id,
+                    "\U0001f504 Pastdagi tugmalar yangilandi.",
+                    reply_markup=keyboard,
+                    disable_notification=True,
+                )
+            except Exception:
+                continue
+        await set_setting(session, "keyboard_version", KEYBOARD_VERSION)
+
+
 def _setup_logging() -> None:
     log_dir = BASE_DIR / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -199,7 +187,6 @@ async def main() -> None:
     await seed_roles()
     await seed_fine_templates()
     await seed_admins()
-    await seed_audit_account()
     await seed_settings()
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -218,6 +205,7 @@ async def main() -> None:
 
     asyncio.create_task(payment_reminder_loop(bot))
     await refresh_all_bot_commands(bot)
+    await refresh_reply_keyboards_if_changed(bot)
 
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Bot polling boshlanmoqda...")

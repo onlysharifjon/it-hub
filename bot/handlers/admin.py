@@ -21,7 +21,9 @@ from keyboards import (
     audit_accounts_keyboard,
     audit_templates_manage_keyboard,
     broadcast_choice_keyboard,
+    broadcast_confirm_keyboard,
     broadcast_prompt_keyboard,
+    cancel_keyboard,
     employees_keyboard,
     reports_choice_keyboard,
     roles_keyboard,
@@ -186,7 +188,7 @@ async def new_role_start(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
     await state.set_state(NewRole.name)
-    await callback.message.answer("Yangi rol nomini kiriting:")
+    await callback.message.answer("Yangi rol nomini kiriting:", reply_markup=cancel_keyboard("adm_menu"))
     await callback.answer()
 
 
@@ -195,6 +197,9 @@ async def new_role_save(message: Message, state: FSMContext) -> None:
     name = message.text.strip()
     if not name:
         await message.answer("Rol nomi bo'sh bo'lishi mumkin emas. Qayta kiriting:")
+        return
+    if len(name) > 64:
+        await message.answer("Rol nomi 64 belgidan oshmasligi kerak. Qayta kiriting:")
         return
     async with async_session() as session:
         existing = await session.execute(select(Role).where(Role.name == name))
@@ -294,7 +299,11 @@ async def reset_audit_password_start(callback: CallbackQuery, state: FSMContext)
             return
     await state.update_data(reset_account_id=account_id)
     await state.set_state(ResetAuditPassword.password)
-    await safe_edit_text(callback.message, "Yangi parolni kiriting (kamida 4 belgi):")
+    await safe_edit_text(
+        callback.message,
+        "Yangi parolni kiriting (kamida 4 belgi):",
+        reply_markup=cancel_keyboard("adm_menu"),
+    )
     await callback.answer()
 
 
@@ -347,7 +356,9 @@ async def new_audit_choose_employee(callback: CallbackQuery, state: FSMContext) 
     employee_id = int(callback.data.split(":")[1])
     await state.update_data(audit_employee_id=employee_id)
     await state.set_state(NewAudit.login)
-    await safe_edit_text(callback.message, "Ushbu xodim uchun login kiriting:")
+    await safe_edit_text(
+        callback.message, "Ushbu xodim uchun login kiriting:", reply_markup=cancel_keyboard("adm_menu")
+    )
     await callback.answer()
 
 
@@ -369,7 +380,7 @@ async def new_audit_login(message: Message, state: FSMContext) -> None:
             return
     await state.update_data(audit_login=login)
     await state.set_state(NewAudit.password)
-    await message.answer("Endi parol kiriting (kamida 4 belgi):")
+    await message.answer("Endi parol kiriting (kamida 4 belgi):", reply_markup=cancel_keyboard("adm_menu"))
 
 
 @router.message(NewAudit.password, F.text)
@@ -525,7 +536,8 @@ async def edit_template_start(callback: CallbackQuery, state: FSMContext) -> Non
     await state.update_data(edit_template_id=template_id)
     await state.set_state(EditFineTemplate.text)
     await callback.message.answer(
-        f"Hozirgi matn:\n{current_text}\n\nYangi matnni kiriting:"
+        f"Hozirgi matn:\n{current_text}\n\nYangi matnni kiriting:",
+        reply_markup=cancel_keyboard("adm_menu"),
     )
     await callback.answer()
 
@@ -539,16 +551,20 @@ async def edit_template_save(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     template_id = data["edit_template_id"]
     async with async_session() as session:
-        existing = await session.execute(
-            select(FineTemplate).where(FineTemplate.text == text, FineTemplate.id != template_id)
-        )
-        if existing.scalar_one_or_none():
-            await message.answer("Bu shablon matni allaqachon mavjud. Boshqa matn kiriting:")
-            return
         template = await session.get(FineTemplate, template_id)
         if template is None:
             await state.clear()
             await message.answer("Shablon topilmadi.")
+            return
+        existing = await session.execute(
+            select(FineTemplate).where(
+                FineTemplate.text == text,
+                FineTemplate.owner == template.owner,
+                FineTemplate.id != template_id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            await message.answer("Bu shablon matni allaqachon mavjud. Boshqa matn kiriting:")
             return
         template.text = text
         await session.commit()
@@ -568,24 +584,34 @@ async def new_fine_template_start(callback: CallbackQuery, state: FSMContext) ->
             return
     await state.update_data(template_owner="admin")
     await state.set_state(NewFineTemplate.text)
-    await callback.message.answer("Yangi shablon matnini kiriting:")
+    await callback.message.answer(
+        "Yangi shablon matnini kiriting:", reply_markup=cancel_keyboard("adm_menu")
+    )
     await callback.answer()
 
 
 @router.message(NewFineTemplate.text, F.text)
 async def new_fine_template_text(message: Message, state: FSMContext) -> None:
     text = message.text.strip()
+    data = await state.get_data()
+    owner = data.get("template_owner", "admin")
+    cancel_target = "adm_menu" if owner == "admin" else "audit_menu"
     if not text:
         await message.answer("Shablon matni bo'sh bo'lishi mumkin emas. Qayta kiriting:")
         return
     async with async_session() as session:
-        existing = await session.execute(select(FineTemplate).where(FineTemplate.text == text))
+        existing = await session.execute(
+            select(FineTemplate).where(FineTemplate.text == text, FineTemplate.owner == owner)
+        )
         if existing.scalar_one_or_none():
             await message.answer("Bu shablon allaqachon mavjud. Boshqa matn kiriting:")
             return
     await state.update_data(template_text=text)
     await state.set_state(NewFineTemplate.short_name)
-    await message.answer("Endi qisqa nom kiriting (tugmada ko'rinadi, masalan: 'Kechikish'):")
+    await message.answer(
+        "Endi qisqa nom kiriting (tugmada ko'rinadi, masalan: 'Kechikish'):",
+        reply_markup=cancel_keyboard(cancel_target),
+    )
 
 
 @router.message(NewFineTemplate.short_name, F.text)
@@ -620,12 +646,13 @@ async def new_fine_template_save(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "adm_menu")
-async def admin_menu(callback: CallbackQuery) -> None:
+async def admin_menu(callback: CallbackQuery, state: FSMContext) -> None:
     async with async_session() as session:
         admin = await _require_admin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
+    await state.clear()
     await safe_edit_text(
         callback.message,
         "Admin paneli:\n\n"
@@ -763,12 +790,12 @@ async def broadcast_cancel(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(Broadcast.text, F.photo)
 async def broadcast_send_photo(message: Message, state: FSMContext) -> None:
-    await _broadcast_dispatch(message, state, photo_file_id=message.photo[-1].file_id, text=message.caption)
+    await _broadcast_preview(message, state, photo_file_id=message.photo[-1].file_id, text=message.caption)
 
 
 @router.message(Broadcast.text, F.text)
 async def broadcast_send_text(message: Message, state: FSMContext) -> None:
-    await _broadcast_dispatch(message, state, photo_file_id=None, text=message.text)
+    await _broadcast_preview(message, state, photo_file_id=None, text=message.text)
 
 
 @router.message(Broadcast.text)
@@ -776,30 +803,55 @@ async def broadcast_send_invalid(message: Message) -> None:
     await message.answer("Matn yozing yoki rasm yuboring.")
 
 
-async def _broadcast_dispatch(
+async def _broadcast_preview(
     message: Message, state: FSMContext, photo_file_id: str | None, text: str | None
 ) -> None:
     data = await state.get_data()
     target = data["broadcast_target"]
     async with async_session() as session:
         recipients = await list_parents(session) if target == "parents" else await list_staff(session)
+    if not recipients:
+        label = "ota-onalar" if target == "parents" else "xodimlar"
+        await state.clear()
+        await message.answer(f"Hozircha {label} ro'yxati bo'sh.", reply_markup=admin_menu_keyboard())
+        return
+    await state.update_data(broadcast_photo_file_id=photo_file_id or "", broadcast_text=text or "")
+    await state.set_state(Broadcast.confirm)
+    keyboard = broadcast_confirm_keyboard(len(recipients))
+    preview_caption = f"Quyidagi xabar yuboriladi:\n\n{text or ''}"
+    if photo_file_id:
+        await message.answer_photo(photo=photo_file_id, caption=preview_caption, reply_markup=keyboard)
+    else:
+        await message.answer(preview_caption, reply_markup=keyboard)
+
+
+@router.callback_query(Broadcast.confirm, F.data == "bc_confirm_send")
+async def broadcast_confirm_send(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    target = data["broadcast_target"]
+    photo_file_id = data.get("broadcast_photo_file_id") or None
+    text = data.get("broadcast_text") or None
+    async with async_session() as session:
+        recipients = await list_parents(session) if target == "parents" else await list_staff(session)
     await state.clear()
     if not recipients:
         label = "ota-onalar" if target == "parents" else "xodimlar"
-        await message.answer(f"Hozircha {label} ro'yxati bo'sh.", reply_markup=admin_menu_keyboard())
+        await callback.message.answer(f"Hozircha {label} ro'yxati bo'sh.", reply_markup=admin_menu_keyboard())
+        await callback.answer()
         return
+    await callback.answer("Yuborilmoqda...")
     sent = 0
     for recipient in recipients:
         try:
             if photo_file_id:
-                await message.bot.send_photo(recipient.telegram_id, photo=photo_file_id, caption=text)
+                await callback.bot.send_photo(recipient.telegram_id, photo=photo_file_id, caption=text)
             else:
-                await message.bot.send_message(recipient.telegram_id, text)
+                await callback.bot.send_message(recipient.telegram_id, text)
             sent += 1
         except Exception:
             continue
         await asyncio.sleep(0.05)
-    await message.answer(
+    await callback.message.answer(
         f"✅ Xabar {sent}/{len(recipients)} kishiga yuborildi.", reply_markup=admin_menu_keyboard()
     )
 
