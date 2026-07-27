@@ -43,6 +43,7 @@ class ReportFlow(StatesGroup):
 
 class Broadcast(StatesGroup):
     text = State()
+    confirm = State()
 
 
 class LinkParent(StatesGroup):

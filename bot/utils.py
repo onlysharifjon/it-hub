@@ -1,5 +1,8 @@
 import hashlib
 import os as _os
+import secrets
+import string
+from datetime import datetime
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -19,10 +22,11 @@ from keyboards import (
     BTN_REQUEST_CHILD,
     admin_reply_keyboard,
     audit_reply_keyboard,
+    limited_admin_reply_keyboard,
     parent_reply_keyboard,
     worker_reply_keyboard,
 )
-from models import AuditAccount, Employee, Fine, FineTemplate, ParentLink, Role, Setting
+from models import AdminInviteLink, AuditAccount, Employee, Fine, FineTemplate, ParentLink, Role, Setting
 
 
 async def safe_edit_text(
@@ -74,6 +78,21 @@ async def list_staff(session: AsyncSession) -> list[Employee]:
         .outerjoin(Role, Employee.role_id == Role.id)
         .where(Employee.is_admin.is_(False))
         .where((Employee.role_id.is_(None)) | (Role.is_parent.is_(False)))
+    )
+    return list(result.scalars().all())
+
+
+async def list_staff_without_audit(session: AsyncSession) -> list[Employee]:
+    """/ishchilar ("Xodimlar") ro'yxati uchun — audit huquqi berilganlar bu yerda
+    ko'rinmaydi (ular "Audit akkauntlari" bo'limida boshqariladi)."""
+    active_audit_ids = select(AuditAccount.employee_id).where(AuditAccount.is_active.is_(True))
+    result = await session.execute(
+        select(Employee)
+        .options(selectinload(Employee.role))
+        .outerjoin(Role, Employee.role_id == Role.id)
+        .where(Employee.is_admin.is_(False))
+        .where((Employee.role_id.is_(None)) | (Role.is_parent.is_(False)))
+        .where(Employee.id.not_in(active_audit_ids))
     )
     return list(result.scalars().all())
 
@@ -133,6 +152,56 @@ def verify_password(password: str, salt: str, password_hash: str) -> bool:
     return digest == password_hash
 
 
+async def ensure_audit_account(session: AsyncSession, employee: Employee) -> tuple[str, str] | None:
+    """Employee uchun audit akkaunt bo'lmasa, avtomatik login/parol bilan yaratadi
+    (masalan admin qilib tayinlanganda — keyin adminlikdan olinsa ham audit huquqi
+    saqlanib qolishi uchun). Yangi yaratilgan bo'lsa (login, parol) qaytaradi,
+    aks holda (allaqachon bor bo'lsa) None."""
+    existing = await session.execute(select(AuditAccount).where(AuditAccount.employee_id == employee.id))
+    if existing.scalar_one_or_none() is not None:
+        return None
+    login = f"audit{employee.id}"
+    while True:
+        taken = await session.execute(select(AuditAccount).where(AuditAccount.login == login))
+        if taken.scalar_one_or_none() is None:
+            break
+        login = f"audit{employee.id}_{secrets.token_hex(2)}"
+    alphabet = string.ascii_letters + string.digits
+    password = "".join(secrets.choice(alphabet) for _ in range(10))
+    password_hash, salt = hash_password(password)
+    session.add(
+        AuditAccount(employee_id=employee.id, login=login, password_hash=password_hash, salt=salt)
+    )
+    await session.commit()
+    return login, password
+
+
+async def create_invite_link(session: AsyncSession, tier: str, created_by_id: int) -> str:
+    """Bir martalik admin/superadmin taklif tokeni yaratadi va qaytaradi."""
+    token = secrets.token_urlsafe(16)
+    session.add(AdminInviteLink(token=token, tier=tier, created_by_id=created_by_id))
+    await session.commit()
+    return token
+
+
+async def consume_invite_link(session: AsyncSession, token: str, employee: Employee) -> str | None:
+    """Token to'g'ri va hali ishlatilmagan bo'lsa, employee'ni shu darajaga ko'taradi
+    va havolani 'ishlatilgan' deb belgilaydi. Muvaffaqiyatli bo'lsa daraja nomini
+    ("admin"|"superadmin") qaytaradi, aks holda (token yaroqsiz) None."""
+    result = await session.execute(
+        select(AdminInviteLink).where(AdminInviteLink.token == token, AdminInviteLink.used_at.is_(None))
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        return None
+    employee.is_admin = True
+    employee.is_superadmin = link.tier == "superadmin"
+    link.used_by_id = employee.id
+    link.used_at = datetime.utcnow()
+    await session.commit()
+    return link.tier
+
+
 async def get_active_audit_account(session: AsyncSession, employee_id: int) -> AuditAccount | None:
     result = await session.execute(
         select(AuditAccount).where(
@@ -183,25 +252,28 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
             ("davomat", "Kelish/ketish belgilash"),
             ("tolov", "O'quvchi to'lov holati"),
             ("tolovhisoboti", "To'lov hisoboti"),
-            ("otaonaid", "Standart ota-ona ID"),
-            ("rasmsozlama", "Shtrafda rasm majburiymi"),
-            ("ishchilar", "Xodimlar va rollar"),
-            ("rollar", "Rollarni boshqarish"),
-            ("auditlar", "Audit akkauntlari"),
-            ("shablonlar", "Shtraf shablonlari"),
-            ("hisobot", "Shtraflar hisoboti"),
+            ("hisobot", "Jarima/shtraf hisoboti"),
         ]
-        return commands
-
-    account = await get_active_audit_account(session, employee.id)
-    if account is not None:
-        commands += [
-            ("panel", "Audit paneli"),
-            ("audit", "Audit rejimiga kirish"),
-            ("hisobot", "Shtraflar hisoboti"),
-        ]
-    if employee.role_id:
-        commands.append(("shtraflarim", "Mening shtraflarim"))
+        if employee.is_superadmin:
+            commands += [
+                ("otaonaid", "Standart ota-ona ID"),
+                ("rasmsozlama", "Shtrafda rasm majburiymi"),
+                ("ishchilar", "Xodimlar va rollar"),
+                ("rollar", "Rollarni boshqarish"),
+                ("auditlar", "Audit akkauntlari"),
+                ("shablonlar", "Shtraf shablonlari"),
+            ]
+    else:
+        account = await get_active_audit_account(session, employee.id)
+        if account is not None:
+            commands += [
+                ("panel", "Audit paneli"),
+                ("audit", "Audit rejimiga kirish"),
+                ("hisobot", "Jarima/shtraf hisoboti"),
+            ]
+        if employee.role_id:
+            commands.append(("shtraflarim", "Mening jarima/shtraflarim"))
+        commands.append(("farzandbiriktir", "Farzand biriktirish so'rovi yuborish"))
 
     result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
     if result.scalar_one_or_none() is not None:
@@ -209,7 +281,6 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
             ("jadval", "Farzandim dars jadvali"),
             ("farzandim", "Farzandim kelish/ketish tarixi"),
         ]
-    commands.append(("farzandbiriktir", "Farzand biriktirish so'rovi yuborish"))
     return commands
 
 
@@ -227,8 +298,15 @@ async def apply_bot_commands(bot: Bot, session: AsyncSession, employee: Employee
 async def reply_keyboard_for_employee(
     session: AsyncSession, employee: Employee
 ) -> ReplyKeyboardMarkup | None:
+    result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
+    is_parent = result.scalar_one_or_none() is not None
+
     if employee.is_admin:
-        return admin_reply_keyboard()
+        base = admin_reply_keyboard() if employee.is_superadmin else limited_admin_reply_keyboard()
+        rows = list(base.keyboard)
+        if is_parent:
+            rows.extend(parent_reply_keyboard().keyboard)
+        return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 
     rows = []
     account = await get_active_audit_account(session, employee.id)
@@ -236,8 +314,7 @@ async def reply_keyboard_for_employee(
         rows.extend(audit_reply_keyboard().keyboard)
     if employee.role_id:
         rows.extend(worker_reply_keyboard().keyboard)
-    result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
-    if result.scalar_one_or_none() is not None:
+    if is_parent:
         rows.extend(parent_reply_keyboard().keyboard)
     rows.append([KeyboardButton(text=BTN_REQUEST_CHILD)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)

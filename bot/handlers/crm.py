@@ -1,11 +1,12 @@
 import asyncio
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 import crm_client
 from database import async_session
@@ -17,6 +18,7 @@ from keyboards import (
     admin_menu_keyboard,
     attendance_mode_keyboard,
     attendance_select_keyboard,
+    cancel_keyboard,
     crm_groups_keyboard,
     crm_students_keyboard,
     employees_keyboard,
@@ -50,6 +52,11 @@ logger = logging.getLogger(__name__)
 async def _require_admin(session, telegram_id: int) -> Employee | None:
     employee = await get_employee(session, telegram_id)
     return employee if employee and employee.is_admin else None
+
+
+async def _require_superadmin(session, telegram_id: int) -> Employee | None:
+    employee = await get_employee(session, telegram_id)
+    return employee if employee and employee.is_admin and employee.is_superadmin else None
 
 
 async def _show_crm_error(callback: CallbackQuery, error: Exception) -> None:
@@ -163,7 +170,10 @@ async def _finalize_parent_link(
                     group_name=group_name,
                 )
             )
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
         employee_name = employee.full_name
         employee_telegram_id = employee.telegram_id
         await apply_bot_commands(bot, session, employee)
@@ -227,7 +237,11 @@ async def crm_link_choose_method(callback: CallbackQuery, state: FSMContext) -> 
     method = callback.data.split(":")[1]
     if method == "search":
         await state.set_state(LinkParent.searching)
-        await safe_edit_text(callback.message, "O'quvchining to'liq ismini kiriting:")
+        await safe_edit_text(
+            callback.message,
+            "O'quvchining to'liq ismini kiriting:",
+            reply_markup=cancel_keyboard("adm_menu"),
+        )
         await callback.answer()
         return
     try:
@@ -372,7 +386,10 @@ async def child_link_request_start(message: Message, state: FSMContext) -> None:
         await message.answer("Avval botga /start bosing.")
         return
     await state.set_state(ChildLinkRequest.searching)
-    await message.answer("Farzandingizning to'liq ismini kiriting (CRM'da yozilgani kabi):")
+    await message.answer(
+        "Farzandingizning to'liq ismini kiriting (CRM'da yozilgani kabi):",
+        reply_markup=cancel_keyboard("child_cancel"),
+    )
 
 
 @router.message(ChildLinkRequest.searching, F.text)
@@ -951,17 +968,20 @@ async def send_monthly_payment_reminders(bot: Bot) -> None:
     ]
     today = _tashkent_now().date()
     month_name = month_names[today.month]
-    seen_students: set[int] = set()
+    summary_cache: dict[int, dict | None] = {}
     for link in links:
-        if link.crm_student_id in seen_students:
-            continue
-        seen_students.add(link.crm_student_id)
-        try:
-            summary = await crm_client.get_payment_summary(link.crm_student_id)
-        except crm_client.CRMError as error:
-            logger.warning("Payment reminder skipped for student %s: %s", link.crm_student_id, error)
-            continue
-        if summary["payment_status"] == "paid":
+        if link.crm_student_id not in summary_cache:
+            try:
+                summary_cache[link.crm_student_id] = await crm_client.get_payment_summary(
+                    link.crm_student_id
+                )
+            except crm_client.CRMError as error:
+                logger.warning(
+                    "Payment reminder skipped for student %s: %s", link.crm_student_id, error
+                )
+                summary_cache[link.crm_student_id] = None
+        summary = summary_cache[link.crm_student_id]
+        if summary is None or summary["payment_status"] == "paid":
             continue
         text = (
             f"\U0001f4c5 Hurmatli ota-ona! {month_name.capitalize()} oyi uchun "
@@ -996,20 +1016,21 @@ async def payment_reminder_loop(bot: Bot) -> None:
 @router.message(F.text == "/otaonaid")
 async def set_default_parent_start(message: Message, state: FSMContext) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, message.from_user.id)
+        admin = await _require_superadmin(session, message.from_user.id)
         if not admin:
             return
         current = await get_setting(session, "default_parent_chat_id")
     await state.set_state(BotSettings.default_parent_id)
     await message.answer(
-        f"Hozirgi standart ota-ona Telegram ID: <code>{current}</code>\n\nYangi ID ni kiriting (raqam):"
+        f"Hozirgi standart ota-ona Telegram ID: <code>{current}</code>\n\nYangi ID ni kiriting (raqam):",
+        reply_markup=cancel_keyboard("adm_menu"),
     )
 
 
 @router.callback_query(F.data == "set_default_parent")
 async def set_default_parent_start_cb(callback: CallbackQuery, state: FSMContext) -> None:
     async with async_session() as session:
-        admin = await _require_admin(session, callback.from_user.id)
+        admin = await _require_superadmin(session, callback.from_user.id)
         if not admin:
             await callback.answer("Sizda ruxsat yo'q.", show_alert=True)
             return
@@ -1018,6 +1039,7 @@ async def set_default_parent_start_cb(callback: CallbackQuery, state: FSMContext
     await safe_edit_text(
         callback.message,
         f"Hozirgi standart ota-ona Telegram ID: <code>{current}</code>\n\nYangi ID ni kiriting (raqam):",
+        reply_markup=cancel_keyboard("adm_menu"),
     )
     await callback.answer()
 

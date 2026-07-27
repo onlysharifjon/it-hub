@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -27,6 +27,9 @@ class Employee(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id"), nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # To'liq huquqli admin — boshqa adminlarni qo'shish/olib tashlash, rollar, audit
+    # akkauntlari, shablonlar va sozlamalarni faqat superadmin boshqaradi.
+    is_superadmin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     role: Mapped["Role | None"] = relationship(back_populates="employees")
@@ -52,9 +55,10 @@ class AuditAccount(Base):
 
 class FineTemplate(Base):
     __tablename__ = "fine_templates"
+    __table_args__ = (UniqueConstraint("owner", "text", name="uq_fine_templates_owner_text"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    text: Mapped[str] = mapped_column(String(255), unique=True)
+    text: Mapped[str] = mapped_column(String(255))
     short_name: Mapped[str] = mapped_column(String(64))
     owner: Mapped[str] = mapped_column(String(16))
     shared_with_audit: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -108,6 +112,21 @@ class Setting(Base):
     value: Mapped[str] = mapped_column(String(255))
 
 
+class AdminInviteLink(Base):
+    """Superadmin yaratadigan, bir martalik admin/superadmin taklif havolasi —
+    kimdir shu token bilan /start bossa, avtomatik shu darajaga ko'tariladi."""
+
+    __tablename__ = "admin_invite_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True)
+    tier: Mapped[str] = mapped_column(String(16))  # "admin" | "superadmin"
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
+    used_by_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class ParentLinkRequest(Base):
     """Ota-ona '\U0001f517 Farzand biriktirish' orqali o'zi so'ragan, admin tasdiqlashini
     kutayotgan bog'lanish so'rovi — tasdiqlangach ParentLink'ga aylanadi."""
@@ -130,6 +149,7 @@ class ParentLink(Base):
     saqlanadi, CRMga yozish shart emas (CRM roli yetarli bo'lmasa ham ishlaydi)."""
 
     __tablename__ = "parent_links"
+    __table_args__ = (UniqueConstraint("employee_id", "crm_student_id", name="uq_parent_links_employee_student"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), index=True)

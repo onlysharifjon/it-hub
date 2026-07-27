@@ -10,6 +10,8 @@ from keyboards import (
     BTN_MY_TEMPLATES,
     audit_menu_keyboard,
     audit_templates_manage_keyboard,
+    bob_choice_keyboard,
+    cancel_keyboard,
     employees_keyboard,
     fine_templates_keyboard,
     fine_totals_keyboard,
@@ -407,7 +409,7 @@ async def report_start(callback: CallbackQuery, state: FSMContext) -> None:
     grand_total_str = f"{grand_total:,}".replace(",", " ")
     await state.set_state(ReportFlow.choosing_employee)
     await safe_edit_text(callback.message,
-        f"\U0001f4ca Shtraflar hisoboti — jami: {grand_total_str} so'm\n\n"
+        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_total_str} so'm\n\n"
         "Batafsil tarix uchun xodimni tanlang:",
         reply_markup=fine_totals_keyboard(employees, totals, back_callback="audit_menu"),
     )
@@ -429,7 +431,7 @@ async def hisobot_command(message: Message, state: FSMContext) -> None:
     grand_total_str = f"{grand_total:,}".replace(",", " ")
     await state.set_state(ReportFlow.choosing_employee)
     await message.answer(
-        f"\U0001f4ca Shtraflar hisoboti — jami: {grand_total_str} so'm\n\n"
+        f"\U0001f4ca Jarima/shtraf hisoboti — jami: {grand_total_str} so'm\n\n"
         "Batafsil tarix uchun xodimni tanlang:",
         reply_markup=fine_totals_keyboard(employees, totals, back_callback="audit_menu"),
     )
@@ -559,5 +561,7 @@ async def new_audit_template_start(callback: CallbackQuery, state: FSMContext) -
             return
     await state.update_data(template_owner="audit")
     await state.set_state(NewFineTemplate.text)
-    await callback.message.answer("Yangi shablon matnini kiriting:")
+    await callback.message.answer(
+        "Yangi shablon matnini kiriting:", reply_markup=cancel_keyboard("audit_menu")
+    )
     await callback.answer()

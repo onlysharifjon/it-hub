@@ -3,6 +3,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from models import AuditAccount, Employee, FineTemplate, ParentLink, Role
 
+# Doimiy pastki tugmalar tarkibi o'zgarganda shu qiymatni oshiring — bot ishga tushganda
+# eski qiymat bilan solishtirib, farq bo'lsa hamma foydalanuvchiga jim (bildirishnomasiz)
+# yangilangan tugmalarni qayta yuboradi (main.py: refresh_reply_keyboards_if_changed).
+KEYBOARD_VERSION = "5"
+
 # ── Doimiy pastki menyu tugma matnlari (komandalar bilan bir xil ishlaydi) ──────
 
 BTN_WORKERS = "\U0001f465 Xodimlar"
@@ -16,11 +21,11 @@ BTN_ATTENDANCE = "\U0001f4cb Davomat"
 BTN_PAYMENT = "\U0001f4b0 To'lov holati"
 BTN_SETTINGS = "\U00002699 Sozlamalar"
 
-BTN_FINE_GIVE = "\U0001f9fe Shtraf berish"
+BTN_FINE_GIVE = "\U000026a0\U0000fe0f Jarima/Shtraf berish"
 BTN_FINE_REPORT = "\U0001f4ca Hisobot"
 BTN_MY_TEMPLATES = "\U0001f5c2 Mening shablonlarim"
 
-BTN_MY_FINES = "\U0001f4b5 Mening shtraflarim"
+BTN_MY_FINES = "\U0001f4cb Mening jarima/shtraflarim"
 
 BTN_MY_CHILD = "\U0001f476 Farzandim"
 BTN_SCHEDULE = "\U0001f4c5 Jadval"
@@ -29,13 +34,28 @@ BTN_REQUEST_CHILD = "\U0001f517 Farzand biriktirish"
 
 
 def admin_reply_keyboard() -> ReplyKeyboardMarkup:
+    """To'liq huquqli — superadmin uchun."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_WORKERS), KeyboardButton(text=BTN_ROLES)],
             [KeyboardButton(text=BTN_AUDIT_ACCOUNTS), KeyboardButton(text=BTN_TEMPLATES)],
+            [KeyboardButton(text=BTN_FINE_GIVE), KeyboardButton(text=BTN_ATTENDANCE)],
+            [KeyboardButton(text=BTN_PAYMENT), KeyboardButton(text=BTN_LINK_PARENT)],
             [KeyboardButton(text=BTN_REPORTS), KeyboardButton(text=BTN_BROADCAST)],
-            [KeyboardButton(text=BTN_LINK_PARENT), KeyboardButton(text=BTN_ATTENDANCE)],
-            [KeyboardButton(text=BTN_PAYMENT), KeyboardButton(text=BTN_SETTINGS)],
+            [KeyboardButton(text=BTN_SETTINGS)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def limited_admin_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Oddiy admin — kundalik ishlar: rol/audit/shablon/sozlama boshqaruvi yo'q."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BTN_FINE_GIVE), KeyboardButton(text=BTN_ATTENDANCE)],
+            [KeyboardButton(text=BTN_PAYMENT), KeyboardButton(text=BTN_LINK_PARENT)],
+            [KeyboardButton(text=BTN_REPORTS), KeyboardButton(text=BTN_BROADCAST)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -99,6 +119,27 @@ def settings_choice_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="\U0001f5bc Shtrafda rasm majburiymi", callback_data="toggle_fine_photo")
     builder.button(text="➕ Yangi admin qo'shish", callback_data="new_admin_start")
     builder.button(text="➖ Adminlikdan olish", callback_data="remove_admin_start")
+    builder.button(text="\U0001f517 Admin/CEO havolasi yaratish", callback_data="invite_link_start")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_tier_keyboard(employee_id: int, back_callback: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="\U0001f464 Oddiy admin", callback_data=f"set_admin_final:{employee_id}:admin")
+    builder.button(
+        text="\U0001f451 Superadmin (CEO)", callback_data=f"set_admin_final:{employee_id}:superadmin"
+    )
+    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def invite_tier_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="\U0001f464 Admin havolasi", callback_data="invite_tier:admin")
+    builder.button(text="\U0001f451 Superadmin (CEO) havolasi", callback_data="invite_tier:superadmin")
+    builder.button(text="⬅️ Orqaga", callback_data="adm_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -314,6 +355,13 @@ def link_method_keyboard(back_callback: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def cancel_keyboard(callback_data: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Bekor qilish", callback_data=callback_data)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def student_search_results_keyboard(
     students: list[dict], prefix: str, back_callback: str
 ) -> InlineKeyboardMarkup:
@@ -380,6 +428,14 @@ def attendance_select_keyboard(
 
 def broadcast_prompt_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Bekor qilish", callback_data="bc_cancel")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def broadcast_confirm_keyboard(recipient_count: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text=f"✅ Yuborish ({recipient_count} kishiga)", callback_data="bc_confirm_send")
     builder.button(text="❌ Bekor qilish", callback_data="bc_cancel")
     builder.adjust(1)
     return builder.as_markup()

@@ -15,11 +15,6 @@ def _parse_ids(raw: str) -> set[int]:
 
 ADMIN_IDS = _parse_ids(os.getenv("ADMIN_IDS", ""))
 
-# Ixtiyoriy: birinchi marta ishga tushirishda bitta audit akkaunt urug'lash uchun
-AUDIT_SEED_ID = os.getenv("AUDIT_SEED_ID", "")
-AUDIT_SEED_LOGIN = os.getenv("AUDIT_SEED_LOGIN", "")
-AUDIT_SEED_PASSWORD = os.getenv("AUDIT_SEED_PASSWORD", "")
-
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
