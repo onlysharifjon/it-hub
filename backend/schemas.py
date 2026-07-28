@@ -28,6 +28,7 @@ class UserRead(BaseModel):
     role: UserRole
     is_active: bool
     avatar: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
     blocked_reason:  Optional[str] = None
     blocked_contact: Optional[str] = None
     blocked_at:      Optional[datetime] = None
@@ -44,6 +45,7 @@ class UserCreate(BaseModel):
     full_name: Optional[str] = None
     role: UserRole = UserRole.teacher
     expires_at: Optional[datetime] = None
+    telegram_chat_id: Optional[str] = Field(None, max_length=50)
 
 
 class UserUpdate(BaseModel):
@@ -54,6 +56,7 @@ class UserUpdate(BaseModel):
     expires_at:      Optional[datetime] = None
     blocked_reason:  Optional[str]      = None
     blocked_contact: Optional[str]      = None
+    telegram_chat_id: Optional[str]     = Field(None, max_length=50)
 
 
 class ProfileUpdate(BaseModel):

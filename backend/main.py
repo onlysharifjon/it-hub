@@ -631,6 +631,7 @@ def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db), acto
         role=payload.role.value,
         full_name=payload.full_name,
         expires_at=payload.expires_at,
+        telegram_chat_id=payload.telegram_chat_id,
     )
     db.add(user)
     db.flush()
@@ -661,6 +662,8 @@ def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends
         user.blocked_reason = payload.blocked_reason
     if payload.blocked_contact is not None:
         user.blocked_contact = payload.blocked_contact
+    if payload.telegram_chat_id is not None:
+        user.telegram_chat_id = payload.telegram_chat_id
     write_audit(db, entity_type="user", entity_id=user.id, action="update",
                 changed_by_id=actor.id, old_value=old, new_value={"role": user.role, "is_active": user.is_active})
     db.commit()

@@ -42,7 +42,7 @@ function StatusBadge({ user }) {
   )
 }
 
-const emptyForm = { username: '', full_name: '', password: '', role: 'teacher', expires_at: '' }
+const emptyForm = { username: '', full_name: '', password: '', role: 'teacher', expires_at: '', telegram_chat_id: '' }
 
 export default function Users() {
   const [users, setUsers] = useState([])
@@ -90,6 +90,7 @@ export default function Users() {
       password: '',
       role: u.role,
       expires_at: u.expires_at ? u.expires_at.slice(0, 10) : '',
+      telegram_chat_id: u.telegram_chat_id || '',
     })
     setEditId(u.id)
     setModal('edit')
@@ -102,6 +103,7 @@ export default function Users() {
         full_name: form.full_name || null,
         role: form.role,
         expires_at: form.expires_at ? form.expires_at + 'T00:00:00' : null,
+        telegram_chat_id: form.telegram_chat_id.trim() || null,
       }
       if (modal === 'create') {
         if (!form.username.trim()) { toast.error('Username kerak'); setSaving(false); return }
@@ -315,6 +317,16 @@ export default function Users() {
                 <label className="form-label">Muddati (bo'sh = cheksiz)</label>
                 <input className="form-input" type="date" value={form.expires_at}
                   onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Telegram ID (bot bildirishnomasi uchun)</label>
+                <input className="form-input" type="text" value={form.telegram_chat_id}
+                  onChange={e => setForm(f => ({ ...f, telegram_chat_id: e.target.value }))}
+                  placeholder="Masalan: 123456789" />
+                <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
+                  Xodim botga /start bosib, o'z Telegram ID'sini yuborishi kerak — shuni shu yerga kiriting.
+                  Audit ogohlantirishlari shu ID'ga yuboriladi.
+                </p>
               </div>
             </div>
             <div className="modal-footer">
