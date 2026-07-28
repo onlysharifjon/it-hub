@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faTriangleExclamation, faPlus, faPaperPlane, faBan } from '@fortawesome/free-solid-svg-icons'
+import { faTriangleExclamation, faPlus, faPaperPlane, faBan, faTrash } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchStaffOptions, fetchDisciplineCodes, fetchStaffWarnings,
-  createStaffWarning, resendStaffWarning, cancelStaffWarning,
+  createStaffWarning, resendStaffWarning, cancelStaffWarning, deleteStaffWarning,
 } from '../api'
 
 const SEVERITY_LABEL = { gray: 'Kulrang', yellow: 'Sariq', red: 'Qizil' }
@@ -97,6 +97,17 @@ export default function AuditWarnings({ currentUser }) {
     finally { setBusyId(null) }
   }
 
+  async function handleDelete(w) {
+    if (!confirm(`${w.staff_name} uchun bu ogohlantirish butunlay o'chirilsinmi? Bu amalni orqaga qaytarib bo'lmaydi.`)) return
+    setBusyId(w.id)
+    try {
+      await deleteStaffWarning(w.id)
+      toast.success("O'chirildi")
+      load(staffFilter || undefined)
+    } catch (e) { toast.error(e.message) }
+    finally { setBusyId(null) }
+  }
+
   if (!isAudit) {
     return <div className="page"><p className="muted center py-8">Ruxsat yo'q</p></div>
   }
@@ -164,6 +175,11 @@ export default function AuditWarnings({ currentUser }) {
                     {!w.cancelled_at && isAdmin && (
                       <button className="btn-icon danger" title="Bekor qilish" disabled={busyId === w.id} onClick={() => handleCancel(w)}>
                         <FontAwesomeIcon icon={faBan} />
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button className="btn-icon danger" title="Butunlay o'chirish" disabled={busyId === w.id} onClick={() => handleDelete(w)}>
+                        <FontAwesomeIcon icon={faTrash} />
                       </button>
                     )}
                   </td>
