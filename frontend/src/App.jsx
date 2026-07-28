@@ -23,6 +23,11 @@ import TeacherDashboard from './components/TeacherDashboard'
 import Expenses from './components/Expenses'
 import Leads from './components/Leads'
 import Discounts from './components/Discounts'
+import Special from './components/Special'
+import Academic from './components/Academic'
+import FeedbackInbox from './components/FeedbackInbox'
+import Notifications from './components/Notifications'
+import Parents from './components/Parents'
 import { fetchMe, login as apiLogin, setToken } from './api'
 
 function readHash() {
@@ -168,7 +173,7 @@ function App() {
               setActivePage('group_detail')
             }} />
           )}
-          {activePage === 'payments' && <Payments />}
+          {activePage === 'payments' && <Payments currentUser={currentUser} />}
           {activePage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
           {activePage === 'teacher_salaries' && <TeacherSalaries />}
           {activePage === 'expenses' && <Expenses />}
@@ -193,6 +198,11 @@ function App() {
           )}
           {activePage === 'leads' && <Leads currentUser={currentUser} />}
           {activePage === 'discounts' && <Discounts />}
+          {activePage === 'special' && <Special />}
+          {activePage === 'academic' && <Academic currentUser={currentUser} />}
+          {activePage === 'feedbacks' && <FeedbackInbox currentUser={currentUser} />}
+          {activePage === 'notifications' && <Notifications />}
+          {activePage === 'parents' && <Parents currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
         </div>
       </main>

@@ -92,9 +92,11 @@ export default function Expenses() {
           <FontAwesomeIcon icon={faReceipt} className="page-icon" />
           Tashqi xarajatlar
         </h1>
-        <button className="button primary" onClick={openAdd}>
-          <FontAwesomeIcon icon={faPlus} /> Qo'shish
-        </button>
+        <div className="header-actions">
+          <button className="button primary" onClick={openAdd}>
+            <FontAwesomeIcon icon={faPlus} /> Qo'shish
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

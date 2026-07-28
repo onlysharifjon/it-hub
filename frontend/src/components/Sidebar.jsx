@@ -6,11 +6,11 @@ import {
   faChartBar, faRightFromBracket, faChevronDown,
   faCalendarCheck, faTag, faWallet, faUserShield,
   faChalkboardTeacher, faReceipt, faCamera,
-  faHeadset, faBullseye, faStar, faBell,
+  faHeadset, faBullseye, faStar, faBell, faBookOpen,
   faPen, faGraduationCap, faCommentDots, faPeopleRoof,
 } from '@fortawesome/free-solid-svg-icons'
 import { toast } from 'react-hot-toast'
-import { uploadAvatar, updateProfile, fetchFeedbackNewCount, API_BASE } from '../api'
+import { uploadAvatar, updateProfile, fetchFeedbackNewCount, createExpense, API_BASE } from '../api'
 import { useTheme } from '../ThemeContext'
 
 const CATEGORIES = [
@@ -37,6 +37,9 @@ function Sidebar({
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileForm, setProfileForm] = useState({ full_name: '', current_password: '', password: '', password2: '' })
   const [savingProfile, setSavingProfile] = useState(false)
+  const [expenseOpen, setExpenseOpen] = useState(false)
+  const [expenseForm, setExpenseForm] = useState({ name: '', amount: '' })
+  const [savingExpense, setSavingExpense] = useState(false)
   const { theme, setTheme } = useTheme()
   const fileInputRef = useRef(null)
 
@@ -85,6 +88,32 @@ function Sidebar({
       toast.error(err.message || 'Xatolik')
     } finally {
       setSavingProfile(false)
+    }
+  }
+
+  function openExpense() {
+    setExpenseForm({ name: '', amount: '' })
+    setExpenseOpen(true)
+  }
+
+  async function handleExpenseSave() {
+    if (!expenseForm.name.trim())                         { toast.error("Nom kiriting"); return }
+    if (!expenseForm.amount || Number(expenseForm.amount) <= 0) { toast.error("Summa kiriting"); return }
+    setSavingExpense(true)
+    try {
+      const now = new Date()
+      await createExpense({
+        name: expenseForm.name,
+        amount: parseFloat(expenseForm.amount),
+        month: now.getMonth() + 1,
+        year: now.getFullYear(),
+      })
+      toast.success("Xarajat qo'shildi")
+      setExpenseOpen(false)
+    } catch (err) {
+      toast.error(err.message || 'Xatolik')
+    } finally {
+      setSavingExpense(false)
     }
   }
 
@@ -232,6 +261,11 @@ function Sidebar({
                 <FontAwesomeIcon icon={faPeopleRoof} fixedWidth /> Ota-onalar
               </button>
             )}
+            {isHunter && (
+              <button className="nav-page-btn" onClick={openExpense}>
+                <FontAwesomeIcon icon={faReceipt} fixedWidth /> Xarajat qo'shish
+              </button>
+            )}
           </>
         )}
 
@@ -297,6 +331,12 @@ function Sidebar({
               onClick={() => onNavigate('tariffs')}
             >
               <FontAwesomeIcon icon={faTag} fixedWidth /> Tariflar
+            </button>
+            <button
+              className={`nav-page-btn ${activePage === 'courses' ? 'active' : ''}`}
+              onClick={() => onNavigate('courses')}
+            >
+              <FontAwesomeIcon icon={faBookOpen} fixedWidth /> Kurslar
             </button>
             <button
               className={`nav-page-btn ${activePage === 'special' ? 'active' : ''}`}
@@ -443,6 +483,44 @@ function Sidebar({
               <button className="button secondary" onClick={() => setProfileOpen(false)}>Bekor</button>
               <button className="button primary" onClick={handleProfileSave} disabled={savingProfile}>
                 {savingProfile ? 'Saqlanmoqda...' : 'Saqlash'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {expenseOpen && (
+        <div className="modal-overlay" onClick={() => setExpenseOpen(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <div className="modal-header">
+              <h3>Xarajat qo'shish</h3>
+              <button className="modal-close" onClick={() => setExpenseOpen(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Nomi / Sabab *</label>
+                <input
+                  className="form-input"
+                  value={expenseForm.name}
+                  onChange={e => setExpenseForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="Ijara, kommunal, reklama..."
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Summa (so'm) *</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  value={expenseForm.amount}
+                  onChange={e => setExpenseForm(f => ({ ...f, amount: e.target.value }))}
+                  placeholder="500000"
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setExpenseOpen(false)}>Bekor</button>
+              <button className="button primary" onClick={handleExpenseSave} disabled={savingExpense}>
+                {savingExpense ? 'Saqlanmoqda...' : 'Saqlash'}
               </button>
             </div>
           </div>

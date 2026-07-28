@@ -241,6 +241,9 @@ export default function Students() {
                   <th>Ota-ona</th>
                   <th>Telegram</th>
                   <th>Guruhlar</th>
+                  <th>To'lov</th>
+                  <th>Qo'shilgan</th>
+                  <th>Yangilangan</th>
                   <th>Holat</th>
                   <th>Amallar</th>
                 </tr>
@@ -266,7 +269,16 @@ export default function Students() {
                         ? <span className="tg-badge"><FontAwesomeIcon icon={faTelegramBrand} /> {s.telegram_id}</span>
                         : <span className="text-muted">—</span>}
                     </td>
-                    <td><span className="badge">{s.group_count || 0}</span></td>
+                    <td>
+                      {(s.group_names && s.group_names.length > 0)
+                        ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 180 }}>
+                            {s.group_names.map((n, gi) => <span key={gi} className="badge">{n}</span>)}
+                          </div>
+                        : <span className="text-muted">—</span>}
+                    </td>
+                    <td><PayStatus s={s} /></td>
+                    <td className="text-muted" style={{ fontSize: 12 }}>{fmtDate(s.created_at)}</td>
+                    <td className="text-muted" style={{ fontSize: 12 }}>{fmtDate(s.updated_at)}</td>
                     <td>
                       <span className={`status-badge ${s.is_active ? 'active' : 'inactive'}`}>
                         {s.is_active ? 'Faol' : 'Nofaol'}
@@ -298,7 +310,7 @@ export default function Students() {
                 ))}
                 {students.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="muted center py-4">
+                    <td colSpan={11} className="muted center py-4">
                       {tab === 'archived' ? 'Arxivlangan talabalar yo\'q' : 'Talabalar topilmadi'}
                     </td>
                   </tr>
@@ -455,6 +467,149 @@ export default function Students() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── To'lov holati belgisi ───────────────────────────────────────────────────
+const fmtSum = n => Number(n || 0).toLocaleString('uz-UZ')
+
+function fmtDate(isoStr) {
+  if (!isoStr) return '—'
+  return new Date(isoStr).toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+function PayStatus({ s }) {
+  const st = s.payment_status
+  if (!st || st === 'none') return <span className="text-muted">—</span>
+  const meta = {
+    paid:    { label: "To'langan", bg: '#dcfce7', color: '#15803d' },
+    partial: { label: 'Qisman',    bg: '#fef3c7', color: '#b45309' },
+    debtor:  { label: 'Qarzdor',   bg: '#fee2e2', color: '#b91c1c' },
+  }[st]
+  if (!meta) return <span className="text-muted">—</span>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <span className="lead-status-badge" style={{ background: meta.bg, color: meta.color, alignSelf: 'flex-start' }}>
+        {meta.label}
+      </span>
+      {Number(s.debt) > 0 && (
+        <span style={{ fontSize: 11.5, color: 'var(--danger)', fontWeight: 600 }}>
+          −{fmtSum(s.debt)} so'm
+        </span>
+      )}
+      {Number(s.advance_applied) > 0 && (
+        <span style={{ fontSize: 11, color: 'var(--success)' }}>avans −{fmtSum(s.advance_applied)}</span>
+      )}
+    </div>
+  )
+}
+
+// ── To'lov qabul qilish oynasi (hunter/admin) ───────────────────────────────
+function RecordPaymentModal({ student, onClose, onSaved }) {
+  const [sum, setSum] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [groupId, setGroupId] = useState('')
+  const [amount, setAmount] = useState('')
+  const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => { loadSummary() }, [student.id])
+  async function loadSummary() {
+    setLoading(true)
+    try {
+      const s = await fetchStudentPaymentSummary(student.id)
+      setSum(s)
+      const firstDebt = s.groups.find(g => Number(g.remaining) > 0) || s.groups[0]
+      if (firstDebt) {
+        setGroupId(String(firstDebt.group_id))
+        if (Number(firstDebt.remaining) > 0) setAmount(String(Math.round(firstDebt.remaining)))
+      }
+    } catch { toast.error("Yuklab bo'lmadi") } finally { setLoading(false) }
+  }
+
+  async function handleSave() {
+    if (!groupId) return toast.error('Guruhni tanlang')
+    const amt = Number(amount)
+    if (!amt || amt <= 0) return toast.error("To'g'ri summa kiriting")
+    setSaving(true)
+    try {
+      await createPayment({
+        student_id: student.id,
+        group_id: Number(groupId),
+        amount: amt,
+        month: sum.month, year: sum.year,
+        notes: notes.trim() || null,
+      })
+      toast.success("To'lov qabul qilindi")
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+        <div className="modal-header">
+          <h3><FontAwesomeIcon icon={faWallet} /> To'lov — {student.full_name}</h3>
+          <button className="modal-close" onClick={onClose}><FontAwesomeIcon icon={faXmark} /></button>
+        </div>
+        <div className="modal-body">
+          {loading ? <div className="muted center py-4">Yuklanmoqda...</div> : sum && (
+            <>
+              <div className="rp-summary">
+                <div><span className="muted">Oy</span><strong>{sum.month}/{sum.year}</strong></div>
+                <div><span className="muted">Oylik summa</span><strong>{fmtSum(sum.total_owed)}</strong></div>
+                <div><span className="muted">To'langan</span><strong>{fmtSum(sum.total_paid)}</strong></div>
+                {Number(sum.advance_balance) > 0 && <div><span className="muted">Avans</span><strong style={{ color: 'var(--success)' }}>{fmtSum(sum.advance_balance)}</strong></div>}
+                <div><span className="muted">Qarz</span><strong style={{ color: Number(sum.debt) > 0 ? 'var(--danger)' : 'var(--success)' }}>{fmtSum(sum.debt)}</strong></div>
+              </div>
+
+              {sum.groups.length === 0 ? (
+                <div className="muted center py-4" style={{ fontSize: 13 }}>Talaba narxli faol guruhda emas — avval guruhga biriktiring.</div>
+              ) : (
+                <>
+                  <label>Guruh</label>
+                  <select className="field" value={groupId} onChange={e => setGroupId(e.target.value)}>
+                    {sum.groups.map(g => (
+                      <option key={g.group_id} value={g.group_id}>
+                        {g.group_name} — qoldi: {fmtSum(g.remaining)}
+                      </option>
+                    ))}
+                  </select>
+                  <label>Summa (so'm)</label>
+                  <input className="field" type="number" inputMode="numeric" value={amount}
+                    onChange={e => setAmount(e.target.value)} placeholder="0" />
+                  <label>Izoh</label>
+                  <textarea className="field" rows={2} value={notes}
+                    onChange={e => setNotes(e.target.value)} placeholder="Masalan: naqd, qolgani keyingi hafta..." />
+                </>
+              )}
+
+              {sum.recent_payments.length > 0 && (
+                <div className="rp-history">
+                  <div className="rp-history-title">So'nggi to'lovlar</div>
+                  {sum.recent_payments.slice(0, 5).map(p => (
+                    <div key={p.id} className="rp-history-item">
+                      <div>
+                        <strong>{fmtSum(p.amount)} so'm</strong>
+                        <span className="muted"> · {p.month}/{p.year} · {p.group_name}</span>
+                        {p.notes && <div className="muted" style={{ fontSize: 12 }}>“{p.notes}”</div>}
+                      </div>
+                      {p.recorded_by_name && <span className="rp-by">{p.recorded_by_name}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="button secondary" onClick={onClose}>Bekor</button>
+          <button className="button primary" onClick={handleSave} disabled={saving || loading || !sum?.groups.length}>
+            <FontAwesomeIcon icon={faCircleCheck} /> {saving ? 'Saqlanmoqda...' : 'Qabul qilish'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

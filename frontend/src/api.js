@@ -144,6 +144,7 @@ export async function createUser(p)       { return request('/users', { method: '
 export async function updateUser(id, p)   { return request(`/users/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function blockUser(id, p)    { return request(`/users/${id}/block`, { method: 'POST', body: JSON.stringify(p) }) }
 export async function unblockUser(id)     { return request(`/users/${id}/unblock`, { method: 'POST' }) }
+export async function deleteUserPermanent(id) { return request(`/users/${id}/permanent`, { method: 'DELETE' }) }
 
 // ── Audit logs ────────────────────────────────────────────────────────────────
 

@@ -134,6 +134,7 @@ class Student(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     is_archived = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     group_memberships = relationship("GroupStudent", back_populates="student")
     payments = relationship("Payment", back_populates="student")
@@ -157,6 +158,7 @@ class Group(Base):
     course_price = Column(Numeric(12, 2), nullable=False, default=0)
     teacher_pay_per_student = Column(Numeric(12, 2), nullable=False, default=0)
     schedule = Column(String(200), nullable=True)   # e.g. "Du,Cho,Ju 14:00"
+    lesson_time = Column(String(5), nullable=True)  # dars boshlanish vaqti, masalan "14:00"
     start_date = Column(DateTime, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     telegram_chat_id = Column(String(50), nullable=True)   # guruhning Telegram chat ID'si (uy vazifasi boti uchun)

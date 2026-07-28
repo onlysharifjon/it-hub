@@ -48,5 +48,8 @@ data/
 # User-uploaded files
 uploads/
 
+# Deleted-user backups (contain password hashes)
+backend/deleted_users_backup/
+
 # Claude agent skill cache
 .agents/

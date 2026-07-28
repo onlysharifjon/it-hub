@@ -13,7 +13,7 @@ import {
 import DateFilter from './DateFilter'
 import Pagination from './Pagination'
 
-const EMPTY_GROUP = { name: '', stage: 'foundation', teacher_id: '', tariff_id: '', course_price: '', teacher_pay_per_student: '', schedule: '', start_date: '', telegram_chat_id: '' }
+const EMPTY_GROUP = { name: '', stage: 'foundation', teacher_id: '', tariff_id: '', course_price: '', teacher_pay_per_student: '', schedule: '', lesson_time: '', start_date: '', telegram_chat_id: '' }
 
 const STAGE_COLORS = {
   foundation: { bg: '#eff6ff', color: '#1d4ed8', bar: '#3b82f6' },
@@ -97,6 +97,7 @@ export default function Groups({ onOpenGroup }) {
       tariff_id: matched ? String(matched.id) : '',
       course_price: g.course_price, teacher_pay_per_student: g.teacher_pay_per_student || '',
       schedule: g.schedule || '',
+      lesson_time: g.lesson_time || '',
       start_date: g.start_date ? g.start_date.slice(0, 10) : '',
       telegram_chat_id: g.telegram_chat_id || '',
     })
@@ -114,6 +115,7 @@ export default function Groups({ onOpenGroup }) {
       // Narx tarifdan avtomatik keladi — qo'lda kiritilmaydi
       course_price: parseFloat(form.course_price) || 0,
       schedule: form.schedule || null,
+      lesson_time: form.lesson_time || null,
       start_date: form.start_date ? new Date(form.start_date).toISOString() : null,
       telegram_chat_id: form.telegram_chat_id.trim() || null,
     }
@@ -219,7 +221,7 @@ export default function Groups({ onOpenGroup }) {
                 <div className="group-card-info">
                   <div><span className="label">Ustoz:</span> {g.teacher_name || '—'}</div>
                   <div><span className="label">Narx:</span> {Number(g.course_price).toLocaleString()} so'm/oy</div>
-                  <div><span className="label">Jadval:</span> {g.schedule || '—'}</div>
+                  <div><span className="label">Jadval:</span> {g.schedule || '—'}{g.lesson_time ? ` — soat ${g.lesson_time}` : ''}</div>
                   <div><span className="label">O'quvchilar:</span> <span className="badge">{g.student_count}</span></div>
                 </div>
 
@@ -312,12 +314,20 @@ export default function Groups({ onOpenGroup }) {
                   Narx: <strong>{Number(form.course_price).toLocaleString()} so'm/oy</strong>
                 </p>
               )}
-              <label>Dars jadvali</label>
-              <select className="field" value={form.schedule} onChange={e => setForm(p => ({ ...p, schedule: e.target.value }))}>
-                <option value="">— Tanlang —</option>
-                <option value="Juft kunlar">Juft kunlar</option>
-                <option value="Toq kunlar">Toq kunlar</option>
-              </select>
+              <div className="row-2">
+                <div>
+                  <label>Dars jadvali</label>
+                  <select className="field" value={form.schedule} onChange={e => setForm(p => ({ ...p, schedule: e.target.value }))}>
+                    <option value="">— Tanlang —</option>
+                    <option value="Juft kunlar">Juft kunlar</option>
+                    <option value="Toq kunlar">Toq kunlar</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Dars vaqti (soat)</label>
+                  <input className="field" type="time" value={form.lesson_time} onChange={e => setForm(p => ({ ...p, lesson_time: e.target.value }))} />
+                </div>
+              </div>
               <label>Boshlanish sanasi</label>
               <input className="field" type="date" value={form.start_date} onChange={e => setForm(p => ({ ...p, start_date: e.target.value }))} />
               <label>Telegram chat ID (uy vazifasi uchun)</label>

@@ -242,7 +242,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
             </div>
             {group.schedule && (
               <div className="info-card-sub">
-                <FontAwesomeIcon icon={faCalendarDay} /> {group.schedule}
+                <FontAwesomeIcon icon={faCalendarDay} /> {group.schedule}{group.lesson_time ? ` — soat ${group.lesson_time}` : ''}
               </div>
             )}
           </div>

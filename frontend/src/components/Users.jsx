@@ -3,9 +3,9 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faUserShield, faPlus, faLock, faLockOpen,
-  faPen, faSearch, faXmark,
+  faPen, faSearch, faXmark, faTrash,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchUsers, createUser, updateUser, blockUser, unblockUser } from '../api'
+import { fetchUsers, createUser, updateUser, blockUser, unblockUser, deleteUserPermanent } from '../api'
 
 const ROLE_LABELS = {
   admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi",
@@ -59,6 +59,11 @@ export default function Users() {
   const [blockModal, setBlockModal] = useState(null)  // null | user object
   const [blockForm, setBlockForm] = useState({ reason: '', contact: '' })
   const [blocking, setBlocking] = useState(false)
+
+  // Permanent delete modal
+  const [deleteModal, setDeleteModal] = useState(null)  // null | user object
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -149,6 +154,29 @@ export default function Users() {
     }
   }
 
+  function openDelete(u) {
+    setDeleteConfirmText('')
+    setDeleteModal(u)
+  }
+
+  async function handleDeletePermanent() {
+    if (deleteConfirmText !== deleteModal.username) {
+      toast.error('Username to\'g\'ri kiritilmadi')
+      return
+    }
+    setDeleting(true)
+    try {
+      await deleteUserPermanent(deleteModal.id)
+      toast.success("Akkount butunlay o'chirildi (bog'liq ma'lumotlar backup qilindi)")
+      setDeleteModal(null)
+      load()
+    } catch (err) {
+      toast.error(err.message || 'Xato')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const filtered = users.filter(u =>
     !search ||
     u.username.toLowerCase().includes(search.toLowerCase()) ||
@@ -224,6 +252,9 @@ export default function Users() {
                           <FontAwesomeIcon icon={faLock} style={{ color: '#ef4444' }} />
                         </button>
                       )}
+                      <button className="button small secondary" onClick={() => openDelete(u)} title="Butunlay o'chirish">
+                        <FontAwesomeIcon icon={faTrash} style={{ color: '#dc2626' }} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -328,6 +359,45 @@ export default function Users() {
               <button className="button danger" onClick={handleBlock} disabled={blocking}>
                 {blocking ? 'Yuklanmoqda...' : (
                   <><FontAwesomeIcon icon={faLock} /> Bloklash</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Permanent Delete Modal ── */}
+      {deleteModal && (
+        <div className="modal-overlay" onClick={() => setDeleteModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h3>Akkauntni butunlay o'chirish</h3>
+              <button className="modal-close" onClick={() => setDeleteModal(null)}>
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: '#dc2626', fontWeight: 600, marginBottom: 8 }}>
+                Diqqat! Bu amalni orqaga qaytarib bo'lmaydi.
+              </p>
+              <p style={{ fontSize: 13, color: '#4b5563', marginBottom: 16 }}>
+                <strong>{deleteModal.full_name || deleteModal.username}</strong> ({deleteModal.username}) akkaunti
+                bazadan butunlay o'chiriladi. Unga bog'liq barcha yozuvlar (to'lov, lid, chegirma va h.k.) o'chirilmaydi,
+                lekin ularga tegishli "kim qildi" ma'lumoti serverda backup faylga saqlanadi.
+              </p>
+              <div className="form-group">
+                <label className="form-label">Tasdiqlash uchun username kiriting: <strong>{deleteModal.username}</strong></label>
+                <input className="form-input" value={deleteConfirmText}
+                  onChange={e => setDeleteConfirmText(e.target.value)}
+                  placeholder={deleteModal.username} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setDeleteModal(null)}>Bekor</button>
+              <button className="button danger" onClick={handleDeletePermanent}
+                disabled={deleting || deleteConfirmText !== deleteModal.username}>
+                {deleting ? 'O\'chirilmoqda...' : (
+                  <><FontAwesomeIcon icon={faTrash} /> Butunlay o'chirish</>
                 )}
               </button>
             </div>

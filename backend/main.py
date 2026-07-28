@@ -345,6 +345,11 @@ def require_auth(
     return user
 
 
+def require_staff(user: models.User = Depends(require_auth)) -> models.User:
+    """Har qanday tizimga kirgan xodim (rol cheklovisiz)."""
+    return user
+
+
 def require_metodist(user: models.User = Depends(require_auth)) -> models.User:
     if user.role not in (UserRole.metodist.value, UserRole.admin.value):
         raise HTTPException(status_code=403, detail="Bu amal faqat metodist/admin uchun")
@@ -389,9 +394,9 @@ def require_attendance_editor(user: models.User = Depends(require_auth)) -> mode
 
 
 def require_lms_write(user: models.User = Depends(require_auth)) -> models.User:
-    """Metodist, Hunter, Sales va admin — talabalar va guruhlar bilan ishlash."""
+    """Metodist, Hunter, Sales, Call center va admin — talabalar va guruhlar bilan ishlash."""
     allowed = (UserRole.metodist.value, UserRole.hunter.value,
-               UserRole.sales.value, UserRole.admin.value)
+               UserRole.sales.value, UserRole.call_center.value, UserRole.admin.value)
     if user.role not in allowed:
         raise HTTPException(status_code=403, detail="Ruxsat yo'q")
     return user
@@ -689,6 +694,63 @@ def unblock_user(user_id: int, db: Session = Depends(get_db), actor: models.User
     return user
 
 
+@app.delete("/users/{user_id}/permanent")
+def delete_user_permanent(user_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+    """Foydalanuvchini bazadan butunlay o'chirish.
+
+    O'chirishdan oldin userning o'zi va unga bog'liq barcha jadvallardagi
+    yozuvlar (to'lov, lid, chegirma va h.k. — kim qilganligi) JSON backup
+    faylga saqlanadi, so'ng user qatori butunlay o'chiriladi. Bog'liq
+    yozuvlarning o'zi o'chirilmaydi — faqat "kim qildi" bog'lanishi
+    tarixiy backup faylda qoladi (users.id qayta ishlatilmaydi, chunki
+    autoincrement).
+    """
+    if user_id == actor.id:
+        raise HTTPException(status_code=400, detail="O'zingizni butunlay o'chirolmaysiz")
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+    if user.role == UserRole.admin.value:
+        remaining_admins = db.query(models.User).filter(
+            models.User.role == UserRole.admin.value, models.User.id != user_id,
+        ).count()
+        if remaining_admins == 0:
+            raise HTTPException(status_code=400, detail="Oxirgi admin akkauntini o'chirib bo'lmaydi")
+
+    user_snapshot = {c.name: getattr(user, c.name) for c in models.User.__table__.columns}
+
+    related_records = {}
+    for mapper in models.Base.registry.mappers:
+        table = mapper.local_table
+        if table is None or table.name == "users":
+            continue
+        for col in table.columns:
+            for fk in col.foreign_keys:
+                if fk.column.table.name == "users" and fk.column.name == "id":
+                    rows = db.query(table).filter(col == user_id).all()
+                    if rows:
+                        related_records.setdefault(table.name, []).extend(
+                            dict(row._mapping) for row in rows
+                        )
+
+    backup_dir = os.path.join(os.path.dirname(__file__), "deleted_users_backup")
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_filename = f"user_{user_id}_{user.username}_{datetime.utcnow().strftime('%Y%m%dT%H%M%S')}.json"
+    with open(os.path.join(backup_dir, backup_filename), "w", encoding="utf-8") as f:
+        json.dump(
+            {"user": user_snapshot, "related_records": related_records,
+             "deleted_by": actor.username, "deleted_at": datetime.utcnow().isoformat()},
+            f, ensure_ascii=False, indent=2, default=str,
+        )
+
+    write_audit(db, entity_type="user", entity_id=user_id, action="permanent_delete",
+                changed_by_id=actor.id,
+                old_value={"username": user.username, "role": user.role, "backup_file": backup_filename})
+    db.query(models.User).filter(models.User.id == user_id).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": True, "backup_file": backup_filename}
+
+
 # ── Lessons endpoints ─────────────────────────────────────────────────────────
 
 @app.get("/lessons", response_model=List[schemas.LessonRead])
@@ -975,7 +1037,7 @@ def _student_read(s: models.Student, pay: Optional[tuple] = None) -> schemas.Stu
         telegram_id=s.telegram_id, telegram_user_id=s.telegram_user_id,
         photo=s.photo, notes=s.notes, is_active=s.is_active,
         is_archived=s.is_archived, advance_balance=s.advance_balance,
-        created_at=s.created_at, group_count=len(s.group_memberships),
+        created_at=s.created_at, updated_at=s.updated_at, group_count=len(s.group_memberships),
         group_names=[m.group.name for m in s.group_memberships if m.group],
         owed_month=owed, paid_month=paid, debt=debt, payment_status=pstatus,
         advance_applied=advance_applied,
@@ -1135,7 +1197,7 @@ def _group_read(g: models.Group, db: Session = None) -> schemas.GroupRead:
         course_id=g.course_id, course_name=g.course.name if g.course else None,
         teacher_id=g.teacher_id,
         teacher_name=g.teacher.full_name or g.teacher.username if g.teacher else None,
-        course_price=g.course_price, schedule=g.schedule,
+        course_price=g.course_price, schedule=g.schedule, lesson_time=g.lesson_time,
         start_date=g.start_date, is_active=g.is_active,
         telegram_chat_id=g.telegram_chat_id,
         created_at=g.created_at, student_count=len(g.members),
@@ -1916,7 +1978,7 @@ def list_expenses(
 
 
 @app.post("/expenses", response_model=schemas.ExpenseRead, status_code=201)
-def create_expense(payload: schemas.ExpenseCreate, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+def create_expense(payload: schemas.ExpenseCreate, db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
     exp = models.Expense(**payload.dict())
     db.add(exp)
     db.commit()
@@ -2213,6 +2275,7 @@ def today_groups(
             "name": g.name,
             "stage": g.stage or 'foundation',
             "schedule": g.schedule,
+            "lesson_time": g.lesson_time,
             "teacher_name": g.teacher.full_name or g.teacher.username if g.teacher else None,
             "student_count": len(g.members),
             "attendance_taken": taken > 0,

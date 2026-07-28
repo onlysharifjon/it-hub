@@ -502,6 +502,7 @@ class StudentRead(BaseModel):
     is_active: bool
     is_archived: bool = False
     created_at: datetime
+    updated_at: Optional[datetime] = None
     group_count: Optional[int] = 0
     group_names: Optional[List[str]] = []
     # Joriy oy to'lov holati
@@ -580,6 +581,7 @@ class GroupRead(BaseModel):
     course_price: Decimal
     teacher_pay_per_student: Decimal = Decimal('0')
     schedule: Optional[str] = None
+    lesson_time: Optional[str] = None
     start_date: Optional[datetime] = None
     is_active: bool
     telegram_chat_id: Optional[str] = None
@@ -606,6 +608,7 @@ class GroupCreate(BaseModel):
     course_price: Decimal = Field(..., ge=0)
     teacher_pay_per_student: Decimal = Field(Decimal('0'), ge=0)
     schedule: Optional[str] = Field(None, max_length=200)
+    lesson_time: Optional[str] = Field(None, max_length=5, regex=r"^\d{2}:\d{2}$")
     start_date: Optional[datetime] = None
     telegram_chat_id: Optional[str] = Field(None, max_length=50)
 
@@ -618,6 +621,7 @@ class GroupUpdate(BaseModel):
     course_price: Optional[Decimal] = Field(None, ge=0)
     teacher_pay_per_student: Optional[Decimal] = Field(None, ge=0)
     schedule: Optional[str] = Field(None, max_length=200)
+    lesson_time: Optional[str] = Field(None, max_length=5, regex=r"^\d{2}:\d{2}$")
     start_date: Optional[datetime] = None
     is_active: Optional[bool] = None
     telegram_chat_id: Optional[str] = Field(None, max_length=50)

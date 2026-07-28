@@ -285,7 +285,7 @@ export default function TodayAttendance({ currentUser }) {
               </div>
               <div className="today-group-info">
                 <span><FontAwesomeIcon icon={faUsers} style={{ fontSize: 11 }} /> {g.student_count} o'quvchi</span>
-                {g.schedule && <span>{g.schedule}</span>}
+                {g.schedule && <span>{g.schedule}{g.lesson_time ? ` — soat ${g.lesson_time}` : ''}</span>}
               </div>
               <button
                 className={`button ${g.attendance_taken ? 'secondary' : 'primary'} small`}
