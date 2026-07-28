@@ -321,7 +321,7 @@ export default function Dashboard({ onNavigate }) {
             <div className="modal-body">
               <div className="form-group">
                 <label className="form-label">Nomi *</label>
-                <input className="form-input" value={expForm.name}
+                <input className="form-input" type="text" value={expForm.name}
                   onChange={e => setExpForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="Ijara, kommunal, reklama..." />
               </div>

@@ -1,7 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from models import AuditAccount, Employee, Fine, FineTemplate, ParentLink, Role
+from models import Employee, ParentLink, Role
 
 # Doimiy pastki tugmalar tarkibi o'zgarganda shu qiymatni oshiring — bot ishga tushganda
 # eski qiymat bilan solishtirib, farq bo'lsa hamma foydalanuvchiga jim (bildirishnomasiz)
@@ -12,20 +12,12 @@ KEYBOARD_VERSION = "5"
 
 BTN_WORKERS = "\U0001f465 Xodimlar"
 BTN_ROLES = "\U0001f3ad Rollar"
-BTN_AUDIT_ACCOUNTS = "\U0001f511 Audit akkauntlari"
-BTN_TEMPLATES = "\U0001f4dd Shablonlar"
 BTN_REPORTS = "\U0001f4ca Hisobotlar"
 BTN_BROADCAST = "\U0001f4e2 Xabar yuborish"
 BTN_LINK_PARENT = "\U0001f517 Ota-onani biriktirish"
 BTN_ATTENDANCE = "\U0001f4cb Davomat"
 BTN_PAYMENT = "\U0001f4b0 To'lov holati"
 BTN_SETTINGS = "\U00002699 Sozlamalar"
-
-BTN_FINE_GIVE = "\U000026a0\U0000fe0f Jarima/Shtraf berish"
-BTN_FINE_REPORT = "\U0001f4ca Hisobot"
-BTN_MY_TEMPLATES = "\U0001f5c2 Mening shablonlarim"
-
-BTN_MY_FINES = "\U0001f4cb Mening jarima/shtraflarim"
 
 BTN_MY_CHILD = "\U0001f476 Farzandim"
 BTN_SCHEDULE = "\U0001f4c5 Jadval"
@@ -38,11 +30,9 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_WORKERS), KeyboardButton(text=BTN_ROLES)],
-            [KeyboardButton(text=BTN_AUDIT_ACCOUNTS), KeyboardButton(text=BTN_TEMPLATES)],
-            [KeyboardButton(text=BTN_FINE_GIVE), KeyboardButton(text=BTN_ATTENDANCE)],
-            [KeyboardButton(text=BTN_PAYMENT), KeyboardButton(text=BTN_LINK_PARENT)],
-            [KeyboardButton(text=BTN_REPORTS), KeyboardButton(text=BTN_BROADCAST)],
-            [KeyboardButton(text=BTN_SETTINGS)],
+            [KeyboardButton(text=BTN_ATTENDANCE), KeyboardButton(text=BTN_PAYMENT)],
+            [KeyboardButton(text=BTN_LINK_PARENT), KeyboardButton(text=BTN_REPORTS)],
+            [KeyboardButton(text=BTN_BROADCAST), KeyboardButton(text=BTN_SETTINGS)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -50,32 +40,13 @@ def admin_reply_keyboard() -> ReplyKeyboardMarkup:
 
 
 def limited_admin_reply_keyboard() -> ReplyKeyboardMarkup:
-    """Oddiy admin — kundalik ishlar: rol/audit/shablon/sozlama boshqaruvi yo'q."""
+    """Oddiy admin — kundalik ishlar: rol/sozlama boshqaruvi yo'q."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_FINE_GIVE), KeyboardButton(text=BTN_ATTENDANCE)],
-            [KeyboardButton(text=BTN_PAYMENT), KeyboardButton(text=BTN_LINK_PARENT)],
-            [KeyboardButton(text=BTN_REPORTS), KeyboardButton(text=BTN_BROADCAST)],
+            [KeyboardButton(text=BTN_ATTENDANCE), KeyboardButton(text=BTN_PAYMENT)],
+            [KeyboardButton(text=BTN_LINK_PARENT), KeyboardButton(text=BTN_REPORTS)],
+            [KeyboardButton(text=BTN_BROADCAST)],
         ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-
-def audit_reply_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BTN_FINE_GIVE), KeyboardButton(text=BTN_FINE_REPORT)],
-            [KeyboardButton(text=BTN_MY_TEMPLATES)],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-
-def worker_reply_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_MY_FINES)]],
         resize_keyboard=True,
         is_persistent=True,
     )
@@ -91,7 +62,6 @@ def parent_reply_keyboard() -> ReplyKeyboardMarkup:
 
 def reports_choice_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="\U0001f9fe Shtraflar hisoboti", callback_data="report_start")
     builder.button(text="\U0001f4b0 To'lov hisoboti", callback_data="rpt_payment")
     builder.adjust(1)
     return builder.as_markup()
@@ -116,7 +86,6 @@ def broadcast_choice_keyboard() -> InlineKeyboardMarkup:
 def settings_choice_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="\U0001f46a Standart ota-ona ID", callback_data="set_default_parent")
-    builder.button(text="\U0001f5bc Shtrafda rasm majburiymi", callback_data="toggle_fine_photo")
     builder.button(text="➕ Yangi admin qo'shish", callback_data="new_admin_start")
     builder.button(text="➖ Adminlikdan olish", callback_data="remove_admin_start")
     builder.button(text="\U0001f517 Admin/CEO havolasi yaratish", callback_data="invite_link_start")
@@ -148,71 +117,6 @@ def children_keyboard(links: list[ParentLink]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for link in links:
         builder.button(text=link.student_name, callback_data=f"child_detail:{link.id}")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def fine_totals_keyboard(
-    employees: list[Employee], totals: dict[int, dict[str, int]], back_callback: str
-) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    idx = 0
-    for employee in employees:
-        stats = totals.get(employee.id)
-        if not stats or not stats.get("count"):
-            continue
-        idx += 1
-        parts = []
-        if stats.get("gray"):
-            parts.append(f"⚪{stats['gray']}")
-        if stats.get("yellow"):
-            parts.append(f"\U0001f7e1{stats['yellow']}")
-        if stats.get("red"):
-            parts.append(f"\U0001f534{stats['red']}")
-        if stats.get("money"):
-            parts.append(f"{stats['money']:,}".replace(",", " ") + "so'm")
-        summary = " ".join(parts)
-        builder.button(
-            text=f"{idx}. {employee.full_name} — {summary}",
-            callback_data=f"report_emp:{employee.id}",
-        )
-    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def report_detail_keyboard(employee_id: int, back_callback: str) -> InlineKeyboardMarkup:
-    """Faqat superadmin uchun — xodimning jarima/shtraf tarixi ostida ko'rinadi."""
-    builder = InlineKeyboardBuilder()
-    builder.button(
-        text="\U0001f5d1 Ogohlantirishni bekor qilish", callback_data=f"cancel_fine_menu:{employee_id}"
-    )
-    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def fine_cancel_keyboard(fines: list[Fine], back_callback: str) -> InlineKeyboardMarkup:
-    icons = {"gray": "⚪", "yellow": "\U0001f7e1", "red": "\U0001f534"}
-    builder = InlineKeyboardBuilder()
-    for idx, fine in enumerate(fines, start=1):
-        if fine.severity:
-            label = icons.get(fine.severity, "")
-        else:
-            label = f"{fine.amount:,}".replace(",", " ") + " so'm"
-        builder.button(
-            text=f"{idx}. {fine.created_at:%d.%m %H:%M} — {label}",
-            callback_data=f"cancel_fine_pick:{fine.id}",
-        )
-    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def fine_cancel_confirm_keyboard(fine_id: int, back_callback: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="\U0001f5d1 Ha, bekor qilish", callback_data=f"cancel_fine_confirm:{fine_id}")
-    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -254,118 +158,10 @@ def roles_manage_keyboard(roles: list[Role], back_callback: str | None = None) -
     return builder.as_markup()
 
 
-def audit_accounts_keyboard(
-    accounts: list[AuditAccount], back_callback: str | None = None
-) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for account in accounts:
-        status = "✅ Faol" if account.is_active else "\U0001f6ab Nofaol"
-        name = account.employee.full_name if account.employee else "?"
-        builder.button(text=f"{name} ({account.login}) — {status}", callback_data=f"audit_detail:{account.id}")
-    builder.button(text="➕ Yangi audit yaratish", callback_data="new_audit")
-    if back_callback:
-        builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def audit_account_detail_keyboard(account: AuditAccount, back_callback: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    toggle_text = "\U0001f6ab Nofaol qilish" if account.is_active else "✅ Faol qilish"
-    builder.button(text=toggle_text, callback_data=f"toggle_audit:{account.id}")
-    builder.button(text="\U0001f504 Parolni yangilash", callback_data=f"reset_audit_pwd:{account.id}")
-    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def fine_templates_keyboard(
-    templates: list[FineTemplate], prefix: str, back_callback: str | None = None
-) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for template in templates:
-        builder.button(text=template.short_name, callback_data=f"{prefix}:{template.id}")
-    if back_callback:
-        builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def bob_choice_keyboard(
-    summaries: list[tuple[str, str, int]], has_other: bool, back_callback: str
-) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for bob_key, label, count in summaries:
-        builder.button(text=f"{label} ({count})", callback_data=f"fine_bob:{bob_key}")
-    if has_other:
-        builder.button(text="\U0001f4cb Boshqa shablonlar", callback_data="fine_bob:other")
-    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def admin_templates_keyboard(
-    templates: list[FineTemplate], back_callback: str | None = None
-) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for template in templates:
-        status = "✅" if template.is_active else "\U0001f6ab"
-        shared = "\U0001f465" if template.shared_with_audit else ""
-        builder.button(
-            text=f"{template.short_name} {status}{shared}", callback_data=f"template_detail:{template.id}"
-        )
-    builder.button(text="➕ Yangi shablon qo'shish", callback_data="new_template")
-    if back_callback:
-        builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def template_detail_keyboard(template: FineTemplate, back_callback: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✏️ Matnni tahrirlash", callback_data=f"edit_template:{template.id}")
-    active_text = "\U0001f6ab Nofaol qilish" if template.is_active else "✅ Faol qilish"
-    builder.button(text=active_text, callback_data=f"toggle_template:{template.id}")
-    share_text = "\U0001f465 Auditdan yashirish" if template.shared_with_audit else "\U0001f465 Auditga ko'rsatish"
-    builder.button(text=share_text, callback_data=f"toggle_template_share:{template.id}")
-    builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def audit_templates_manage_keyboard(
-    templates: list[FineTemplate], back_callback: str | None = None
-) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for template in templates:
-        status = "✅ Faol" if template.is_active else "\U0001f6ab Nofaol"
-        builder.button(
-            text=f"{template.short_name} — {status}", callback_data=f"toggle_audit_template:{template.id}"
-        )
-    builder.button(text="➕ Yangi shablon qo'shish", callback_data="new_audit_template")
-    if back_callback:
-        builder.button(text="⬅️ Orqaga", callback_data=back_callback)
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def audit_menu_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="\U0001f9fe Shtraf berish", callback_data="fine_start")
-    builder.button(text="\U0001f4ca Hisobot", callback_data="report_start")
-    builder.button(text="\U0001f5c2 Mening shablonlarim", callback_data="audit_templates_menu")
-    builder.button(text="⬅️ Orqaga", callback_data="panel_root")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
 def admin_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="\U0001f465 Xodimlar", callback_data="adm_workers")
     builder.button(text="\U0001f3ad Rollar", callback_data="adm_roles")
-    builder.button(text="\U0001f511 Audit akkauntlari", callback_data="adm_audits")
-    builder.button(text="\U0001f4dd Shablonlar", callback_data="adm_templates")
-    builder.button(text="\U0001f4ca Hisobot", callback_data="adm_report")
     builder.button(text="\U0001f4e2 Ota-onalarga xabar", callback_data="bc_parents_start")
     builder.button(text="\U0001f4e2 Xodimlarga xabar", callback_data="bc_workers_start")
     builder.button(text="⬅️ Orqaga", callback_data="panel_root")
@@ -499,18 +295,9 @@ def broadcast_role_keyboard(roles: list[Role]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def photo_prompt_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="\U000023ed Rasm shart emas", callback_data="fine_skip_photo")
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-def panel_choice_keyboard(show_admin: bool, show_audit: bool) -> InlineKeyboardMarkup:
+def panel_choice_keyboard(show_admin: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     if show_admin:
         builder.button(text="\U0001f6e0 Admin", callback_data="adm_menu")
-    if show_audit:
-        builder.button(text="\U0001f575 Audit", callback_data="panel_audit")
     builder.adjust(1)
     return builder.as_markup()

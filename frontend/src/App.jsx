@@ -28,11 +28,20 @@ import Academic from './components/Academic'
 import FeedbackInbox from './components/FeedbackInbox'
 import Notifications from './components/Notifications'
 import Parents from './components/Parents'
+import PublicIntake from './components/PublicIntake'
+import AuditWarnings from './components/AuditWarnings'
 import { fetchMe, login as apiLogin, setToken } from './api'
 
 function readHash() {
   const raw = window.location.hash.replace('#', '').trim()
   return raw || 'lessons'
+}
+
+// Ommaviy (auth talab qilmaydigan) qabul formasi: #intake/<slug>
+function readIntakeSlug() {
+  const raw = window.location.hash.replace('#', '').trim()
+  const m = raw.match(/^intake\/([A-Za-z0-9_-]+)$/)
+  return m ? m[1] : null
 }
 
 function ScrollToTop() {
@@ -65,10 +74,12 @@ function App() {
     try { return JSON.parse(sessionStorage.getItem('selectedGroup')) || null } catch { return null }
   })
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [intakeSlug, setIntakeSlug] = useState(readIntakeSlug)
 
   // Sync state when user navigates with browser back/forward
   useEffect(() => {
     function onHashChange() {
+      setIntakeSlug(readIntakeSlug())
       const page = readHash()
       setActivePage(page)
       if (page !== 'group_detail') setSelectedGroup(null)
@@ -106,6 +117,16 @@ function App() {
     window.location.hash = page
     setActivePage(page)
     setSidebarOpen(false)
+  }
+
+  // Ommaviy qabul formasi — auth talab qilinmaydi
+  if (intakeSlug) {
+    return (
+      <ThemeProvider>
+        <Toaster position="top-right" />
+        <PublicIntake slug={intakeSlug} />
+      </ThemeProvider>
+    )
   }
 
   if (!isAuthed) {
@@ -204,6 +225,7 @@ function App() {
           {activePage === 'notifications' && <Notifications />}
           {activePage === 'parents' && <Parents currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
+          {activePage === 'audit_warnings' && <AuditWarnings currentUser={currentUser} />}
         </div>
       </main>
     </div>

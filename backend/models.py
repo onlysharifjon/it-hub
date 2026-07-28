@@ -14,6 +14,7 @@ class UserRole(str, enum.Enum):
     call_center = "call_center"  # call center — lidlar holati + talabalar/guruhlar
     hunter      = "hunter"       # hunter     — lid qo'shish + talabalar/guruhlar
     sales       = "sales"        # sales      — CRM lidlar + talabalar/guruhlar (moliya yo'q)
+    audit       = "audit"        # audit      — xodimlarga ogohlantirish/jarima berish
 
 
 class LeadStatus(str, enum.Enum):
@@ -37,6 +38,7 @@ class User(Base):
     avatar = Column(String(500), nullable=True)
     phone = Column(String(30), nullable=True)          # kontakt (ota-ona ilovasida ko'rinadi)
     telegram = Column(String(100), nullable=True)      # @username
+    telegram_chat_id = Column(String(50), nullable=True)  # Telegram bot bildirishnomasi uchun chat/user ID
     face_photo_path = Column(String(500), nullable=True)  # kamera orqali davomat uchun yuz rasmi
     # Block & expiry
     blocked_reason  = Column(Text, nullable=True)         # sabab matni
@@ -671,4 +673,44 @@ class CoinTransaction(Base):
 
     student = relationship("Student", foreign_keys=[student_id])
     teacher = relationship("User", foreign_keys=[teacher_id])
-    group = relationship("Group", foreign_keys=[group_id])
+
+
+class DisciplineCode(Base):
+    """Ichki tartib qoidalari kodeksi — bob-band bo'yicha ogohlantirish shablonlari.
+    Audit shu ro'yxatdan tanlab xodimga ogohlantirish beradi."""
+
+    __tablename__ = "discipline_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(16), nullable=False, unique=True, index=True)  # masalan "2.4"
+    severity = Column(String(16), nullable=False)  # "gray" | "yellow" | "red"
+    short_name = Column(String(64), nullable=False)
+    text = Column(Text, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class StaffWarning(Base):
+    """Audit tomonidan xodimga berilgan ogohlantirish/jarima yozuvi — Telegram bot
+    orqali xodimga xabar sifatida yetkaziladi (bot faqat vositachi)."""
+
+    __tablename__ = "staff_warnings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    staff_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    issued_by_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    discipline_code_id = Column(Integer, ForeignKey("discipline_codes.id"), nullable=True)
+    code = Column(String(16), nullable=True)         # nusxa — kodeks keyin o'zgarsa ham tarix saqlansin
+    severity = Column(String(16), nullable=False)    # "gray" | "yellow" | "red"
+    reason = Column(Text, nullable=False)             # nusxa — to'liq qoida matni
+    photo_path = Column(String(500), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    notified_at = Column(DateTime, nullable=True)     # botga muvaffaqiyatli yetkazilgan payt
+    notify_error = Column(Text, nullable=True)        # yetkazib bo'lmasa sabab (qayta yuborish uchun)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    staff = relationship("User", foreign_keys=[staff_id])
+    issued_by = relationship("User", foreign_keys=[issued_by_id])
+    cancelled_by = relationship("User", foreign_keys=[cancelled_by_id])
+    discipline_code = relationship("DisciplineCode")

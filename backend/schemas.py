@@ -1118,3 +1118,56 @@ class CoinDeduct(BaseModel):
     student_id: int
     amount: int = Field(..., ge=1, le=100000)
     reason: Optional[str] = Field(None, max_length=300)
+
+
+# ── Staff warnings (audit) ────────────────────────────────────────────────────
+
+class StaffOption(BaseModel):
+    id: int
+    full_name: Optional[str] = None
+    username: str
+    role: str
+
+    class Config:
+        orm_mode = True
+
+
+class DisciplineCodeRead(BaseModel):
+    id: int
+    code: str
+    severity: str
+    short_name: str
+    text: str
+    is_active: bool
+
+    class Config:
+        orm_mode = True
+
+
+class StaffWarningRead(BaseModel):
+    id: int
+    staff_id: int
+    staff_name: Optional[str] = None
+    issued_by_id: int
+    issued_by_name: Optional[str] = None
+    discipline_code_id: Optional[int] = None
+    code: Optional[str] = None
+    severity: str
+    reason: str
+    photo_path: Optional[str] = None
+    created_at: datetime
+    notified_at: Optional[datetime] = None
+    notify_error: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
+    cancelled_by_name: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+class StaffWarningCreate(BaseModel):
+    staff_id: int
+    discipline_code_id: Optional[int] = None
+    # discipline_code_id berilmasa, severity+reason qo'lda kiritiladi (erkin ogohlantirish)
+    severity: Optional[str] = Field(None, regex="^(gray|yellow|red)$")
+    reason: Optional[str] = Field(None, max_length=2000)

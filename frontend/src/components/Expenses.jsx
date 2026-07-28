@@ -189,6 +189,7 @@ export default function Expenses() {
                 <label className="form-label">Nomi / Sabab *</label>
                 <input
                   className="form-input"
+                  type="text"
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="Ijara, kommunal, reklama..."

@@ -8,6 +8,7 @@ import {
   faChalkboardTeacher, faReceipt, faCamera,
   faHeadset, faBullseye, faStar, faBell, faBookOpen,
   faPen, faGraduationCap, faCommentDots, faPeopleRoof,
+  faTriangleExclamation,
 } from '@fortawesome/free-solid-svg-icons'
 import { toast } from 'react-hot-toast'
 import { uploadAvatar, updateProfile, fetchFeedbackNewCount, createExpense, API_BASE } from '../api'
@@ -30,6 +31,7 @@ function Sidebar({
   const isHunter     = currentUser?.role === 'hunter'
   const isSales      = currentUser?.role === 'sales'
   const isCallCenter = currentUser?.role === 'call_center'
+  const isAudit       = currentUser?.role === 'audit'
   const hasCrmAccess = isHunter || isSales || isCallCenter || isAdmin
 
   const [catOpen, setCatOpen] = useState(activePage === 'lessons')
@@ -121,7 +123,7 @@ function Sidebar({
   const avatarUrl    = currentUser?.avatar ? `${API_BASE}/uploads/${currentUser.avatar}` : null
   const roleLabels   = {
     admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi",
-    hunter: 'Hunter', call_center: 'Call Center', sales: 'Sales',
+    hunter: 'Hunter', call_center: 'Call Center', sales: 'Sales', audit: 'Audit',
   }
 
   async function handleAvatarFile(e) {
@@ -162,8 +164,8 @@ function Sidebar({
       </div>
 
       <nav className="sidebar-nav">
-        {/* Metodika — metodist, teacher, admin (Hunter, Sales va Call Center ko'rmaydi) */}
-        {!isHunter && !isSales && !isCallCenter && (
+        {/* Metodika — metodist, teacher, admin (Hunter, Sales, Call Center, Audit ko'rmaydi) */}
+        {!isHunter && !isSales && !isCallCenter && !isAudit && (
           <>
             <div className="nav-section-label">Metodika</div>
             <button
@@ -270,7 +272,7 @@ function Sidebar({
         )}
 
         {/* Akademik — teacher + metodist + hunter + admin (baholar, izohlar, sertifikatlar, tadbirlar) */}
-        {!isCallCenter && !isSales && (
+        {!isCallCenter && !isSales && !isAudit && (
           <>
             <div className="nav-section-label mt-3">Akademik</div>
             <button
@@ -282,14 +284,31 @@ function Sidebar({
           </>
         )}
 
-        {/* Davomat — teacher + metodist + admin + call_center + hunter */}
-        <div className="nav-section-label mt-3">Davomat</div>
-        <button
-          className={`nav-page-btn ${activePage === 'today_attendance' ? 'active' : ''}`}
-          onClick={() => onNavigate('today_attendance')}
-        >
-          <FontAwesomeIcon icon={faCalendarCheck} fixedWidth /> Bugungi darslar
-        </button>
+        {/* Davomat — teacher + metodist + admin + call_center + hunter (Audit ko'rmaydi) */}
+        {!isAudit && (
+          <>
+            <div className="nav-section-label mt-3">Davomat</div>
+            <button
+              className={`nav-page-btn ${activePage === 'today_attendance' ? 'active' : ''}`}
+              onClick={() => onNavigate('today_attendance')}
+            >
+              <FontAwesomeIcon icon={faCalendarCheck} fixedWidth /> Bugungi darslar
+            </button>
+          </>
+        )}
+
+        {/* Audit — ogohlantirishlar (audit va admin) */}
+        {(isAudit || isAdmin) && (
+          <>
+            <div className="nav-section-label mt-3">Audit</div>
+            <button
+              className={`nav-page-btn ${activePage === 'audit_warnings' ? 'active' : ''}`}
+              onClick={() => onNavigate('audit_warnings')}
+            >
+              <FontAwesomeIcon icon={faTriangleExclamation} fixedWidth /> Ogohlantirishlar
+            </button>
+          </>
+        )}
 
         {/* LMS */}
         {(isMetodist || isHunter || isSales || isCallCenter) && (

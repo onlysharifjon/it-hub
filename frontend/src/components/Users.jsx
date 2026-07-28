@@ -9,11 +9,11 @@ import { fetchUsers, createUser, updateUser, blockUser, unblockUser, deleteUserP
 
 const ROLE_LABELS = {
   admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi",
-  hunter: 'Hunter', call_center: 'Call Center', sales: 'Sales',
+  hunter: 'Hunter', call_center: 'Call Center', sales: 'Sales', audit: 'Audit',
 }
 const ROLE_COLORS = {
   admin: '#2563eb', metodist: '#7c3aed', teacher: '#374151',
-  hunter: '#ea580c', call_center: '#0d9488', sales: '#16a34a',
+  hunter: '#ea580c', call_center: '#0d9488', sales: '#16a34a', audit: '#b91c1c',
 }
 
 function statusLabel(u) {
@@ -281,14 +281,14 @@ export default function Users() {
               {modal === 'create' && (
                 <div className="form-group">
                   <label className="form-label">Username *</label>
-                  <input className="form-input" value={form.username}
+                  <input className="form-input" type="text" value={form.username}
                     onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
                     placeholder="foydalanuvchi_nomi" />
                 </div>
               )}
               <div className="form-group">
                 <label className="form-label">Ism familiya</label>
-                <input className="form-input" value={form.full_name}
+                <input className="form-input" type="text" value={form.full_name}
                   onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
                   placeholder="To'liq ism" />
               </div>
@@ -307,6 +307,7 @@ export default function Users() {
                   <option value="hunter">Hunter</option>
                   <option value="sales">Sales</option>
                   <option value="call_center">Call Center</option>
+                  <option value="audit">Audit</option>
                   <option value="admin">Admin</option>
                 </select>
               </div>
@@ -349,7 +350,7 @@ export default function Users() {
               </div>
               <div className="form-group">
                 <label className="form-label">Bog'lanish kontakti *</label>
-                <input className="form-input" value={blockForm.contact}
+                <input className="form-input" type="text" value={blockForm.contact}
                   onChange={e => setBlockForm(f => ({ ...f, contact: e.target.value }))}
                   placeholder="+998 90 123 45 67 yoki Telegram: @username" />
               </div>

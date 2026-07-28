@@ -12,9 +12,7 @@ from utils import (
     apply_bot_commands,
     build_info_text,
     consume_invite_link,
-    ensure_audit_account,
     format_new_links_notice,
-    get_active_audit_account,
     get_employee,
     list_admins,
     reply_keyboard_for_employee,
@@ -58,16 +56,12 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
                 f"\U0001f451 Xush kelibsiz, {employee.full_name}!\n\n"
                 f"Havola orqali sizga {tier_label} huquqi berildi. Pastdagi tugmalar orqali boshqaring."
             )
-            audit_creds = await ensure_audit_account(session, employee)
-            if audit_creds:
-                login, password = audit_creds
-                text += f"\n\n\U0001f511 Audit login: <code>{login}</code>, parol: <code>{password}</code>"
         elif employee.is_admin:
             text = (
                 f"\U0001f44b Xush kelibsiz, {employee.full_name}!\n\n"
                 "Siz — admin. Pastdagi tugmalar orqali boshqaring."
             )
-        elif employee.role_id or (await get_active_audit_account(session, employee.id)):
+        elif employee.role_id:
             text = f"\U0001f44b Xush kelibsiz, {employee.full_name}!\n\nPastdagi tugmalar orqali davom eting."
         else:
             text = (
