@@ -7,14 +7,8 @@ from sqlalchemy import select
 import crm_client
 from database import async_session
 from keyboards import children_keyboard
-from models import Attendance, Fine, ParentLink
-from utils import (
-    fine_line,
-    format_new_links_notice,
-    get_employee,
-    money_and_warning_summary,
-    sync_parent_links_from_crm,
-)
+from models import Attendance, ParentLink
+from utils import format_new_links_notice, get_employee, sync_parent_links_from_crm
 
 router = Router(name="profile")
 
@@ -135,26 +129,3 @@ async def my_children_schedule(message: Message) -> None:
             schedule_text = "hozircha olib bo'lmadi"
         lines.append(f"\U0001f4c5 {link.student_name} — {link.group_name}\nJadval: {schedule_text}")
     await message.answer("\n\n".join(lines))
-
-
-@router.message(F.text == "/shtraflarim")
-async def my_fines(message: Message) -> None:
-    async with async_session() as session:
-        employee = await get_employee(session, message.from_user.id)
-        if employee is None:
-            await message.answer("Avval botga /start bosing.")
-            return
-        result = await session.execute(
-            select(Fine).where(Fine.employee_id == employee.id).order_by(Fine.created_at.desc())
-        )
-        fines = result.scalars().all()
-
-    if not fines:
-        await message.answer("Sizda shtraf/jarima yo'q.")
-        return
-
-    header = "\U0001f4ca Sizning shtraf/jarimalaringiz\n" + money_and_warning_summary(fines)
-    lines = [header, ""]
-    for fine in fines:
-        lines.append(fine_line(fine))
-    await message.answer("\n".join(lines))

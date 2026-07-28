@@ -27,70 +27,12 @@ class Employee(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role_id: Mapped[int | None] = mapped_column(ForeignKey("roles.id"), nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
-    # To'liq huquqli admin — boshqa adminlarni qo'shish/olib tashlash, rollar, audit
-    # akkauntlari, shablonlar va sozlamalarni faqat superadmin boshqaradi.
+    # To'liq huquqli admin — boshqa adminlarni qo'shish/olib tashlash va rollarni
+    # faqat superadmin boshqaradi.
     is_superadmin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     role: Mapped["Role | None"] = relationship(back_populates="employees")
-    fines_received: Mapped[list["Fine"]] = relationship(
-        back_populates="employee", foreign_keys="Fine.employee_id"
-    )
-    audit_account: Mapped["AuditAccount | None"] = relationship(back_populates="employee")
-
-
-class AuditAccount(Base):
-    __tablename__ = "audit_accounts"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), unique=True)
-    login: Mapped[str] = mapped_column(String(64), unique=True)
-    password_hash: Mapped[str] = mapped_column(String(255))
-    salt: Mapped[str] = mapped_column(String(32))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-    employee: Mapped["Employee"] = relationship(back_populates="audit_account")
-
-
-class FineTemplate(Base):
-    __tablename__ = "fine_templates"
-    __table_args__ = (UniqueConstraint("owner", "text", name="uq_fine_templates_owner_text"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    text: Mapped[str] = mapped_column(String(255))
-    short_name: Mapped[str] = mapped_column(String(64))
-    owner: Mapped[str] = mapped_column(String(16))
-    shared_with_audit: Mapped[bool] = mapped_column(Boolean, default=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    # Ichki tartib qoidalari kodeksidan: bob-band kodi va darajasi (gray/yellow/red).
-    # Berilganda bu shablon pulsiz ogohlantirish hisoblanadi (Fine.amount = 0).
-    code: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
-
-
-class Fine(Base):
-    __tablename__ = "fines"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
-    issued_by_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
-    amount: Mapped[int] = mapped_column(Integer)
-    reason: Mapped[str] = mapped_column(String(255))
-    photo_file_id: Mapped[str] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    # Tartib qoidalari kodeksidan berilgan bo'lsa: "gray"|"yellow"|"red" + bob-band kodi
-    # (masalan "2.4"). Oddiy pullik shtraflarda ikkalasi ham None — amount ishlatiladi.
-    severity: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    code: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    # Superadmin bekor qilsa to'ldiriladi — yozuv o'chirilmaydi, faqat hisobotlarda
-    # faol summaga/songa qo'shilmay qo'yadi (tarixda "bekor qilingan" deb ko'rinadi).
-    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    cancelled_by_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
-
-    employee: Mapped["Employee"] = relationship(foreign_keys=[employee_id], back_populates="fines_received")
-    issued_by: Mapped["Employee"] = relationship(foreign_keys=[issued_by_id])
 
 
 class Attendance(Base):

@@ -493,3 +493,15 @@ export async function linkParentChild(id, studentId) {
 export async function unlinkParentChild(id, studentId) {
   return request(`/parents/${id}/children/${studentId}`, { method: 'DELETE' })
 }
+
+// ── Audit ogohlantirishlar ────────────────────────────────────────────────────
+
+export async function fetchStaffOptions()    { return request('/staff-options') }
+export async function fetchDisciplineCodes() { return request('/discipline-codes') }
+export async function fetchStaffWarnings(staffId) {
+  const q = staffId ? `?staff_id=${staffId}` : ''
+  return request(`/staff-warnings${q}`)
+}
+export async function createStaffWarning(p)   { return request('/staff-warnings', { method: 'POST', body: JSON.stringify(p) }) }
+export async function resendStaffWarning(id)  { return request(`/staff-warnings/${id}/resend`, { method: 'POST' }) }
+export async function cancelStaffWarning(id)  { return request(`/staff-warnings/${id}/cancel`, { method: 'POST' }) }

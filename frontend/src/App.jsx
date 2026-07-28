@@ -27,6 +27,7 @@ import Parents from './components/Parents'
 import FeedbackInbox from './components/FeedbackInbox'
 import Academic from './components/Academic'
 import PublicIntake from './components/PublicIntake'
+import AuditWarnings from './components/AuditWarnings'
 import { fetchMe, login as apiLogin, setToken } from './api'
 
 function readHash() {
@@ -198,6 +199,7 @@ function App() {
           {activePage === 'parents' && <Parents currentUser={currentUser} />}
           {activePage === 'feedbacks' && <FeedbackInbox currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
+          {activePage === 'audit_warnings' && <AuditWarnings currentUser={currentUser} />}
         </div>
       </main>
     </div>

@@ -414,6 +414,14 @@ def require_feedback_status(user: models.User = Depends(require_auth)) -> models
     return user
 
 
+def require_audit(user: models.User = Depends(require_auth)) -> models.User:
+    """Xodimlarga ogohlantirish berish: audit va admin."""
+    allowed = (UserRole.audit.value, UserRole.admin.value)
+    if user.role not in allowed:
+        raise HTTPException(status_code=403, detail="Bu amal faqat audit/admin uchun")
+    return user
+
+
 def _resolve_token(raw_token: str, db: Session, *, expect_download: bool) -> models.User:
     """Decode a raw JWT string and return the authenticated admin user.
 
@@ -4853,3 +4861,155 @@ def camera_checkin(
         "student_id=%s event=%s detected_at=%s", payload.student_id, payload.event, detected_at
     )
     return {"status": "ok"}
+
+
+# ── Staff warnings (audit) ─────────────────────────────────────────────────────
+# Audit xodimga ogohlantirish shu yerdan beradi; bot faqat xabarni Telegram orqali
+# yetkazib beruvchi vositachi — botga hech qanday so'rov yozilmaydi, aksincha shu
+# yerning o'zi mavjud send_telegram_message() yordamida to'g'ridan-to'g'ri yuboradi.
+
+SEVERITY_EMOJI = {"gray": "⚪️", "yellow": "\U0001f7e1", "red": "\U0001f534"}
+
+
+def _staff_name(u: Optional[models.User]) -> Optional[str]:
+    if not u:
+        return None
+    return u.full_name or u.username
+
+
+def _staff_warning_read(w: models.StaffWarning) -> schemas.StaffWarningRead:
+    return schemas.StaffWarningRead(
+        id=w.id, staff_id=w.staff_id, staff_name=_staff_name(w.staff),
+        issued_by_id=w.issued_by_id, issued_by_name=_staff_name(w.issued_by),
+        discipline_code_id=w.discipline_code_id, code=w.code, severity=w.severity,
+        reason=w.reason, photo_path=w.photo_path,
+        created_at=w.created_at, notified_at=w.notified_at, notify_error=w.notify_error,
+        cancelled_at=w.cancelled_at, cancelled_by_name=_staff_name(w.cancelled_by),
+    )
+
+
+def _send_staff_warning_notification(w: models.StaffWarning, staff: models.User) -> None:
+    """`w`ning notified_at/notify_error maydonlarini joyida yangilaydi — db.commit() chaqiruvchida."""
+    if not staff.telegram_chat_id:
+        w.notify_error = "Xodimga Telegram ID biriktirilmagan (bot orqali /start bosishi kerak)"
+        return
+    emoji = SEVERITY_EMOJI.get(w.severity, "⚠️")
+    local_time = (w.created_at + timedelta(hours=5)).strftime("%d.%m.%Y %H:%M")
+    lines = [f"{emoji} <b>Sizga ogohlantirish berildi</b>", ""]
+    if w.code:
+        lines.append(f"Kod: {html.escape(w.code)}")
+    lines.append(f"Sabab: {html.escape(w.reason)}")
+    lines.append(f"Sana: {local_time}")
+    ok, err = send_telegram_message(staff.telegram_chat_id, "\n".join(lines))
+    if ok:
+        w.notified_at = datetime.utcnow()
+        w.notify_error = None
+    else:
+        w.notify_error = err
+
+
+@app.get("/staff-options", response_model=List[schemas.StaffOption])
+def list_staff_options(db: Session = Depends(get_db), _: models.User = Depends(require_audit)):
+    """Ogohlantirish beriladigan xodim tanlagichi uchun — /users kabi metodist-only emas."""
+    return (
+        db.query(models.User)
+        .filter(models.User.is_active.is_(True))
+        .order_by(models.User.full_name, models.User.username)
+        .all()
+    )
+
+
+@app.get("/discipline-codes", response_model=List[schemas.DisciplineCodeRead])
+def list_discipline_codes(db: Session = Depends(get_db), _: models.User = Depends(require_auth)):
+    codes = (
+        db.query(models.DisciplineCode)
+        .filter(models.DisciplineCode.is_active.is_(True))
+        .order_by(models.DisciplineCode.code)
+        .all()
+    )
+    return codes
+
+
+@app.get("/staff-warnings", response_model=List[schemas.StaffWarningRead])
+def list_staff_warnings(
+    staff_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_audit),
+):
+    q = db.query(models.StaffWarning).options(
+        joinedload(models.StaffWarning.staff),
+        joinedload(models.StaffWarning.issued_by),
+        joinedload(models.StaffWarning.cancelled_by),
+    )
+    if staff_id:
+        q = q.filter(models.StaffWarning.staff_id == staff_id)
+    return [_staff_warning_read(w) for w in q.order_by(models.StaffWarning.created_at.desc()).all()]
+
+
+@app.post("/staff-warnings", response_model=schemas.StaffWarningRead, status_code=201)
+def create_staff_warning(
+    payload: schemas.StaffWarningCreate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_audit),
+):
+    staff = db.query(models.User).filter(models.User.id == payload.staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Xodim topilmadi")
+
+    code = None
+    severity = payload.severity
+    reason = payload.reason
+    if payload.discipline_code_id:
+        dc = db.query(models.DisciplineCode).filter(
+            models.DisciplineCode.id == payload.discipline_code_id,
+            models.DisciplineCode.is_active.is_(True),
+        ).first()
+        if not dc:
+            raise HTTPException(status_code=404, detail="Kodeks moddasi topilmadi")
+        code, severity, reason = dc.code, dc.severity, dc.text
+    elif not severity or not reason:
+        raise HTTPException(status_code=400, detail="Kodeks tanlang yoki daraja va sabab kiriting")
+
+    w = models.StaffWarning(
+        staff_id=staff.id, issued_by_id=actor.id,
+        discipline_code_id=payload.discipline_code_id, code=code,
+        severity=severity, reason=reason,
+    )
+    db.add(w)
+    db.flush()
+    _send_staff_warning_notification(w, staff)
+    write_audit(db, entity_type="staff_warning", entity_id=w.id, action="create",
+                changed_by_id=actor.id,
+                new_value={"staff_id": staff.id, "code": code, "severity": severity, "reason": reason})
+    db.commit()
+    db.refresh(w)
+    return _staff_warning_read(w)
+
+
+@app.post("/staff-warnings/{warning_id}/resend", response_model=schemas.StaffWarningRead)
+def resend_staff_warning(warning_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_audit)):
+    w = db.query(models.StaffWarning).filter(models.StaffWarning.id == warning_id).first()
+    if not w:
+        raise HTTPException(status_code=404, detail="Ogohlantirish topilmadi")
+    if w.cancelled_at:
+        raise HTTPException(status_code=400, detail="Bekor qilingan ogohlantirish qayta yuborilmaydi")
+    staff = db.query(models.User).filter(models.User.id == w.staff_id).first()
+    _send_staff_warning_notification(w, staff)
+    db.commit()
+    db.refresh(w)
+    return _staff_warning_read(w)
+
+
+@app.post("/staff-warnings/{warning_id}/cancel", response_model=schemas.StaffWarningRead)
+def cancel_staff_warning(warning_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
+    w = db.query(models.StaffWarning).filter(models.StaffWarning.id == warning_id).first()
+    if not w:
+        raise HTTPException(status_code=404, detail="Ogohlantirish topilmadi")
+    if w.cancelled_at:
+        raise HTTPException(status_code=400, detail="Ogohlantirish allaqachon bekor qilingan")
+    w.cancelled_at = datetime.utcnow()
+    w.cancelled_by_id = actor.id
+    write_audit(db, entity_type="staff_warning", entity_id=w.id, action="cancel", changed_by_id=actor.id)
+    db.commit()
+    db.refresh(w)
+    return _staff_warning_read(w)
