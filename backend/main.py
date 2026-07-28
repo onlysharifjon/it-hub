@@ -4821,9 +4821,10 @@ def broadcast_to_parents(
         .distinct()
         .all()
     ]
+    safe_text = html.escape(payload.text)
     sent = 0
     for tid in ids:
-        ok, _ = send_telegram_message(tid, payload.text)
+        ok, _ = send_telegram_message(tid, safe_text)
         if ok:
             sent += 1
     write_audit(db, entity_type="parent_broadcast", entity_id=0, action="send",
