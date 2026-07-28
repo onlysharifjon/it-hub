@@ -4823,15 +4823,20 @@ def broadcast_to_parents(
     ]
     safe_text = html.escape(payload.text)
     sent = 0
+    errors: list[str] = []
     for tid in ids:
-        ok, _ = send_telegram_message(tid, safe_text)
+        ok, err = send_telegram_message(tid, safe_text)
         if ok:
             sent += 1
+        elif err and err not in errors:
+            errors.append(err)
     write_audit(db, entity_type="parent_broadcast", entity_id=0, action="send",
                 changed_by_id=actor.id,
-                new_value={"text": payload.text, "total": len(ids), "sent": sent})
+                new_value={"text": payload.text, "total": len(ids), "sent": sent, "errors": errors[:5]})
     db.commit()
-    return schemas.ParentBroadcastResult(total=len(ids), sent=sent, failed=len(ids) - sent)
+    return schemas.ParentBroadcastResult(
+        total=len(ids), sent=sent, failed=len(ids) - sent, sample_errors=errors[:5]
+    )
 
 
 # ── Dars jadvali slotlari (strukturaviy jadval) ──────────────────────────────

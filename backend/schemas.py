@@ -823,6 +823,7 @@ class ParentBroadcastResult(BaseModel):
     total:  int
     sent:   int
     failed: int
+    sample_errors: List[str] = []
 
 
 # ── Schedule slotlar (strukturaviy jadval) ───────────────────────────────────

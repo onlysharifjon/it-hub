@@ -39,9 +39,17 @@ export default function Parents({ currentUser }) {
     setBroadcasting(true)
     try {
       const r = await broadcastToParents(broadcastText.trim())
-      toast.success(`Yuborildi: ${r.sent}/${r.total} ota-onaga`)
-      setBroadcastModal(false)
-      setBroadcastText('')
+      if (r.sent > 0) {
+        toast.success(`Yuborildi: ${r.sent}/${r.total} ota-onaga`)
+        setBroadcastModal(false)
+        setBroadcastText('')
+      } else {
+        toast.error(
+          `Hech kimga yetmadi (0/${r.total}).` +
+          (r.sample_errors?.length ? ` Sabab: ${r.sample_errors[0]}` : ''),
+          { duration: 8000 }
+        )
+      }
     } catch (e) { toast.error(e.message) }
     finally { setBroadcasting(false) }
   }
