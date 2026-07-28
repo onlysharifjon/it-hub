@@ -4805,6 +4805,34 @@ def unlink_parent_child(
         db.commit()
 
 
+@app.post("/parents/broadcast", response_model=schemas.ParentBroadcastResult)
+def broadcast_to_parents(
+    payload: schemas.ParentBroadcastRequest,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Talabalarga bog'langan Telegram ID'lari (Student.telegram_user_id) orqali
+    barcha ota-onalarga bir xil matnli xabar yuboradi — bitta ID bir nechta
+    talabaga tegishli bo'lsa ham, unga faqat bitta xabar boradi."""
+    ids = [
+        row[0] for row in
+        db.query(models.Student.telegram_user_id)
+        .filter(models.Student.telegram_user_id.isnot(None), models.Student.telegram_user_id != "")
+        .distinct()
+        .all()
+    ]
+    sent = 0
+    for tid in ids:
+        ok, _ = send_telegram_message(tid, payload.text)
+        if ok:
+            sent += 1
+    write_audit(db, entity_type="parent_broadcast", entity_id=0, action="send",
+                changed_by_id=actor.id,
+                new_value={"text": payload.text, "total": len(ids), "sent": sent})
+    db.commit()
+    return schemas.ParentBroadcastResult(total=len(ids), sent=sent, failed=len(ids) - sent)
+
+
 # ── Dars jadvali slotlari (strukturaviy jadval) ──────────────────────────────
 
 @app.get("/groups/{group_id}/schedule-slots", response_model=List[schemas.ScheduleSlotRead])

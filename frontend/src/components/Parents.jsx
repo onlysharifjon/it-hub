@@ -3,17 +3,18 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPeopleRoof, faPlus, faKey, faToggleOn, faToggleOff,
-  faCopy, faSearch, faUserPlus, faXmark, faMobileScreen,
+  faCopy, faSearch, faUserPlus, faXmark, faMobileScreen, faPaperPlane,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchParents, createParent, updateParent, resetParentPassword,
-  linkParentChild, unlinkParentChild, fetchStudents,
+  linkParentChild, unlinkParentChild, fetchStudents, broadcastToParents,
 } from '../api'
 
 const EMPTY = { full_name: '', phone: '', username: '', password: '', student_ids: [] }
 
 export default function Parents({ currentUser }) {
   const canManage = currentUser?.role === 'hunter' || currentUser?.role === 'admin'
+  const isAdmin = currentUser?.role === 'admin'
 
   const [items, setItems] = useState([])
   const [students, setStudents] = useState([])
@@ -27,6 +28,23 @@ export default function Parents({ currentUser }) {
   // Yaratilgandan keyin login/parol BIR MARTA ko'rsatiladi
   const [creds, setCreds] = useState(null)          // { full_name, username, password }
   const [linkFor, setLinkFor] = useState(null)      // farzand biriktirish modali (parent obj)
+
+  // Telegram orqali barcha ota-onalarga xabar yuborish
+  const [broadcastModal, setBroadcastModal] = useState(false)
+  const [broadcastText, setBroadcastText] = useState('')
+  const [broadcasting, setBroadcasting] = useState(false)
+
+  async function handleBroadcast() {
+    if (!broadcastText.trim()) { toast.error('Xabar matnini kiriting'); return }
+    setBroadcasting(true)
+    try {
+      const r = await broadcastToParents(broadcastText.trim())
+      toast.success(`Yuborildi: ${r.sent}/${r.total} ota-onaga`)
+      setBroadcastModal(false)
+      setBroadcastText('')
+    } catch (e) { toast.error(e.message) }
+    finally { setBroadcasting(false) }
+  }
 
   useEffect(() => { load() }, [])
   useEffect(() => {
@@ -123,11 +141,18 @@ export default function Parents({ currentUser }) {
     <div className="page">
       <div className="page-header">
         <h1><FontAwesomeIcon icon={faPeopleRoof} className="page-icon" /> Ota-onalar</h1>
-        {canManage && (
-          <button className="button primary" onClick={() => { setForm(EMPTY); setModal(true) }}>
-            <FontAwesomeIcon icon={faPlus} /> Akkaunt ochish
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {isAdmin && (
+            <button className="button secondary" onClick={() => { setBroadcastText(''); setBroadcastModal(true) }}>
+              <FontAwesomeIcon icon={faPaperPlane} /> Telegram orqali xabar
+            </button>
+          )}
+          {canManage && (
+            <button className="button primary" onClick={() => { setForm(EMPTY); setModal(true) }}>
+              <FontAwesomeIcon icon={faPlus} /> Akkaunt ochish
+            </button>
+          )}
+        </div>
       </div>
 
       <p className="text-muted" style={{ fontSize: 13, marginTop: -8 }}>
@@ -353,6 +378,33 @@ export default function Parents({ currentUser }) {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setLinkFor(null)}>Yopish</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {broadcastModal && (
+        <div className="modal-overlay" onClick={() => setBroadcastModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><FontAwesomeIcon icon={faPaperPlane} /> Barcha ota-onalarga xabar</h3>
+              <button className="modal-close" onClick={() => setBroadcastModal(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p className="text-muted" style={{ fontSize: 13, marginTop: 0 }}>
+                Xabar Telegram orqali — talabaga bog'langan Telegram ID'si bor barcha ota-onalarga yuboriladi
+                (mobil ilova akkountiga emas).
+              </p>
+              <label className="form-label">Xabar matni *</label>
+              <textarea className="field" rows={5} value={broadcastText}
+                onChange={e => setBroadcastText(e.target.value)}
+                placeholder="Xabar matnini shu yerga yozing..." />
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setBroadcastModal(false)}>Bekor</button>
+              <button className="button primary" onClick={handleBroadcast} disabled={broadcasting}>
+                {broadcasting ? 'Yuborilmoqda...' : 'Yuborish'}
+              </button>
             </div>
           </div>
         </div>

@@ -815,6 +815,16 @@ class ParentAccountCreated(ParentAccountRead):
     generated_password: Optional[str] = None
 
 
+class ParentBroadcastRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
+class ParentBroadcastResult(BaseModel):
+    total:  int
+    sent:   int
+    failed: int
+
+
 # ── Schedule slotlar (strukturaviy jadval) ───────────────────────────────────
 
 class ScheduleSlotCreate(BaseModel):

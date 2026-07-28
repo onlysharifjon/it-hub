@@ -507,6 +507,9 @@ export async function linkParentChild(id, studentId) {
 export async function unlinkParentChild(id, studentId) {
   return request(`/parents/${id}/children/${studentId}`, { method: 'DELETE' })
 }
+export async function broadcastToParents(text) {
+  return request('/parents/broadcast', { method: 'POST', body: JSON.stringify({ text }) })
+}
 
 // ── Audit ogohlantirishlar ────────────────────────────────────────────────────
 
