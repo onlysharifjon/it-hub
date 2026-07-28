@@ -97,6 +97,36 @@ async def cmd_info(message: Message) -> None:
         await message.answer(await build_info_text(session, employee))
 
 
+@router.message(F.text == "/idyubor")
+async def cmd_send_id(message: Message) -> None:
+    """Xodim shu komandani yuborsa, ismi va Telegram ID'si adminlarga xabar
+    qilinadi — admin shu ID'ni CRM'da xodimning profiliga yozadi (masalan,
+    audit ogohlantirishlari shu ID orqali Telegram'ga yetkaziladi)."""
+    async with async_session() as session:
+        employee = await get_employee(session, message.from_user.id)
+        if employee is None:
+            await message.answer("Avval botga /start bosing.")
+            return
+        username_part = f"@{employee.username}" if employee.username else "username yo'q"
+        text = (
+            "\U0001f194 CRM uchun Telegram ID so'rovi:\n"
+            f"{employee.full_name} ({username_part})\n"
+            f"ID: <code>{employee.telegram_id}</code>"
+        )
+        admins = await list_admins(session)
+        sent = False
+        for admin in admins:
+            try:
+                await message.bot.send_message(admin.telegram_id, text)
+                sent = True
+            except Exception:
+                continue
+    if sent:
+        await message.answer("✅ ID'ingiz adminlarga yuborildi.")
+    else:
+        await message.answer("Adminlarga yetkazib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.")
+
+
 async def _notify_admins(message: Message, session, employee: Employee) -> None:
     admins = await list_admins(session)
     username_part = f"@{employee.username}" if employee.username else "username yo'q"
