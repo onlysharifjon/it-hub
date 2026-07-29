@@ -1196,3 +1196,57 @@ class StaffWarningCreate(BaseModel):
     # discipline_code_id berilmasa, severity+reason qo'lda kiritiladi (erkin ogohlantirish)
     severity: Optional[str] = Field(None, regex="^(gray|yellow|red)$")
     reason: Optional[str] = Field(None, max_length=2000)
+
+
+# ── Bot boshqaruvi (Employee/Role/Sozlama/Taklif havolalari — bot.db'dan) ────────
+
+class BotRoleRead(BaseModel):
+    id: int
+    name: str
+    is_active: bool
+    is_parent: bool
+
+    class Config:
+        orm_mode = True
+
+
+class BotRoleCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    is_parent: bool = False
+
+
+class BotEmployeeRead(BaseModel):
+    id: int
+    telegram_id: int
+    full_name: str
+    username: Optional[str] = None
+    role_id: Optional[int] = None
+    role_name: Optional[str] = None
+    is_admin: bool
+    is_superadmin: bool
+
+    class Config:
+        orm_mode = True
+
+
+class BotEmployeeRoleSet(BaseModel):
+    role_id: Optional[int] = None  # None = rolni olib tashlash
+
+
+class BotEmployeeAdminSet(BaseModel):
+    tier: Optional[str] = Field(None, regex="^(admin|superadmin)$")  # None = adminlikdan olish
+
+
+class BotSettingValue(BaseModel):
+    value: str = Field(..., max_length=255)
+
+
+class BotInviteLinkCreate(BaseModel):
+    tier: str = Field(..., regex="^(admin|superadmin)$")
+
+
+class BotInviteLinkRead(BaseModel):
+    token: str
+    tier: str
+    link: str
+    used: bool

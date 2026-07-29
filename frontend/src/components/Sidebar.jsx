@@ -8,7 +8,7 @@ import {
   faChalkboardTeacher, faReceipt, faCamera,
   faHeadset, faBullseye, faStar, faBell, faBookOpen,
   faPen, faGraduationCap, faCommentDots, faPeopleRoof,
-  faTriangleExclamation,
+  faTriangleExclamation, faRobot,
 } from '@fortawesome/free-solid-svg-icons'
 import { toast } from 'react-hot-toast'
 import { uploadAvatar, updateProfile, fetchFeedbackNewCount, createExpense, API_BASE } from '../api'
@@ -400,6 +400,12 @@ function Sidebar({
               onClick={() => onNavigate('users')}
             >
               <FontAwesomeIcon icon={faUserShield} fixedWidth /> Foydalanuvchilar
+            </button>
+            <button
+              className={`nav-page-btn ${activePage === 'bot_admin' ? 'active' : ''}`}
+              onClick={() => onNavigate('bot_admin')}
+            >
+              <FontAwesomeIcon icon={faRobot} fixedWidth /> Bot boshqaruvi
             </button>
           </>
         )}

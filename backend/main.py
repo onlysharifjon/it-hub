@@ -18,7 +18,7 @@ from jose import JWTError, jwt
 from sqlalchemy import func, extract
 from sqlalchemy.orm import Session, selectinload, joinedload
 
-from . import models, schemas, core_calc
+from . import models, schemas, core_calc, bot_client
 from .database import get_db
 from .models import UserRole
 
@@ -5298,3 +5298,203 @@ def cancel_staff_warning(warning_id: int, db: Session = Depends(get_db), actor: 
     db.commit()
     db.refresh(w)
     return _staff_warning_read(w)
+
+
+# ── Bot boshqaruvi (Employee/Role/Sozlama/Taklif havolalari) ────────────────────
+# Bot'ning o'z SQLite bazasiga to'g'ridan-to'g'ri o'qish/yozish (backend/bot_client.py) —
+# bot buni o'z ichida qanday saqlagan bo'lsa, aynan shu ma'lumotlar ustida ishlaydi.
+# Bot bu bazani ham o'qib/yozib turgani uchun (WAL rejimida) bir vaqtda ikkala
+# jarayon ham xavfsiz ishlay oladi.
+
+def _bot_employee_read(e: bot_client.BotEmployee) -> schemas.BotEmployeeRead:
+    return schemas.BotEmployeeRead(
+        id=e.id, telegram_id=e.telegram_id, full_name=e.full_name, username=e.username,
+        role_id=e.role_id, role_name=e.role.name if e.role else None,
+        is_admin=e.is_admin, is_superadmin=e.is_superadmin,
+    )
+
+
+@app.get("/bot/employees", response_model=List[schemas.BotEmployeeRead])
+def list_bot_employees(actor: models.User = Depends(require_admin)):
+    db = bot_client.BotSessionLocal()
+    try:
+        employees = (
+            db.query(bot_client.BotEmployee)
+            .options(joinedload(bot_client.BotEmployee.role))
+            .order_by(bot_client.BotEmployee.full_name)
+            .all()
+        )
+        return [_bot_employee_read(e) for e in employees]
+    finally:
+        db.close()
+
+
+@app.get("/bot/roles", response_model=List[schemas.BotRoleRead])
+def list_bot_roles(actor: models.User = Depends(require_admin)):
+    db = bot_client.BotSessionLocal()
+    try:
+        return db.query(bot_client.BotRole).order_by(bot_client.BotRole.name).all()
+    finally:
+        db.close()
+
+
+@app.post("/bot/roles", response_model=schemas.BotRoleRead, status_code=201)
+def create_bot_role(payload: schemas.BotRoleCreate, actor: models.User = Depends(require_admin)):
+    db = bot_client.BotSessionLocal()
+    try:
+        existing = db.query(bot_client.BotRole).filter(bot_client.BotRole.name == payload.name).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Bu nomdagi rol allaqachon mavjud")
+        role = bot_client.BotRole(name=payload.name, is_parent=payload.is_parent, is_active=True)
+        db.add(role)
+        db.commit()
+        db.refresh(role)
+        return role
+    finally:
+        db.close()
+
+
+@app.patch("/bot/roles/{role_id}/toggle", response_model=schemas.BotRoleRead)
+def toggle_bot_role(role_id: int, actor: models.User = Depends(require_admin)):
+    db = bot_client.BotSessionLocal()
+    try:
+        role = db.get(bot_client.BotRole, role_id)
+        if not role:
+            raise HTTPException(status_code=404, detail="Rol topilmadi")
+        role.is_active = not role.is_active
+        db.commit()
+        db.refresh(role)
+        return role
+    finally:
+        db.close()
+
+
+@app.post("/bot/employees/{employee_id}/role", response_model=schemas.BotEmployeeRead)
+def set_bot_employee_role(
+    employee_id: int, payload: schemas.BotEmployeeRoleSet, actor: models.User = Depends(require_admin),
+):
+    db = bot_client.BotSessionLocal()
+    try:
+        employee = db.get(bot_client.BotEmployee, employee_id)
+        if not employee:
+            raise HTTPException(status_code=404, detail="Xodim topilmadi")
+        if payload.role_id is None:
+            employee.role_id = None
+            db.commit()
+            db.refresh(employee)
+            send_telegram_message(str(employee.telegram_id), "Sizning rolingiz olib tashlandi.")
+            return _bot_employee_read(employee)
+        role = db.get(bot_client.BotRole, payload.role_id)
+        if not role:
+            raise HTTPException(status_code=404, detail="Rol topilmadi")
+        employee.role_id = role.id
+        db.commit()
+        db.refresh(employee)
+        if role.is_parent:
+            dm_text = (
+                f"\U0001f389 Minar Academyga xush kelibsiz, {html.escape(employee.full_name)}!\n\n"
+                "Endi farzandingizning davomati, dars jadvali va boshqa muhim yangiliklardan shu bot "
+                "orqali xabardor bo'lib turasiz. Boshlash uchun botga /start bosing."
+            )
+        else:
+            dm_text = (
+                f"Sizga '{html.escape(role.name)}' roli berildi. Yangilangan imkoniyatlar uchun "
+                "botga /start bosing."
+            )
+        send_telegram_message(str(employee.telegram_id), dm_text)
+        return _bot_employee_read(employee)
+    finally:
+        db.close()
+
+
+@app.post("/bot/employees/{employee_id}/admin", response_model=schemas.BotEmployeeRead)
+def set_bot_employee_admin(
+    employee_id: int, payload: schemas.BotEmployeeAdminSet, actor: models.User = Depends(require_admin),
+):
+    db = bot_client.BotSessionLocal()
+    try:
+        employee = db.get(bot_client.BotEmployee, employee_id)
+        if not employee:
+            raise HTTPException(status_code=404, detail="Xodim topilmadi")
+        if payload.tier is None:
+            admins = db.query(bot_client.BotEmployee).filter(bot_client.BotEmployee.is_admin.is_(True)).all()
+            if not employee.is_admin:
+                raise HTTPException(status_code=400, detail="Bu xodim admin emas")
+            if len(admins) <= 1:
+                raise HTTPException(status_code=400, detail="Bu yagona admin, uni adminlikdan olib bo'lmaydi")
+            if employee.is_superadmin and sum(1 for a in admins if a.is_superadmin) <= 1:
+                raise HTTPException(status_code=400, detail="Bu yagona superadmin, uni olib bo'lmaydi")
+            employee.is_admin = False
+            employee.is_superadmin = False
+            db.commit()
+            db.refresh(employee)
+            send_telegram_message(str(employee.telegram_id), "Sizning admin huquqingiz olib tashlandi.")
+            return _bot_employee_read(employee)
+        employee.is_admin = True
+        employee.is_superadmin = payload.tier == "superadmin"
+        db.commit()
+        db.refresh(employee)
+        tier_label = "Superadmin (CEO)" if employee.is_superadmin else "Admin"
+        send_telegram_message(
+            str(employee.telegram_id),
+            f"\U0001f451 Sizga {tier_label} huquqi berildi. Botga /start bosib davom eting.",
+        )
+        return _bot_employee_read(employee)
+    finally:
+        db.close()
+
+
+@app.get("/bot/settings/{key}", response_model=schemas.BotSettingValue)
+def get_bot_setting(key: str, actor: models.User = Depends(require_admin)):
+    db = bot_client.BotSessionLocal()
+    try:
+        setting = db.query(bot_client.BotSetting).filter(bot_client.BotSetting.key == key).first()
+        return schemas.BotSettingValue(value=setting.value if setting else "")
+    finally:
+        db.close()
+
+
+@app.put("/bot/settings/{key}", response_model=schemas.BotSettingValue)
+def set_bot_setting(key: str, payload: schemas.BotSettingValue, actor: models.User = Depends(require_admin)):
+    db = bot_client.BotSessionLocal()
+    try:
+        setting = db.query(bot_client.BotSetting).filter(bot_client.BotSetting.key == key).first()
+        if setting is None:
+            setting = bot_client.BotSetting(key=key, value=payload.value)
+            db.add(setting)
+        else:
+            setting.value = payload.value
+        db.commit()
+        return schemas.BotSettingValue(value=payload.value)
+    finally:
+        db.close()
+
+
+@app.post("/bot/invite-links", response_model=schemas.BotInviteLinkRead, status_code=201)
+def create_bot_invite_link(payload: schemas.BotInviteLinkCreate, actor: models.User = Depends(require_admin)):
+    if not TELEGRAM_BOT_TOKEN:
+        raise HTTPException(status_code=400, detail="TELEGRAM_BOT_TOKEN sozlanmagan")
+    db = bot_client.BotSessionLocal()
+    try:
+        # Havola yozuvining "kim yaratdi" (created_by_id) maydoni bot'ning o'z xodim ID'siga
+        # bog'langan (NOT NULL FK) — CRM orqali chaqirilganda mavjud bot superadminlaridan
+        # birini nominal yaratuvchi sifatida ishlatamiz (faqat bot ichidagi bookkeeping uchun).
+        creator = (
+            db.query(bot_client.BotEmployee)
+            .filter(bot_client.BotEmployee.is_superadmin.is_(True))
+            .first()
+        )
+        if creator is None:
+            raise HTTPException(status_code=400, detail="Botda hech qanday superadmin topilmadi")
+        token = _secrets.token_urlsafe(16)
+        link_row = bot_client.BotAdminInviteLink(token=token, tier=payload.tier, created_by_id=creator.id)
+        db.add(link_row)
+        db.commit()
+
+        import httpx
+        r = httpx.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe", timeout=10)
+        bot_username = r.json().get("result", {}).get("username", "")
+        link = f"https://t.me/{bot_username}?start=invite_{token}"
+        return schemas.BotInviteLinkRead(token=token, tier=payload.tier, link=link, used=False)
+    finally:
+        db.close()

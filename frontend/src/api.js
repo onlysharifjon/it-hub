@@ -526,3 +526,23 @@ export async function createStaffWarning(p)   { return request('/staff-warnings'
 export async function resendStaffWarning(id)  { return request(`/staff-warnings/${id}/resend`, { method: 'POST' }) }
 export async function cancelStaffWarning(id)  { return request(`/staff-warnings/${id}/cancel`, { method: 'POST' }) }
 export async function fetchMyWarnings()       { return request('/staff-warnings/mine') }
+
+// ── Bot boshqaruvi (Xodimlar/Rollar/Sozlamalar/Admin-CEO — bot.db'dan) ──────────
+
+export async function fetchBotEmployees()  { return request('/bot/employees') }
+export async function fetchBotRoles()      { return request('/bot/roles') }
+export async function createBotRole(p)     { return request('/bot/roles', { method: 'POST', body: JSON.stringify(p) }) }
+export async function toggleBotRole(id)    { return request(`/bot/roles/${id}/toggle`, { method: 'PATCH' }) }
+export async function setBotEmployeeRole(employeeId, roleId) {
+  return request(`/bot/employees/${employeeId}/role`, { method: 'POST', body: JSON.stringify({ role_id: roleId }) })
+}
+export async function setBotEmployeeAdmin(employeeId, tier) {
+  return request(`/bot/employees/${employeeId}/admin`, { method: 'POST', body: JSON.stringify({ tier }) })
+}
+export async function fetchBotSetting(key)      { return request(`/bot/settings/${key}`) }
+export async function setBotSetting(key, value) {
+  return request(`/bot/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) })
+}
+export async function createBotInviteLink(tier) {
+  return request('/bot/invite-links', { method: 'POST', body: JSON.stringify({ tier }) })
+}
