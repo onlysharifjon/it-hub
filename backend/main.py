@@ -4825,7 +4825,10 @@ def broadcast_to_parents(
     sent = 0
     errors: list[str] = []
     for tid in ids:
-        ok, err = send_telegram_message(tid, safe_text)
+        try:
+            ok, err = send_telegram_message(tid, safe_text)
+        except Exception as e:
+            ok, err = False, str(e)[:400]
         if ok:
             sent += 1
         elif err and err not in errors:
