@@ -121,13 +121,18 @@ async def set_role(callback: CallbackQuery) -> None:
             employee.role_id = role.id
             await session.commit()
             await safe_edit_text(callback.message, f"{employee.full_name} uchun rol berildi: {role.name}")
+            if role.is_parent:
+                dm_text = (
+                    f"\U0001f389 Minar Academyga xush kelibsiz, {employee.full_name}!\n\n"
+                    "Endi farzandingizning davomati, dars jadvali va boshqa muhim yangiliklardan shu bot "
+                    "orqali xabardor bo'lib turasiz. Boshlash uchun pastdagi \"\U0001f517 Farzand biriktirish\" "
+                    "tugmasini bosing."
+                )
+            else:
+                dm_text = f"Sizga '{role.name}' roli berildi. Pastdagi tugmalar orqali davom eting."
             try:
                 keyboard = await reply_keyboard_for_employee(session, employee)
-                await callback.bot.send_message(
-                    employee.telegram_id,
-                    f"Sizga '{role.name}' roli berildi. Pastdagi tugmalar orqali davom eting.",
-                    reply_markup=keyboard,
-                )
+                await callback.bot.send_message(employee.telegram_id, dm_text, reply_markup=keyboard)
             except Exception:
                 pass
         await apply_bot_commands(callback.bot, session, employee)

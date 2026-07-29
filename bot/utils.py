@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 
 import crm_client
 from keyboards import (
+    BTN_MY_WARNINGS,
     BTN_REQUEST_CHILD,
     admin_reply_keyboard,
     limited_admin_reply_keyboard,
@@ -157,6 +158,15 @@ async def sync_parent_links_from_crm(session: AsyncSession, employee: Employee) 
     return newly_linked
 
 
+async def is_parent_role(session: AsyncSession, employee: Employee) -> bool:
+    """employee.role lazy-load async sessionda xavfli — shuning uchun Role.is_parent'ni
+    employee.role_id (oddiy ustun) orqali alohida so'rov bilan olamiz."""
+    if not employee.role_id:
+        return False
+    result = await session.execute(select(Role.is_parent).where(Role.id == employee.role_id))
+    return bool(result.scalar_one_or_none())
+
+
 async def get_setting(session: AsyncSession, key: str, default: str | None = None) -> str | None:
     result = await session.execute(select(Setting).where(Setting.key == key))
     setting = result.scalar_one_or_none()
@@ -193,7 +203,8 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
                 ("rollar", "Rollarni boshqarish"),
             ]
     else:
-        commands.append(("farzandbiriktir", "Farzand biriktirish so'rovi yuborish"))
+        if await is_parent_role(session, employee):
+            commands.append(("farzandbiriktir", "Farzand biriktirish so'rovi yuborish"))
         commands.append(("idyubor", "Telegram ID'ingizni CRM uchun adminga yuborish"))
         commands.append(("ogohlantirishlarim", "Menga berilgan ogohlantirishlarni ko'rish"))
 
@@ -247,6 +258,7 @@ async def reply_keyboard_for_employee(
 ) -> ReplyKeyboardMarkup | None:
     result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
     is_parent = result.scalar_one_or_none() is not None
+    is_parent_role_flag = await is_parent_role(session, employee)
 
     if employee.is_admin:
         base = admin_reply_keyboard() if employee.is_superadmin else limited_admin_reply_keyboard()
@@ -258,5 +270,12 @@ async def reply_keyboard_for_employee(
     rows = []
     if is_parent:
         rows.extend(parent_reply_keyboard().keyboard)
-    rows.append([KeyboardButton(text=BTN_REQUEST_CHILD)])
+    elif is_parent_role_flag:
+        # "Ota-ona" roli berilgan, lekin hali hech qanday farzand bog'lanmagan —
+        # biriktirish so'rovini shu yerdan boshlaydi.
+        rows.append([KeyboardButton(text=BTN_REQUEST_CHILD)])
+    if employee.role_id:
+        rows.append([KeyboardButton(text=BTN_MY_WARNINGS)])
+    if not rows:
+        return None
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)

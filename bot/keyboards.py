@@ -24,6 +24,8 @@ BTN_SCHEDULE = "\U0001f4c5 Jadval"
 
 BTN_REQUEST_CHILD = "\U0001f517 Farzand biriktirish"
 
+BTN_MY_WARNINGS = "\U0001f4cb Ogohlantirishlarim"
+
 
 def admin_reply_keyboard() -> ReplyKeyboardMarkup:
     """To'liq huquqli — superadmin uchun."""
