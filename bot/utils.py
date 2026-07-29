@@ -205,8 +205,10 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
     else:
         if await is_parent_role(session, employee):
             commands.append(("farzandbiriktir", "Farzand biriktirish so'rovi yuborish"))
+        else:
+            # Ogohlantirish faqat xodimlarga beriladi — ota-onaga tegishli emas.
+            commands.append(("ogohlantirishlarim", "Menga berilgan ogohlantirishlarni ko'rish"))
         commands.append(("idyubor", "Telegram ID'ingizni CRM uchun adminga yuborish"))
-        commands.append(("ogohlantirishlarim", "Menga berilgan ogohlantirishlarni ko'rish"))
 
     result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
     if result.scalar_one_or_none() is not None:
@@ -274,7 +276,8 @@ async def reply_keyboard_for_employee(
         # "Ota-ona" roli berilgan, lekin hali hech qanday farzand bog'lanmagan —
         # biriktirish so'rovini shu yerdan boshlaydi.
         rows.append([KeyboardButton(text=BTN_REQUEST_CHILD)])
-    if employee.role_id:
+    if employee.role_id and not is_parent_role_flag:
+        # Ogohlantirish faqat xodimlarga beriladi — ota-onaga tegishli emas.
         rows.append([KeyboardButton(text=BTN_MY_WARNINGS)])
     if not rows:
         return None
