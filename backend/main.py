@@ -5160,6 +5160,21 @@ def list_discipline_codes(db: Session = Depends(get_db), _: models.User = Depend
     return codes
 
 
+@app.get("/staff-warnings/mine", response_model=List[schemas.StaffWarningRead])
+def list_my_staff_warnings(db: Session = Depends(get_db), actor: models.User = Depends(require_auth)):
+    """Har qanday login qilgan xodim — faqat o'ziga berilgan ogohlantirishlarni ko'radi."""
+    q = (
+        db.query(models.StaffWarning)
+        .options(
+            joinedload(models.StaffWarning.staff),
+            joinedload(models.StaffWarning.issued_by),
+            joinedload(models.StaffWarning.cancelled_by),
+        )
+        .filter(models.StaffWarning.staff_id == actor.id)
+    )
+    return [_staff_warning_read(w) for w in q.order_by(models.StaffWarning.created_at.desc()).all()]
+
+
 @app.get("/staff-warnings", response_model=List[schemas.StaffWarningRead])
 def list_staff_warnings(
     staff_id: Optional[int] = Query(None),

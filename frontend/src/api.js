@@ -523,3 +523,4 @@ export async function createStaffWarning(p)   { return request('/staff-warnings'
 export async function resendStaffWarning(id)  { return request(`/staff-warnings/${id}/resend`, { method: 'POST' }) }
 export async function cancelStaffWarning(id)  { return request(`/staff-warnings/${id}/cancel`, { method: 'POST' }) }
 export async function deleteStaffWarning(id)  { return request(`/staff-warnings/${id}`, { method: 'DELETE' }) }
+export async function fetchMyWarnings()       { return request('/staff-warnings/mine') }

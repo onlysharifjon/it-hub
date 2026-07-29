@@ -30,6 +30,7 @@ import Notifications from './components/Notifications'
 import Parents from './components/Parents'
 import PublicIntake from './components/PublicIntake'
 import AuditWarnings from './components/AuditWarnings'
+import MyWarnings from './components/MyWarnings'
 import { fetchMe, login as apiLogin, setToken } from './api'
 
 function readHash() {
@@ -226,6 +227,7 @@ function App() {
           {activePage === 'parents' && <Parents currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
           {activePage === 'audit_warnings' && <AuditWarnings currentUser={currentUser} />}
+          {activePage === 'my_warnings' && <MyWarnings />}
         </div>
       </main>
     </div>

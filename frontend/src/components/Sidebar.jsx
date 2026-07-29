@@ -310,6 +310,19 @@ function Sidebar({
           </>
         )}
 
+        {/* Boshqa xodimlar — faqat o'ziga berilgan ogohlantirishlarni ko'radi */}
+        {!isAudit && !isAdmin && (
+          <>
+            <div className="nav-section-label mt-3">Mening</div>
+            <button
+              className={`nav-page-btn ${activePage === 'my_warnings' ? 'active' : ''}`}
+              onClick={() => onNavigate('my_warnings')}
+            >
+              <FontAwesomeIcon icon={faTriangleExclamation} fixedWidth /> Ogohlantirishlarim
+            </button>
+          </>
+        )}
+
         {/* LMS */}
         {(isMetodist || isHunter || isSales || isCallCenter) && (
           <>
