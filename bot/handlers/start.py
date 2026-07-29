@@ -1,3 +1,4 @@
+import html
 from datetime import timedelta
 
 from aiogram import F, Router
@@ -131,6 +132,7 @@ async def cmd_send_id(message: Message) -> None:
 
 
 _SEVERITY_ICON = {"gray": "⚪️", "yellow": "\U0001f7e1", "red": "\U0001f534"}
+_SEVERITY_LABEL = {"gray": "Kulrang", "yellow": "Sariq", "red": "Qizil"}
 
 
 @router.message(F.text.in_({"/ogohlantirishlarim", BTN_MY_WARNINGS}))
@@ -158,17 +160,27 @@ async def cmd_my_warnings(message: Message) -> None:
     if not warnings:
         await message.answer("Sizga hozircha ogohlantirish berilmagan. \U0001f44d")
         return
-    lines = ["\U0001f4cb Sizning ogohlantirishlaringiz:", ""]
-    for w in warnings:
+
+    lines = [f"\U0001f4cb <b>Sizning ogohlantirishlaringiz</b> — jami {len(warnings)} ta", ""]
+    for i, w in enumerate(warnings, start=1):
         icon = _SEVERITY_ICON.get(w["severity"], "⚠️")
+        label = _SEVERITY_LABEL.get(w["severity"], w["severity"])
         local_time = (w["created_at"] + timedelta(hours=5)).strftime("%d.%m.%Y %H:%M")
-        prefix = "❌ [BEKOR QILINGAN] " if w["cancelled_at"] else ""
-        code_part = f"{w['code']}-bandga ko'ra: " if w["code"] else ""
-        lines.append(f"{icon} {prefix}{local_time}")
-        lines.append(f"  {code_part}{w['reason']}")
+        band = f" · {html.escape(w['code'])}-band" if w["code"] else ""
+        reason = html.escape(w["reason"])
+
+        lines.append(f"<b>{i}.</b> {icon} <b>{label}</b>{band}")
+        if w["cancelled_at"]:
+            lines.append(f"<s>{reason}</s>")
+            lines.append("❌ <i>Bekor qilingan</i>")
+        else:
+            lines.append(reason)
+        meta = f"\U0001f5d3 {local_time}"
         if w["issued_by_name"]:
-            lines.append(f"  Berdi: {w['issued_by_name']}")
-        lines.append("")
+            meta += f"   \U0001f464 {html.escape(w['issued_by_name'])}"
+        lines.append(meta)
+        if i < len(warnings):
+            lines.append("――――――――――――――――")
     await message.answer("\n".join(lines))
 
 
