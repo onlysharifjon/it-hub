@@ -826,6 +826,17 @@ class ParentBroadcastResult(BaseModel):
     sample_errors: List[str] = []
 
 
+class StaffBroadcastRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
+class StaffBroadcastResult(BaseModel):
+    total:  int
+    sent:   int
+    failed: int
+    sample_errors: List[str] = []
+
+
 # ── Schedule slotlar (strukturaviy jadval) ───────────────────────────────────
 
 class ScheduleSlotCreate(BaseModel):

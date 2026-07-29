@@ -510,6 +510,9 @@ export async function unlinkParentChild(id, studentId) {
 export async function broadcastToParents(text) {
   return request('/parents/broadcast', { method: 'POST', body: JSON.stringify({ text }) })
 }
+export async function broadcastToStaff(text) {
+  return request('/users/broadcast', { method: 'POST', body: JSON.stringify({ text }) })
+}
 
 // ── Audit ogohlantirishlar ────────────────────────────────────────────────────
 

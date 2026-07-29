@@ -3,9 +3,11 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faUserShield, faPlus, faLock, faLockOpen,
-  faPen, faSearch, faXmark, faTrash,
+  faPen, faSearch, faXmark, faTrash, faPaperPlane,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchUsers, createUser, updateUser, blockUser, unblockUser, deleteUserPermanent } from '../api'
+import {
+  fetchUsers, createUser, updateUser, blockUser, unblockUser, deleteUserPermanent, broadcastToStaff,
+} from '../api'
 
 const ROLE_LABELS = {
   admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi",
@@ -64,6 +66,31 @@ export default function Users() {
   const [deleteModal, setDeleteModal] = useState(null)  // null | user object
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [deleting, setDeleting] = useState(false)
+
+  // Telegram orqali barcha xodimlarga xabar yuborish
+  const [broadcastModal, setBroadcastModal] = useState(false)
+  const [broadcastText, setBroadcastText] = useState('')
+  const [broadcasting, setBroadcasting] = useState(false)
+
+  async function handleBroadcast() {
+    if (!broadcastText.trim()) { toast.error('Xabar matnini kiriting'); return }
+    setBroadcasting(true)
+    try {
+      const r = await broadcastToStaff(broadcastText.trim())
+      if (r.sent > 0) {
+        toast.success(`Yuborildi: ${r.sent}/${r.total} xodimga`)
+        setBroadcastModal(false)
+        setBroadcastText('')
+      } else {
+        toast.error(
+          `Hech kimga yetmadi (0/${r.total}).` +
+          (r.sample_errors?.length ? ` Sabab: ${r.sample_errors[0]}` : ''),
+          { duration: 8000 }
+        )
+      }
+    } catch (e) { toast.error(e.message) }
+    finally { setBroadcasting(false) }
+  }
 
   useEffect(() => { load() }, [])
 
@@ -189,9 +216,14 @@ export default function Users() {
     <div className="page">
       <div className="page-header">
         <h1><FontAwesomeIcon icon={faUserShield} className="page-icon" /> Foydalanuvchilar</h1>
-        <button className="button primary" onClick={openCreate}>
-          <FontAwesomeIcon icon={faPlus} /> Yangi foydalanuvchi
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="button secondary" onClick={() => { setBroadcastText(''); setBroadcastModal(true) }}>
+            <FontAwesomeIcon icon={faPaperPlane} /> Telegram orqali xabar
+          </button>
+          <button className="button primary" onClick={openCreate}>
+            <FontAwesomeIcon icon={faPlus} /> Yangi foydalanuvchi
+          </button>
+        </div>
       </div>
 
       <div className="toolbar">
@@ -412,6 +444,32 @@ export default function Users() {
                 {deleting ? 'O\'chirilmoqda...' : (
                   <><FontAwesomeIcon icon={faTrash} /> Butunlay o'chirish</>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {broadcastModal && (
+        <div className="modal-overlay" onClick={() => setBroadcastModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><FontAwesomeIcon icon={faPaperPlane} /> Barcha xodimlarga xabar</h3>
+              <button className="modal-close" onClick={() => setBroadcastModal(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p className="text-muted" style={{ fontSize: 13, marginTop: 0 }}>
+                Xabar Telegram orqali — profilida Telegram ID'si to'ldirilgan barcha faol xodimlarga yuboriladi.
+              </p>
+              <label className="form-label">Xabar matni *</label>
+              <textarea className="form-input" rows={5} value={broadcastText}
+                onChange={e => setBroadcastText(e.target.value)}
+                placeholder="Xabar matnini shu yerga yozing..." />
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setBroadcastModal(false)}>Bekor</button>
+              <button className="button primary" onClick={handleBroadcast} disabled={broadcasting}>
+                {broadcasting ? 'Yuborilmoqda...' : 'Yuborish'}
               </button>
             </div>
           </div>

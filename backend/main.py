@@ -4842,6 +4842,46 @@ def broadcast_to_parents(
     )
 
 
+@app.post("/users/broadcast", response_model=schemas.StaffBroadcastResult)
+def broadcast_to_staff(
+    payload: schemas.StaffBroadcastRequest,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Telegram ID'si (User.telegram_chat_id) biriktirilgan barcha faol xodimlarga
+    bir xil matnli xabar yuboradi."""
+    ids = [
+        row[0] for row in
+        db.query(models.User.telegram_chat_id)
+        .filter(
+            models.User.telegram_chat_id.isnot(None),
+            models.User.telegram_chat_id != "",
+            models.User.is_active.is_(True),
+        )
+        .distinct()
+        .all()
+    ]
+    safe_text = html.escape(payload.text)
+    sent = 0
+    errors: list[str] = []
+    for tid in ids:
+        try:
+            ok, err = send_telegram_message(tid, safe_text)
+        except Exception as e:
+            ok, err = False, str(e)[:400]
+        if ok:
+            sent += 1
+        elif err and err not in errors:
+            errors.append(err)
+    write_audit(db, entity_type="staff_broadcast", entity_id=0, action="send",
+                changed_by_id=actor.id,
+                new_value={"text": payload.text, "total": len(ids), "sent": sent, "errors": errors[:5]})
+    db.commit()
+    return schemas.StaffBroadcastResult(
+        total=len(ids), sent=sent, failed=len(ids) - sent, sample_errors=errors[:5]
+    )
+
+
 # ── Dars jadvali slotlari (strukturaviy jadval) ──────────────────────────────
 
 @app.get("/groups/{group_id}/schedule-slots", response_model=List[schemas.ScheduleSlotRead])
