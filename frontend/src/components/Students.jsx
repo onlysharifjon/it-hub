@@ -16,7 +16,7 @@ const EMPTY = {
   full_name: '', phone1: '',
   father_name: '', father_phone: '',
   mother_name: '', mother_phone: '',
-  telegram_id: '', notes: '',
+  telegram_id: '', telegram_user_id: '', notes: '',
 }
 
 function StudentAvatar({ photoUrl, size = 60 }) {
@@ -98,7 +98,7 @@ export default function Students() {
       full_name: s.full_name, phone1: s.phone1,
       father_name: s.father_name || '', father_phone: s.father_phone || '',
       mother_name: s.mother_name || '', mother_phone: s.mother_phone || '',
-      telegram_id: s.telegram_id || '', notes: s.notes || '',
+      telegram_id: s.telegram_id || '', telegram_user_id: s.telegram_user_id || '', notes: s.notes || '',
     })
     setEditStudent(s)
     setModal(s)
@@ -453,8 +453,15 @@ export default function Students() {
                   <input className="field" value={form.mother_phone} onChange={e => setForm(p => ({ ...p, mother_phone: e.target.value }))} placeholder="+998..." />
                 </div>
               </div>
-              <label>Telegram ID</label>
+              <label>Telegram username (faqat ko'rinish uchun)</label>
               <input className="field" value={form.telegram_id} onChange={e => setForm(p => ({ ...p, telegram_id: e.target.value }))} placeholder="username (@ siz)" />
+              <label>Telegram ID (bot xabar yuborishi uchun) *muhim*</label>
+              <input className="field" type="text" value={form.telegram_user_id}
+                onChange={e => setForm(p => ({ ...p, telegram_user_id: e.target.value }))}
+                placeholder="123456789" />
+              <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
+                Davomat/uy vazifasi/ota-onalarga xabar shu raqamli ID'ga yuboriladi — @userinfobot orqali olinadi.
+              </p>
               <label>Izoh</label>
               <textarea className="field" rows={2} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Qo'shimcha ma'lumot..." />
             </div>
