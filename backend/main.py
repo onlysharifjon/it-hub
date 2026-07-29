@@ -5258,15 +5258,3 @@ def cancel_staff_warning(warning_id: int, db: Session = Depends(get_db), actor: 
     db.commit()
     db.refresh(w)
     return _staff_warning_read(w)
-
-
-@app.delete("/staff-warnings/{warning_id}", status_code=204)
-def delete_staff_warning(warning_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
-    w = db.query(models.StaffWarning).filter(models.StaffWarning.id == warning_id).first()
-    if not w:
-        raise HTTPException(status_code=404, detail="Ogohlantirish topilmadi")
-    write_audit(db, entity_type="staff_warning", entity_id=w.id, action="delete",
-                changed_by_id=actor.id,
-                old_value={"staff_id": w.staff_id, "code": w.code, "severity": w.severity, "reason": w.reason})
-    db.delete(w)
-    db.commit()
