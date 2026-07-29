@@ -9,7 +9,7 @@ from sqlalchemy import select
 import crm_client
 from config import ADMIN_IDS
 from database import async_session
-from keyboards import roles_keyboard
+from keyboards import BTN_MY_WARNINGS, roles_keyboard
 from models import Employee, ParentLink, Role
 from utils import (
     apply_bot_commands,
@@ -133,7 +133,7 @@ async def cmd_send_id(message: Message) -> None:
 _SEVERITY_ICON = {"gray": "⚪️", "yellow": "\U0001f7e1", "red": "\U0001f534"}
 
 
-@router.message(F.text == "/ogohlantirishlarim")
+@router.message(F.text.in_({"/ogohlantirishlarim", BTN_MY_WARNINGS}))
 async def cmd_my_warnings(message: Message) -> None:
     """CRM'da audit tomonidan berilgan, shu xodimga tegishli ogohlantirishlar
     ro'yxati — bot faqat CRM bazasidan o'qib ko'rsatadi (o'zi hech narsa
