@@ -195,6 +195,7 @@ async def commands_for_employee(session: AsyncSession, employee: Employee) -> li
     else:
         commands.append(("farzandbiriktir", "Farzand biriktirish so'rovi yuborish"))
         commands.append(("idyubor", "Telegram ID'ingizni CRM uchun adminga yuborish"))
+        commands.append(("ogohlantirishlarim", "Menga berilgan ogohlantirishlarni ko'rish"))
 
     result = await session.execute(select(ParentLink).where(ParentLink.employee_id == employee.id))
     if result.scalar_one_or_none() is not None:

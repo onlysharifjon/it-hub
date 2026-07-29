@@ -1,9 +1,12 @@
+from datetime import timedelta
+
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy import select
 
+import crm_client
 from config import ADMIN_IDS
 from database import async_session
 from keyboards import roles_keyboard
@@ -125,6 +128,48 @@ async def cmd_send_id(message: Message) -> None:
         await message.answer("✅ ID'ingiz adminlarga yuborildi.")
     else:
         await message.answer("Adminlarga yetkazib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.")
+
+
+_SEVERITY_ICON = {"gray": "⚪️", "yellow": "\U0001f7e1", "red": "\U0001f534"}
+
+
+@router.message(F.text == "/ogohlantirishlarim")
+async def cmd_my_warnings(message: Message) -> None:
+    """CRM'da audit tomonidan berilgan, shu xodimga tegishli ogohlantirishlar
+    ro'yxati — bot faqat CRM bazasidan o'qib ko'rsatadi (o'zi hech narsa
+    yozmaydi). Bekor qilinganlari ham ko'rinadi, "bekor qilingan" belgisi bilan."""
+    async with async_session() as session:
+        employee = await get_employee(session, message.from_user.id)
+    if employee is None:
+        await message.answer("Avval botga /start bosing.")
+        return
+    try:
+        data = await crm_client.get_staff_warnings(employee.telegram_id)
+    except crm_client.CRMError:
+        await message.answer("Hozircha ma'lumotni olib bo'lmadi. Birozdan so'ng qayta urinib ko'ring.")
+        return
+    if not data["linked"]:
+        await message.answer(
+            "Sizning Telegram ID'ingiz CRM'ga hali bog'lanmagan.\n"
+            "/idyubor komandasi orqali ID'ingizni adminga yuboring."
+        )
+        return
+    warnings = data["warnings"]
+    if not warnings:
+        await message.answer("Sizga hozircha ogohlantirish berilmagan. \U0001f44d")
+        return
+    lines = ["\U0001f4cb Sizning ogohlantirishlaringiz:", ""]
+    for w in warnings:
+        icon = _SEVERITY_ICON.get(w["severity"], "⚠️")
+        local_time = (w["created_at"] + timedelta(hours=5)).strftime("%d.%m.%Y %H:%M")
+        prefix = "❌ [BEKOR QILINGAN] " if w["cancelled_at"] else ""
+        code_part = f"{w['code']}-bandga ko'ra: " if w["code"] else ""
+        lines.append(f"{icon} {prefix}{local_time}")
+        lines.append(f"  {code_part}{w['reason']}")
+        if w["issued_by_name"]:
+            lines.append(f"  Berdi: {w['issued_by_name']}")
+        lines.append("")
+    await message.answer("\n".join(lines))
 
 
 async def _notify_admins(message: Message, session, employee: Employee) -> None:

@@ -146,6 +146,37 @@ def _sync_get_students_by_telegram_id(telegram_id: str) -> list[dict]:
         return results
 
 
+def _sync_get_staff_warnings(telegram_id: str) -> dict:
+    """CRM administratori xodimning User.telegram_chat_id maydoniga uning Telegram
+    ID'sini kiritadi — shu maydon orqali qaysi CRM foydalanuvchisi ekanini topib,
+    unga audit tomonidan berilgan ogohlantirishlar ro'yxatini qaytaramiz (bekor
+    qilinganlari ham — "bekor qilingan" belgisi bilan, o'chirilmaydi)."""
+    with SessionLocal() as db:
+        user = db.query(bm.User).filter(bm.User.telegram_chat_id == telegram_id).first()
+        if user is None:
+            return {"linked": False, "warnings": []}
+        rows = (
+            db.query(bm.StaffWarning)
+            .filter(bm.StaffWarning.staff_id == user.id)
+            .order_by(bm.StaffWarning.created_at.desc())
+            .all()
+        )
+        warnings = []
+        for w in rows:
+            issued_by = db.get(bm.User, w.issued_by_id)
+            warnings.append(
+                {
+                    "code": w.code,
+                    "severity": w.severity,
+                    "reason": w.reason,
+                    "created_at": w.created_at,
+                    "cancelled_at": w.cancelled_at,
+                    "issued_by_name": (issued_by.full_name or issued_by.username) if issued_by else None,
+                }
+            )
+        return {"linked": True, "warnings": warnings}
+
+
 def _sync_get_payment_summary(student_id: int, month: int | None, year: int | None) -> dict:
     now = _tashkent_now()
     month = month or now.month
@@ -200,3 +231,7 @@ async def get_payment_summary(student_id: int, month: int | None = None, year: i
 
 async def get_students_by_telegram_id(telegram_id: int) -> list[dict]:
     return await _run(_sync_get_students_by_telegram_id, str(telegram_id))
+
+
+async def get_staff_warnings(telegram_id: int) -> dict:
+    return await _run(_sync_get_staff_warnings, str(telegram_id))
