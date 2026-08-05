@@ -1,3 +1,4 @@
+import calendar
 import html
 import json
 import os
@@ -1863,11 +1864,18 @@ def teacher_my_dashboard(
 
     group_ids = [g.id for g in groups]
 
-    # Batch 1: all-time completed lessons per group (1 query)
+    # Batch 1: completed lessons per group, AS OF THE END OF THE SELECTED MONTH —
+    # tanlangan oy o'zgarganda "Kurs progressi" ham o'sha oy oxiriga qarab
+    # yangilanishi uchun (avval oyga bog'liq bo'lmagan umumiy hisob edi).
+    month_end_day = calendar.monthrange(sel_year, sel_month)[1]
+    progress_cutoff = date(sel_year, sel_month, month_end_day)
     comp_rows = (
         db.query(models.Attendance.group_id,
                  func.count(func.distinct(models.Attendance.lesson_date)).label('cnt'))
-        .filter(models.Attendance.group_id.in_(group_ids))
+        .filter(
+            models.Attendance.group_id.in_(group_ids),
+            models.Attendance.lesson_date <= progress_cutoff,
+        )
         .group_by(models.Attendance.group_id)
         .all()
     )
