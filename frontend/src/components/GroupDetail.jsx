@@ -140,7 +140,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
     try {
       const records = (data?.students || []).map(s => ({
         student_id: s.student_id,
-        is_present: true,
+        is_present: null,
       }))
       await saveAttendance(group.id, target, records)
       if (!dateOverride) { setNewDate(''); setAddingDate(false) }
@@ -153,16 +153,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   async function handleToggle(studentId, lessonDate, currentVal) {
     const newVal = currentVal === true ? false : currentVal === false ? null : true
     try {
-      if (newVal === null) {
-        // remove this single record by re-saving without it
-        const allStudents = data.students
-        const others = allStudents
-          .filter(s => s.student_id !== studentId)
-          .map(s => ({ student_id: s.student_id, is_present: s.dates[lessonDate] ?? true }))
-        await saveAttendance(group.id, lessonDate, others)
-      } else {
-        await saveAttendance(group.id, lessonDate, [{ student_id: studentId, is_present: newVal }])
-      }
+      await saveAttendance(group.id, lessonDate, [{ student_id: studentId, is_present: newVal }])
       setData(prev => {
         if (!prev) return prev
         return {
@@ -205,6 +196,14 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
     }
     return days
   })()
+
+  // "Kurs progressi" endi TANLANGAN OYGA nisbatan hisoblanadi (kurs umumiy 24
+  // darsiga emas): jadval bo'yicha shu oyda bo'lishi kerak bo'lgan darslar soniga
+  // nisbatan, shu oyda haqiqatda o'tkazilgan (sana qo'shilgan) darslar soni.
+  const monthScheduledTotal = schedSet ? allDaysInMonth.filter(isScheduledDay).length : totalLessons
+  const monthCompleted = totalLessons
+  const monthRemaining = Math.max(0, monthScheduledTotal - monthCompleted)
+  const monthPct = monthScheduledTotal > 0 ? Math.round(monthCompleted / monthScheduledTotal * 100) : 0
 
   // monthly stats
   const avgAttendance = students.length && totalLessons
@@ -251,7 +250,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
           {group.total_lessons != null && (
             <div className="info-card">
               <div className="info-card-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Kurs progressi</span>
+                <span>Oylik progress — {MONTHS[month - 1]}</span>
                 <span
                   style={{
                     fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: 20,
@@ -266,20 +265,20 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                 <div
                   className="group-progress-fill"
                   style={{
-                    width: `${group.progress_pct || 0}%`,
+                    width: `${monthPct}%`,
                     background: STAGE_COLORS[group.stage || 'foundation'].bar,
                   }}
                 />
               </div>
               <div className="stat-row">
                 <span>Bajarildi</span>
-                <strong>{group.completed_lessons || 0}/{group.total_lessons} dars ({group.progress_pct || 0}%)</strong>
+                <strong>{monthCompleted}/{monthScheduledTotal} dars ({monthPct}%)</strong>
               </div>
               <div className="stat-row">
                 <span>Qoldi</span>
-                <strong style={{ color: (group.remaining_lessons || 0) <= 5 ? '#ef4444' : '#0a0a0a' }}>
-                  {group.remaining_lessons || group.total_lessons} dars
-                  {(group.remaining_lessons || group.total_lessons) <= 5 && ' ⚠'}
+                <strong style={{ color: monthRemaining <= 1 ? '#ef4444' : '#0a0a0a' }}>
+                  {monthRemaining} dars
+                  {monthRemaining <= 1 && monthScheduledTotal > 0 && ' ⚠'}
                 </strong>
               </div>
             </div>
@@ -529,9 +528,6 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                         <th
                           key={d}
                           className={`att-date-col${isToday ? ' att-col-today' : ''}${scheduled ? ' att-col-scheduled' : ''}${!fillable ? ' att-col-nolesson' : ''}`}
-                          onClick={!fillable && canEditAttendance ? () => handleAddDate(d) : undefined}
-                          title={!fillable && canEditAttendance ? "Bosing: bu kunga dars qo'shish" : undefined}
-                          style={!fillable && canEditAttendance ? { cursor: 'pointer' } : undefined}
                         >
                           <div className="att-date-header">
                             <span className="att-dow">{dowLabel(d)}</span>
@@ -569,9 +565,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                           return (
                             <td
                               key={d}
-                              className={`att-cell-nolesson${isToday ? ' att-cell-today' : ''}${canEditAttendance ? ' att-cell-nolesson-admin' : ''}`}
-                              onClick={canEditAttendance ? () => handleAddDate(d) : undefined}
-                              title={canEditAttendance ? "Bosing: bu kunga dars qo'shish" : undefined}
+                              className={`att-cell-nolesson${isToday ? ' att-cell-today' : ''}`}
                             />
                           )
                         }

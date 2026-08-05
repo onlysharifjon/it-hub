@@ -236,7 +236,7 @@ class Attendance(Base):
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
     lesson_date = Column(Date, nullable=False)
-    is_present = Column(Boolean, nullable=False, default=True)
+    is_present = Column(Boolean, nullable=True)
 
     __table_args__ = (UniqueConstraint("group_id", "student_id", "lesson_date", name="uq_attendance"),)
 

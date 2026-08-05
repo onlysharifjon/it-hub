@@ -627,7 +627,7 @@ export default function Academic({ currentUser }) {
                     </div>
                     <div>
                       <label>Vaqt</label>
-                      <input className="field" type="time" value={form.event_time}
+                      <input className="field" type="time" lang="uz-UZ" value={form.event_time}
                         onChange={e => setForm(p => ({ ...p, event_time: e.target.value }))} />
                     </div>
                   </div>
