@@ -3,21 +3,20 @@ uchun o'quvchilarni avtomatik "keldi" deb belgilamaslik, balki "belgilanmagan"
 holatda saqlash imkonini beradi. Faqat cheklovni bo'shatadi (NOT NULL -> NULL),
 mavjud qatorlardagi qiymatlar (True/False) hech qanday o'zgarmaydi.
 
-Bir vaqtning o'zida bu migratsiya ikkita ajralib qolgan "head"ni ham birlashtiradi:
-20260728_staff_warnings o'ziga xato ravishda 20260714_feedback_status'dan
-tarmoqlangan edi (aslida o'sha paytdagi haqiqiy head 20260724_merge bo'lishi
-kerak edi) — shu sabab ikkita mustaqil head paydo bo'lgan. Merge hech qanday
-ma'lumotni o'zgartirmaydi, faqat ikki tarmoqni bitta zanjirga qaytaradi.
+Eslatma: 20260728_staff_warnings'ning 20260714_feedback_status'dan noto'g'ri
+tarmoqlanishi allaqachon 20260729_facebook_leads'da birlashtirilgan va joriy
+head shu zanjir orqali keladi — shu sababli bu migratsiya oddiy chiziqli
+davomat, qayta merge qilish shart emas.
 
 Revision ID: 20260805_attendance_nullable
-Revises: 20260724_merge, 20260728_staff_warnings
+Revises: 20260801b_referral_credited
 Create Date: 2026-08-05
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = '20260805_attendance_nullable'
-down_revision = ('20260724_merge', '20260728_staff_warnings')
+down_revision = '20260801b_referral_credited'
 branch_labels = None
 depends_on = None
 
