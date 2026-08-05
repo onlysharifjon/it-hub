@@ -135,6 +135,9 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
     if (!target) return
     const existing = data?.dates || []
     if (existing.includes(target)) return toast.error("Bu sana allaqachon mavjud")
+    if (schedSet && !schedSet.has(new Date(`${target}T00:00:00`).getDay())) {
+      return toast.error("Bu kun guruh jadvali bo'yicha dars kuni emas")
+    }
 
     setSaving(true)
     try {
@@ -490,12 +493,19 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                   onChange={e => setNewDate(e.target.value)}
                   style={{ width: 150 }}
                 />
-                <button className="button primary small" onClick={handleAddDate} disabled={saving || !newDate}>
+                <button
+                  className="button primary small"
+                  onClick={handleAddDate}
+                  disabled={saving || !newDate || (schedSet && newDate && !schedSet.has(new Date(`${newDate}T00:00:00`).getDay()))}
+                >
                   <FontAwesomeIcon icon={faCheck} /> Saqlash
                 </button>
                 <button className="button secondary small" onClick={() => { setAddingDate(false); setNewDate('') }}>
                   Bekor
                 </button>
+                {schedSet && newDate && !schedSet.has(new Date(`${newDate}T00:00:00`).getDay()) && (
+                  <span className="muted" style={{ fontSize: '0.8rem' }}>Bu kun dars kuni emas</span>
+                )}
               </>
             ) : (
               <button className="button primary small" onClick={() => setAddingDate(true)}>
