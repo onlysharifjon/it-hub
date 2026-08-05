@@ -2568,7 +2568,7 @@ def save_attendance(
     newly_present: list[int] = []
     for item in payload:
         sid = item.get("student_id")
-        present = item.get("is_present", True)
+        present = item.get("is_present", None)  # True / False / None (belgilanmagan)
         existing = (
             db.query(models.Attendance)
             .filter(
@@ -2579,15 +2579,15 @@ def save_attendance(
             .first()
         )
         if existing:
-            if existing.is_present and not present:
+            if existing.is_present is True and present is False:
                 newly_absent.append(sid)
-            elif not existing.is_present and present:
+            elif existing.is_present is not True and present is True:
                 newly_present.append(sid)
             existing.is_present = present
         else:
-            if not present:
+            if present is False:
                 newly_absent.append(sid)
-            else:
+            elif present is True:
                 newly_present.append(sid)
             db.add(models.Attendance(
                 group_id=group_id,
