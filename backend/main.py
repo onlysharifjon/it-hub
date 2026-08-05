@@ -1956,6 +1956,7 @@ def teacher_my_dashboard(
             "name":                    g.name,
             "stage":                   stage,
             "schedule":                g.schedule or "",
+            "lesson_time":             g.lesson_time or "",
             "start_date":              str(g.start_date) if g.start_date else None,
             "student_count":           len(g.members),
             "total_lessons":           total_less,
