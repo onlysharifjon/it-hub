@@ -1236,7 +1236,8 @@ def _group_read(g: models.Group, db: Session = None) -> schemas.GroupRead:
     completed = 0
     if db is not None:
         completed = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
-            models.Attendance.group_id == g.id
+            models.Attendance.group_id == g.id,
+            models.Attendance.is_present.isnot(None),
         ).scalar() or 0
     remaining = max(0, total - completed)
     pct = round(completed / total * 100, 1) if total > 0 else 0.0
@@ -1913,6 +1914,7 @@ def teacher_my_dashboard(
         .filter(
             models.Attendance.group_id.in_(group_ids),
             models.Attendance.lesson_date <= progress_cutoff,
+            models.Attendance.is_present.isnot(None),
         )
         .group_by(models.Attendance.group_id)
         .all()
@@ -3113,7 +3115,8 @@ def group_next_lesson(group_id: int, db: Session = Depends(get_db), actor: model
     category = group.stage or 'foundation'
     total = group.course.total_lessons if group.course else schemas.STAGE_TOTAL_LESSONS.get(category, 24)
     completed = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
-        models.Attendance.group_id == group_id
+        models.Attendance.group_id == group_id,
+        models.Attendance.is_present.isnot(None),
     ).scalar() or 0
     next_num = completed + 1
     lesson = db.query(models.Lesson).filter(
