@@ -158,7 +158,7 @@ export default function TeacherDashboard({ currentUser, onOpenGroup }) {
                     {/* Row 2: info chips */}
                     <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 12 }}>
                       <InfoChip icon={faUsers} text={`${g.student_count} talaba`} />
-                      <InfoChip icon={faCalendarDays} text={g.schedule || 'Jadvalsiz'} />
+                      <InfoChip icon={faCalendarDays} text={g.schedule ? `${g.schedule}${g.lesson_time ? ` — soat ${g.lesson_time}` : ''}` : 'Jadvalsiz'} />
                       <InfoChip icon={faChartLine} text={`Boshlangan: ${g.start_date || '—'}`} />
                       <InfoChip
                         icon={faMoneyBillWave}
