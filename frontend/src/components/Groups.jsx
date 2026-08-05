@@ -325,7 +325,7 @@ export default function Groups({ onOpenGroup }) {
                 </div>
                 <div>
                   <label>Dars vaqti (soat)</label>
-                  <input className="field" type="time" value={form.lesson_time} onChange={e => setForm(p => ({ ...p, lesson_time: e.target.value }))} />
+                  <input className="field" type="time" lang="uz-UZ" value={form.lesson_time} onChange={e => setForm(p => ({ ...p, lesson_time: e.target.value }))} />
                 </div>
               </div>
               <label>Boshlanish sanasi</label>
