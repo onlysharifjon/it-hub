@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -71,6 +71,23 @@ class AdminInviteLink(Base):
     used_by_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class BotMessage(Base):
+    """Bot orqali kelgan/yuborilgan har bir xabar — CRM'dagi Chatbot inbox uchun jurnal.
+    direction: "in" (foydalanuvchidan botga) | "out" (botdan/CRM'dan foydalanuvchiga)."""
+
+    __tablename__ = "bot_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    direction: Mapped[str] = mapped_column(String(3))
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message_type: Mapped[str] = mapped_column(String(30), default="text")  # text|photo|command|other|auto_notify
+    sent_ok: Mapped[bool] = mapped_column(Boolean, default=True)  # "out" uchun: yetkazildimi
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
 class ParentLink(Base):

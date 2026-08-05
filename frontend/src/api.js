@@ -71,6 +71,8 @@ export async function fetchLeads(params = {}) {
   if (params.status)    q.set('status', params.status)
   if (params.stage)     q.set('stage', params.stage)
   if (params.source_id) q.set('source_id', params.source_id)
+  if (params.referred_by_id) q.set('referred_by_id', params.referred_by_id)
+  if (params.bucket)    q.set('bucket', params.bucket)
   return request(`/leads${q.toString() ? '?' + q : ''}`)
 }
 export async function createLead(p)                    { return request('/leads', { method: 'POST', body: JSON.stringify(p) }) }
@@ -165,6 +167,7 @@ export async function fetchStudents(params = {}) {
   if (params.search)              q.set('search', params.search)
   if (params.is_active !== undefined)   q.set('is_active', params.is_active)
   if (params.is_archived !== undefined) q.set('is_archived', params.is_archived)
+  if (params.is_demo !== undefined)     q.set('is_demo', params.is_demo)
   if (params.date_from)           q.set('date_from', params.date_from)
   if (params.date_to)             q.set('date_to', params.date_to)
   if (params.payment)             q.set('payment', params.payment)
@@ -180,6 +183,7 @@ export async function createStudent(p)        { return request('/students', { me
 export async function updateStudent(id, p)    { return request(`/students/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function archiveStudent(id)      { return request(`/students/${id}/archive`, { method: 'POST' }) }
 export async function unarchiveStudent(id)    { return request(`/students/${id}/unarchive`, { method: 'POST' }) }
+export async function checkStudentTelegram(id) { return request(`/students/${id}/telegram-check`, { method: 'POST' }) }
 
 // ── Groups ────────────────────────────────────────────────────────────────────
 
@@ -237,6 +241,10 @@ export async function fetchStudentPaymentSummary(id, { month, year } = {}) {
 export async function createPayment(p)       { return request('/payments', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updatePayment(id, p)   { return request(`/payments/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deletePayment(id)      { return request(`/payments/${id}`, { method: 'DELETE' }) }
+
+export async function fetchStudentVacations(studentId)       { return request(`/students/${studentId}/vacations`) }
+export async function createStudentVacation(studentId, p)    { return request(`/students/${studentId}/vacations`, { method: 'POST', body: JSON.stringify(p) }) }
+export async function deleteStudentVacation(studentId, id)   { return request(`/students/${studentId}/vacations/${id}`, { method: 'DELETE' }) }
 
 // ── Attendance ────────────────────────────────────────────────────────────────
 
@@ -545,4 +553,13 @@ export async function setBotSetting(key, value) {
 }
 export async function createBotInviteLink(tier) {
   return request('/bot/invite-links', { method: 'POST', body: JSON.stringify({ tier }) })
+}
+
+// ── Chatbot inbox (bot orqali kelgan/yuborilgan xabarlar) ───────────────────────
+export async function fetchBotChats(search) {
+  const q = search ? `?search=${encodeURIComponent(search)}` : ''
+  return request(`/bot/chats${q}`)
+}
+export async function fetchBotChatMessages(chatId, { page = 1, page_size = 50 } = {}) {
+  return request(`/bot/chats/${chatId}/messages?page=${page}&page_size=${page_size}`)
 }

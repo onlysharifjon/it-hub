@@ -126,9 +126,10 @@ DEMO_USERS = [
 DEFAULT_STAGES = [
     {"slug": "new",       "name": "Yangi",             "order": 10, "color": "sky",     "icon": "sparkles",       "kind": "lead"},
     {"slug": "called",    "name": "Qo'ng'iroq qilindi","order": 20, "color": "indigo",  "icon": "phone",          "kind": "lead"},
-    {"slug": "callback",  "name": "Qayta ring",        "order": 30, "color": "amber",   "icon": "phone-incoming", "kind": "lead"},
+    {"slug": "callback",  "name": "Qayta qo'ng'iroq",  "order": 30, "color": "amber",   "icon": "phone-incoming", "kind": "lead"},
     {"slug": "will_come", "name": "Keladi",            "order": 40, "color": "violet",  "icon": "calendar",       "kind": "lead"},
-    {"slug": "enrolled",  "name": "Ro'yxatda",         "order": 50, "color": "emerald", "icon": "graduation-cap", "kind": "won"},
+    {"slug": "demo",      "name": "Demo",              "order": 45, "color": "purple",  "icon": "video",          "kind": "lead"},
+    {"slug": "enrolled",  "name": "To'landi",          "order": 50, "color": "emerald", "icon": "graduation-cap", "kind": "won"},
     {"slug": "rejected",  "name": "Rad etildi",        "order": 60, "color": "red",     "icon": "x-circle",       "kind": "lost"},
 ]
 
@@ -246,6 +247,10 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 from .parent.router_parent import router as parent_router
 from .parent.notifications import notify_parents_of_student
 app.include_router(parent_router)
+
+# Facebook Lead Ads webhook (Make.com -> /leads/facebook) — alohida paketda
+from .facebook_leads import router as facebook_leads_router
+app.include_router(facebook_leads_router)
 
 
 # ── Rate limiting (in-memory; single-process pm2 fork) ───────────────────────
@@ -369,8 +374,8 @@ def require_hunter(user: models.User = Depends(require_auth)) -> models.User:
 
 
 def require_call_center(user: models.User = Depends(require_auth)) -> models.User:
-    if user.role not in (UserRole.call_center.value, UserRole.admin.value):
-        raise HTTPException(status_code=403, detail="Bu amal faqat call_center/admin uchun")
+    if user.role not in (UserRole.call_center.value, UserRole.hunter.value, UserRole.admin.value):
+        raise HTTPException(status_code=403, detail="Bu amal faqat call_center/hunter/admin uchun")
     return user
 
 
@@ -976,21 +981,25 @@ def delete_course(course_id: int, db: Session = Depends(get_db), _: models.User 
 
 # ── Students endpoints ────────────────────────────────────────────────────────
 
-def _student_owed_total(s: models.Student, month: int = None, year: int = None,
-                        discounts: list = None) -> Decimal:
+def _student_owed_total(db: Session, s: models.Student, month: int = None, year: int = None,
+                        discounts: list = None, vacations: list = None) -> Decimal:
     """Talabaning oylik to'liq summasi — faol guruhlar bo'yicha (tarif yoki guruh narxi).
-    _student_month_owed bilan bir xil mantiq — Special chegirmalar qo'llanadi."""
+    _student_month_owed bilan bir xil mantiq — ta'til va Special chegirmalar qo'llanadi."""
     total = Decimal(0)
     for m in s.group_memberships:
         g = m.group
         if not g or not g.is_active:
             continue
+        if g.start_date and g.start_date.date() > date.today():
+            continue  # guruh hali boshlanmagan — talaba hali qarzdor emas
         if m.tariff and m.tariff.price:
             price = Decimal(str(m.tariff.price))
         elif g.course_price and Decimal(str(g.course_price)) > 0:
             price = Decimal(str(g.course_price))
         else:
             continue
+        if vacations:
+            price = core_calc.apply_vacations_to_price(db, s.id, g, month, year, price, vacations)
         if discounts:
             price = core_calc.apply_special_discounts(price, discounts, g.id, month, year)
         total += price
@@ -1002,6 +1011,7 @@ def _students_payment_map(db: Session, students, month: int, year: int) -> dict:
     ids = [s.id for s in students]
     paid_by = {}
     discounts_by = {}
+    vacations_by = {}
     if ids:
         rows = (
             db.query(models.Payment.student_id, func.sum(models.Payment.amount))
@@ -1016,9 +1026,14 @@ def _students_payment_map(db: Session, students, month: int, year: int) -> dict:
             models.SpecialDiscount.is_active == True,
         ).all():
             discounts_by.setdefault(d.student_id, []).append(d)
+        # Ta'til oraliqlari — bitta so'rovda
+        for v in db.query(models.StudentVacation).filter(
+            models.StudentVacation.student_id.in_(ids),
+        ).all():
+            vacations_by.setdefault(v.student_id, []).append(v)
     out = {}
     for s in students:
-        owed = _student_owed_total(s, month, year, discounts_by.get(s.id))
+        owed = _student_owed_total(db, s, month, year, discounts_by.get(s.id), vacations_by.get(s.id))
         paid = paid_by.get(s.id, Decimal(0))
         advance = Decimal(str(s.advance_balance or 0))
         # Avans balansi qarzni kamaytiradi
@@ -1047,7 +1062,7 @@ def _student_read(s: models.Student, pay: Optional[tuple] = None) -> schemas.Stu
         mother_name=s.mother_name, mother_phone=s.mother_phone,
         telegram_id=s.telegram_id, telegram_user_id=s.telegram_user_id,
         photo=s.photo, notes=s.notes, is_active=s.is_active,
-        is_archived=s.is_archived, advance_balance=s.advance_balance,
+        is_archived=s.is_archived, is_demo=s.is_demo, advance_balance=s.advance_balance,
         created_at=s.created_at, updated_at=s.updated_at, group_count=len(s.group_memberships),
         group_names=[m.group.name for m in s.group_memberships if m.group],
         owed_month=owed, paid_month=paid, debt=debt, payment_status=pstatus,
@@ -1061,6 +1076,7 @@ def list_students(
     search: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     is_archived: Optional[bool] = Query(None),
+    is_demo: Optional[bool] = Query(None),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     payment: Optional[str] = Query(None, description="debtor | partial | paid | unpaid"),
@@ -1086,6 +1102,11 @@ def list_students(
         q = q.filter(models.Student.is_archived == is_archived)
     if is_active is not None:
         q = q.filter(models.Student.is_active == is_active)
+    # by default exclude demo (hali demo darsga kelmagan) unless explicitly requested
+    if is_demo is None:
+        q = q.filter(models.Student.is_demo == False)
+    else:
+        q = q.filter(models.Student.is_demo == is_demo)
     if search:
         q = q.filter(
             models.Student.full_name.ilike(f"%{search}%") |
@@ -1154,11 +1175,26 @@ def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session 
     if not s:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
     changes = payload.dict(exclude_unset=True)
+    if changes.get("is_demo") and not s.is_demo:
+        if any(m.group and m.group.is_active for m in s.group_memberships):
+            raise HTTPException(status_code=400, detail="Aktiv guruhda o'qiyotgan talabani Demo bo'limiga o'tkazib bo'lmaydi")
     for k, v in changes.items():
         setattr(s, k, v)
     db.commit()
     db.refresh(s)
     return _student_read(s)
+
+
+@app.post("/students/{student_id}/telegram-check")
+def check_student_telegram(student_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
+    """Talabaning Telegram ID'siga sinov xabari yuborib, yetkazib bo'lish mumkinligini tekshiradi."""
+    s = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    if not s.telegram_user_id:
+        raise HTTPException(status_code=400, detail="Talabaga Telegram ID biriktirilmagan")
+    ok, err = send_telegram_message(s.telegram_user_id, "Assalomu alaykum")
+    return {"ok": ok, "detail": err}
 
 
 @app.post("/students/{student_id}/archive", response_model=schemas.StudentRead)
@@ -1365,6 +1401,8 @@ def add_student_to_group(group_id: int, payload: schemas.AddStudentToGroup, db: 
         tariff_id = matched.id if matched else None
     gs = models.GroupStudent(group_id=group_id, student_id=payload.student_id, tariff_id=tariff_id)
     db.add(gs)
+    if s.is_demo:
+        s.is_demo = False
     db.commit()
     return {"message": "Talaba guruhga qo'shildi"}
 
@@ -2232,8 +2270,13 @@ _DAY_WORDS = {
 def _schedule_has_today(schedule: str, today_wd: int) -> bool:
     if not schedule:
         return False
+    s = schedule.lower()
+    if 'toq' in s:
+        return today_wd in (0, 2, 4)   # Du, Chor, Ju
+    if 'juft' in s:
+        return today_wd in (1, 3, 5)   # Se, Pay, Shan
     import re
-    tokens = re.split(r'[\s,\-/]+', schedule.lower())
+    tokens = re.split(r'[\s,\-/]+', s)
     return any(_DAY_WORDS.get(t) == today_wd for t in tokens)
 
 
@@ -2359,6 +2402,7 @@ def finance_monthly(
                 tariff_name = None
 
             if price > 0:
+                price = core_calc.vacation_adjusted_price(db, m.student_id, g.id, month, year, price)
                 price = core_calc.apply_special_discounts(
                     price, core_calc.active_special_discounts(db, m.student_id),
                     g.id, month, year,
@@ -2843,6 +2887,82 @@ def delete_special_discount(discount_id: int, db: Session = Depends(get_db), act
     db.commit()
 
 
+# ── Student vacations (talaba ta'tili) ────────────────────────────────────────
+
+def _vacation_read(v: models.StudentVacation) -> schemas.StudentVacationRead:
+    return schemas.StudentVacationRead(
+        id=v.id, student_id=v.student_id,
+        start_date=v.start_date, end_date=v.end_date, reason=v.reason,
+        created_by_name=(v.created_by.full_name or v.created_by.username) if v.created_by else None,
+        created_at=v.created_at,
+    )
+
+
+@app.get("/students/{student_id}/vacations", response_model=List[schemas.StudentVacationRead])
+def list_student_vacations(
+    student_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_hunter),
+):
+    if not db.query(models.Student).filter(models.Student.id == student_id).first():
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    q = (
+        db.query(models.StudentVacation)
+        .options(joinedload(models.StudentVacation.created_by))
+        .filter(models.StudentVacation.student_id == student_id)
+        .order_by(models.StudentVacation.start_date.desc())
+    )
+    return [_vacation_read(v) for v in q.all()]
+
+
+@app.post("/students/{student_id}/vacations", response_model=schemas.StudentVacationRead, status_code=201)
+def create_student_vacation(
+    student_id: int,
+    payload: schemas.StudentVacationCreate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_hunter),
+):
+    if not db.query(models.Student).filter(models.Student.id == student_id).first():
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    v = models.StudentVacation(
+        student_id=student_id,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        reason=payload.reason,
+        created_by_id=actor.id,
+    )
+    db.add(v)
+    db.flush()
+    write_audit(db, entity_type="student_vacation", entity_id=v.id, action="create",
+                changed_by_id=actor.id,
+                new_value={"student_id": student_id, "start_date": str(v.start_date),
+                           "end_date": str(v.end_date), "reason": v.reason})
+    db.commit()
+    db.refresh(v)
+    return _vacation_read(v)
+
+
+@app.delete("/students/{student_id}/vacations/{vacation_id}", status_code=204)
+def delete_student_vacation(
+    student_id: int,
+    vacation_id: int,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_hunter),
+):
+    v = (
+        db.query(models.StudentVacation)
+        .filter(models.StudentVacation.id == vacation_id, models.StudentVacation.student_id == student_id)
+        .first()
+    )
+    if not v:
+        raise HTTPException(status_code=404, detail="Ta'til yozuvi topilmadi")
+    write_audit(db, entity_type="student_vacation", entity_id=v.id, action="delete",
+                changed_by_id=actor.id,
+                old_value={"student_id": v.student_id, "start_date": str(v.start_date), "end_date": str(v.end_date)})
+    db.delete(v)
+    db.commit()
+
+
 # ── Holidays (dam olish kunlari) ──────────────────────────────────────────────
 
 def _holiday_read(h: models.Holiday) -> schemas.HolidayRead:
@@ -2913,10 +3033,12 @@ def send_telegram_message(chat_id: str, text: str):
             timeout=10,
         )
         body = r.json()
-        if r.status_code == 200 and body.get("ok"):
-            return True, None
-        return False, str(body.get("description", r.text))[:400]
+        ok = r.status_code == 200 and body.get("ok")
+        err = None if ok else str(body.get("description", r.text))[:400]
+        bot_client.log_bot_message(chat_id, "out", text=text, message_type="auto_notify", sent_ok=bool(ok))
+        return bool(ok), err
     except Exception as e:
+        bot_client.log_bot_message(chat_id, "out", text=text, message_type="auto_notify", sent_ok=False)
         return False, str(e)[:400]
 
 
@@ -2934,10 +3056,12 @@ def send_telegram_photo(chat_id: str, photo_path: str, caption: str):
                 timeout=15,
             )
         body = r.json()
-        if r.status_code == 200 and body.get("ok"):
-            return True, None
-        return False, str(body.get("description", r.text))[:400]
+        ok = r.status_code == 200 and body.get("ok")
+        err = None if ok else str(body.get("description", r.text))[:400]
+        bot_client.log_bot_message(chat_id, "out", text=caption, message_type="photo", sent_ok=bool(ok))
+        return bool(ok), err
     except Exception as e:
+        bot_client.log_bot_message(chat_id, "out", text=caption, message_type="photo", sent_ok=False)
         return False, str(e)[:400]
 
 
@@ -3773,6 +3897,44 @@ def _crm_recipient_ids(db, exclude_id=None):
     return [r[0] for r in rows if r[0] != exclude_id]
 
 
+# 2026-07-26'dan boshlab: superadmin/call_center/hunter qo'lda kiritgan lidlar
+# Facebook orqali kelgan deb hisoblanadi (manba avtomatik Facebook'ga o'rnatiladi,
+# shu orqali Mirsaidga referral sifatida bog'lanadi).
+_FORCE_FB_ROLES = {UserRole.admin.value, UserRole.call_center.value, UserRole.hunter.value}
+_FORCE_FB_SINCE = datetime(2026, 7, 26)
+
+
+def _facebook_source(db) -> Optional[models.LeadSource]:
+    return db.query(models.LeadSource).filter(models.LeadSource.name == "Facebook").first()
+
+
+def _current_period() -> str:
+    return datetime.utcnow().strftime("%Y-%m")
+
+
+def _bump_referral_stat(db, referrer_id: Optional[int], *, leads_delta: int = 0, paid_delta: int = 0) -> None:
+    """Manba egasi (masalan Facebook/Instagram'ni yurituvchi sales) uchun
+    joriy oy statistikasini oshiradi — tarix saqlanishi uchun har oy alohida qator."""
+    if not referrer_id:
+        return
+    period = _current_period()
+    stat = (
+        db.query(models.LeadReferralStat)
+        .filter(models.LeadReferralStat.referrer_id == referrer_id, models.LeadReferralStat.period == period)
+        .first()
+    )
+    if not stat:
+        stat = models.LeadReferralStat(
+            referrer_id=referrer_id, period=period, leads_count=0, paid_count=0,
+            created_at=datetime.utcnow(), updated_at=datetime.utcnow(),
+        )
+        db.add(stat)
+        db.flush()
+    stat.leads_count += leads_delta
+    stat.paid_count += paid_delta
+    stat.updated_at = datetime.utcnow()
+
+
 def _slugify(name: str) -> str:
     base = "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-")
     base = "-".join(filter(None, base.split("-"))) or "stage"
@@ -3798,6 +3960,15 @@ _LEAD_LOAD = (
 )
 
 
+# Referral funnel'dagi quti (node) kaliti -> lead.status ro'yxati. "target" — filtrsiz (hammasi).
+_FUNNEL_BUCKET_STATUSES = {
+    "canceled": ["rejected"],
+    "waiting":  ["called", "callback"],
+    "comming":  ["will_come", "demo"],
+    "payed":    ["enrolled"],
+}
+
+
 @app.get("/leads", response_model=List[schemas.LeadRead])
 def list_leads(
     status: Optional[str] = Query(None),
@@ -3805,15 +3976,20 @@ def list_leads(
     source_id: Optional[int] = Query(None),
     pool: bool = Query(False),               # faqat umumiy havza (band qilinmagan)
     search: Optional[str] = Query(None),
+    referred_by_id: Optional[int] = Query(None),
+    bucket: Optional[str] = Query(None),     # referral funnel qutisi: canceled|waiting|comming|payed|target
     actor: models.User = Depends(require_crm_access),
     db: Session = Depends(get_db),
 ):
     q = db.query(models.Lead).options(*_LEAD_LOAD)
+    # O'zining referral funnel'ini ko'rayotgan sales — bu attribution ko'rinishi,
+    # hozirgi egalik/claim holatidan qat'i nazar hammasi ko'rsatiladi.
+    own_referral_view = referred_by_id and actor.role == UserRole.sales.value and referred_by_id == actor.id
     if pool:
         # Umumiy havza: ulashilgan va hali band qilinmagan lidlar
         q = q.filter(models.Lead.is_shared == True, models.Lead.claimed_by_id.is_(None))  # noqa: E712
-    elif actor.role in (UserRole.hunter.value, UserRole.sales.value):
-        # Hunter/Sales: o'zi yaratgan yoki band qilgan + havzadagi bo'sh lidlar
+    elif actor.role == UserRole.sales.value and not own_referral_view:
+        # Sales: o'zi yaratgan yoki band qilgan + havzadagi bo'sh lidlar
         q = q.filter(
             (models.Lead.created_by_id == actor.id) |
             (models.Lead.claimed_by_id == actor.id) |
@@ -3825,6 +4001,10 @@ def list_leads(
         q = q.filter(models.Lead.status == status)
     if source_id:
         q = q.filter(models.Lead.source_id == source_id)
+    if referred_by_id:
+        q = q.filter(models.Lead.referred_by_id == referred_by_id)
+    if bucket and bucket in _FUNNEL_BUCKET_STATUSES:
+        q = q.filter(models.Lead.status.in_(_FUNNEL_BUCKET_STATUSES[bucket]))
     if search:
         q = q.filter(
             models.Lead.full_name.ilike(f"%{search}%") |
@@ -3840,7 +4020,7 @@ def lead_stats(
     db: Session = Depends(get_db),
 ):
     lead_q = db.query(models.Lead)
-    if actor.role in (UserRole.hunter.value, UserRole.sales.value):
+    if actor.role == UserRole.sales.value:
         lead_q = lead_q.filter(models.Lead.created_by_id == actor.id)
     total = lead_q.count()
 
@@ -3871,15 +4051,25 @@ def create_lead(
     db: Session = Depends(get_db),
 ):
     stage = _default_stage(db)
+    lead_data = payload.dict()
+    source = None
+    if actor.role in _FORCE_FB_ROLES and datetime.utcnow() >= _FORCE_FB_SINCE:
+        source = _facebook_source(db)
+        if source:
+            lead_data["source_id"] = source.id
+    if source is None and lead_data.get("source_id"):
+        source = db.query(models.LeadSource).filter(models.LeadSource.id == lead_data["source_id"]).first()
     lead = models.Lead(
-        **payload.dict(),
+        **lead_data,
         status=stage.slug if stage else models.LeadStatus.new.value,
         stage_id=stage.id if stage else None,
         created_by_id=actor.id,
+        referred_by_id=source.referrer_id if source else None,
         created_at=datetime.utcnow(),
     )
     db.add(lead)
     db.flush()
+    _bump_referral_stat(db, lead.referred_by_id, leads_delta=1)
     _log_lead_activity(
         db, lead_id=lead.id, action="created",
         description=f"Lid qo'shildi: {lead.full_name}", author_id=actor.id,
@@ -3907,6 +4097,7 @@ def update_lead_status(
     if not lead:
         raise HTTPException(404, "Lid topilmadi")
     old_name = lead.stage.name if lead.stage else lead.status
+    old_kind = lead.stage.kind if lead.stage else None
     new_slug = payload.status.value
     lead.status = new_slug
     # status ustunini stage bilan sinxronlaymiz
@@ -3925,6 +4116,9 @@ def update_lead_status(
             description=f"Holat: {old_name} → {new_name}", author_id=actor.id,
             meta={"old": old_name, "new": new_name},
         )
+    if stage and stage.kind == "won" and old_kind != "won" and lead.referral_credited_at is None:
+        lead.referral_credited_at = datetime.utcnow()
+        _bump_referral_stat(db, lead.referred_by_id, paid_delta=1)
     db.commit()
     db.refresh(lead)
     db.refresh(lead, attribute_names=["created_by", "updated_by", "stage", "source"])
@@ -3941,12 +4135,13 @@ def move_lead_stage(
     lead = db.query(models.Lead).options(*_LEAD_LOAD).filter(models.Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(404, "Lid topilmadi")
-    if actor.role in (UserRole.hunter.value, UserRole.sales.value) and lead.created_by_id != actor.id:
+    if actor.role == UserRole.sales.value and lead.created_by_id != actor.id:
         raise HTTPException(403, "Faqat o'z lidingizni o'zgartira olasiz")
     stage = db.query(models.LeadStage).filter(models.LeadStage.id == payload.stage_id).first()
     if not stage:
         raise HTTPException(404, "Bosqich topilmadi")
     old_name = lead.stage.name if lead.stage else lead.status
+    old_kind = lead.stage.kind if lead.stage else None
     lead.stage_id = stage.id
     lead.status = stage.slug
     if payload.callback_at is not None:
@@ -3961,6 +4156,9 @@ def move_lead_stage(
             description=f"Holat: {old_name} → {stage.name}", author_id=actor.id,
             meta={"old": old_name, "new": stage.name},
         )
+    if stage.kind == "won" and old_kind != "won" and lead.referral_credited_at is None:
+        lead.referral_credited_at = datetime.utcnow()
+        _bump_referral_stat(db, lead.referred_by_id, paid_delta=1)
     db.commit()
     db.refresh(lead)
     db.refresh(lead, attribute_names=["created_by", "updated_by", "stage", "source"])
@@ -3976,7 +4174,7 @@ def lead_activities(
     lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(404, "Lid topilmadi")
-    if actor.role in (UserRole.hunter.value, UserRole.sales.value) and lead.created_by_id != actor.id:
+    if actor.role == UserRole.sales.value and lead.created_by_id != actor.id:
         raise HTTPException(403, "Ruxsat yo'q")
     acts = (
         db.query(models.LeadActivity)
@@ -4031,7 +4229,7 @@ def release_lead(
     if not lead:
         raise HTTPException(404, "Lid topilmadi")
     is_owner = lead.claimed_by_id == actor.id
-    if not is_owner and actor.role != UserRole.admin.value:
+    if not is_owner and actor.role not in (UserRole.admin.value, UserRole.hunter.value):
         raise HTTPException(403, "Faqat egasi yoki admin havzaga qaytara oladi")
     lead.claimed_by_id = None
     lead.claimed_at = None
@@ -4091,7 +4289,7 @@ def delete_lead(
     lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
     if not lead:
         raise HTTPException(404, "Lid topilmadi")
-    if actor.role in (UserRole.hunter.value, UserRole.sales.value) and lead.created_by_id != actor.id:
+    if actor.role == UserRole.sales.value and lead.created_by_id != actor.id:
         raise HTTPException(403, "Faqat o'z lidingizni o'chira olasiz")
     db.delete(lead)
     db.commit()
@@ -4436,7 +4634,7 @@ def lead_analytics(
     db: Session = Depends(get_db),
 ):
     lead_q = db.query(models.Lead)
-    if actor.role in (UserRole.hunter.value, UserRole.sales.value):
+    if actor.role == UserRole.sales.value:
         lead_q = lead_q.filter(models.Lead.created_by_id == actor.id)
     total = lead_q.count()
 
@@ -4482,10 +4680,50 @@ def lead_analytics(
             conversion_rate=round(enr / tot * 100, 1) if tot else 0.0,
         ))
 
+    # Referral (taklif qilingan bolalar) — oylik tarix, manba egasi (masalan
+    # Facebook/Instagram'ni yurituvchi sales) bo'yicha. Sales o'z sonini,
+    # boshqalar hammasini ko'radi.
+    stat_q = (
+        db.query(models.LeadReferralStat, models.User.full_name)
+        .join(models.User, models.LeadReferralStat.referrer_id == models.User.id)
+    )
+    if actor.role == UserRole.sales.value:
+        stat_q = stat_q.filter(models.LeadReferralStat.referrer_id == actor.id)
+    stat_rows = stat_q.order_by(
+        models.LeadReferralStat.referrer_id, models.LeadReferralStat.period
+    ).all()
+    referrer_map: dict[int, schemas.ReferrerStat] = {}
+    for stat, referrer_name in stat_rows:
+        r = referrer_map.get(stat.referrer_id)
+        if not r:
+            status_counts = dict(
+                db.query(models.Lead.status, func.count(models.Lead.id))
+                .filter(models.Lead.referred_by_id == stat.referrer_id)
+                .group_by(models.Lead.status).all()
+            )
+            funnel = schemas.ReferralFunnel(
+                target=sum(status_counts.values()),
+                **{
+                    key: sum(status_counts.get(s, 0) for s in statuses)
+                    for key, statuses in _FUNNEL_BUCKET_STATUSES.items()
+                },
+            )
+            r = schemas.ReferrerStat(
+                referrer_id=stat.referrer_id, referrer_name=referrer_name,
+                total_leads=0, total_paid=0, months=[], funnel=funnel,
+            )
+            referrer_map[stat.referrer_id] = r
+        r.months.append(schemas.ReferralMonth(
+            period=stat.period, leads_count=stat.leads_count, paid_count=stat.paid_count,
+        ))
+        r.total_leads += stat.leads_count
+        r.total_paid += stat.paid_count
+    referrals = list(referrer_map.values())
+
     return schemas.LeadAnalyticsRead(
         total=total, won=won, lost=lost,
         conversion=round(won / total * 100, 1) if total else 0.0,
-        distribution=distribution, sources=sources,
+        distribution=distribution, sources=sources, referrals=referrals,
     )
 
 
@@ -5327,6 +5565,86 @@ def list_bot_employees(actor: models.User = Depends(require_admin)):
         return [_bot_employee_read(e) for e in employees]
     finally:
         db.close()
+
+
+@app.get("/bot/chats", response_model=List[schemas.BotChatRead])
+def list_bot_chats(search: Optional[str] = Query(None), db: Session = Depends(get_db),
+                    actor: models.User = Depends(require_hunter)):
+    """Bot orqali xabar almashilgan barcha suhbatlar — oxirgi xabar bilan, Chatbot inbox uchun."""
+    bdb = bot_client.BotSessionLocal()
+    try:
+        sub = (
+            bdb.query(
+                bot_client.BotMessage.chat_id,
+                func.max(bot_client.BotMessage.id).label("last_id"),
+                func.count(bot_client.BotMessage.id).label("cnt"),
+            )
+            .group_by(bot_client.BotMessage.chat_id)
+            .subquery()
+        )
+        rows = (
+            bdb.query(bot_client.BotMessage, sub.c.cnt)
+            .join(sub, bot_client.BotMessage.id == sub.c.last_id)
+            .order_by(bot_client.BotMessage.created_at.desc())
+            .all()
+        )
+        chat_ids = [m.chat_id for m, _ in rows]
+
+        students_by_tid = {}
+        if chat_ids:
+            for s in db.query(models.Student).filter(
+                models.Student.telegram_user_id.in_([str(c) for c in chat_ids])
+            ).all():
+                students_by_tid[str(s.telegram_user_id)] = s
+
+        employees_by_tid = {}
+        if chat_ids:
+            for e in bdb.query(bot_client.BotEmployee).filter(
+                bot_client.BotEmployee.telegram_id.in_(chat_ids)
+            ).all():
+                employees_by_tid[e.telegram_id] = e
+
+        out = []
+        for m, cnt in rows:
+            student = students_by_tid.get(str(m.chat_id))
+            employee = employees_by_tid.get(m.chat_id)
+            if student:
+                kind, display_name = "student", student.full_name
+            elif employee:
+                kind, display_name = "staff", employee.full_name
+            else:
+                kind = "unknown"
+                display_name = m.full_name or (f"@{m.username}" if m.username else str(m.chat_id))
+            if search:
+                s_low = search.lower()
+                if s_low not in display_name.lower() and search not in str(m.chat_id):
+                    continue
+            out.append(schemas.BotChatRead(
+                chat_id=m.chat_id, display_name=display_name, kind=kind,
+                last_text=m.text, last_direction=m.direction, last_sent_ok=m.sent_ok,
+                last_at=m.created_at, message_count=cnt,
+            ))
+        return out
+    finally:
+        bdb.close()
+
+
+@app.get("/bot/chats/{chat_id}/messages", response_model=List[schemas.BotMessageRead])
+def list_bot_chat_messages(chat_id: int, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+                            actor: models.User = Depends(require_hunter)):
+    """Bitta suhbatning xabarlar tarixi (eskidan yangiga qarab)."""
+    bdb = bot_client.BotSessionLocal()
+    try:
+        q = (
+            bdb.query(bot_client.BotMessage)
+            .filter(bot_client.BotMessage.chat_id == chat_id)
+            .order_by(bot_client.BotMessage.created_at.desc())
+        )
+        rows = q.offset((page - 1) * page_size).limit(page_size).all()
+        rows.reverse()
+        return rows
+    finally:
+        bdb.close()
 
 
 @app.get("/bot/roles", response_model=List[schemas.BotRoleRead])

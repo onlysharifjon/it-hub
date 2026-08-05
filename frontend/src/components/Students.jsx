@@ -2,13 +2,18 @@ import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faPen, faToggleOn, faToggleOff, faPlus,
+  faEye, faToggleOn, faToggleOff, faPlus, faTrash,
   faMagnifyingGlass, faUserGraduate, faPhone,
-  faBoxArchive, faArrowUpFromBracket, faCamera,
+  faBoxArchive, faArrowUpFromBracket,
   faClockRotateLeft, faArrowRightToBracket, faArrowRightFromBracket,
+  faUmbrellaBeach, faXmark, faHourglassHalf, faLayerGroup, faRotateLeft,
+  faPaperPlane, faSpinner,
 } from '@fortawesome/free-solid-svg-icons'
-import { faTelegram as faTelegramBrand } from '@fortawesome/free-brands-svg-icons'
-import { fetchStudents, createStudent, updateStudent, archiveStudent, unarchiveStudent, uploadStudentPhoto, fetchStudentCameraAttendance, API_BASE } from '../api'
+import {
+  fetchStudents, createStudent, updateStudent, archiveStudent, unarchiveStudent, fetchStudentCameraAttendance,
+  fetchStudentVacations, createStudentVacation, deleteStudentVacation,
+  fetchGroups, addStudentToGroup, checkStudentTelegram,
+} from '../api'
 import Pagination from './Pagination'
 import DateFilter from './DateFilter'
 
@@ -16,40 +21,27 @@ const EMPTY = {
   full_name: '', phone1: '',
   father_name: '', father_phone: '',
   mother_name: '', mother_phone: '',
-  telegram_id: '', telegram_user_id: '', notes: '',
+  telegram_user_id: '', notes: '',
 }
 
-function StudentAvatar({ photoUrl, size = 60 }) {
-  if (!photoUrl) return (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-      <FontAwesomeIcon icon={faUserGraduate} style={{ color: '#94a3b8', fontSize: size * 0.4 }} />
-    </div>
-  )
-  return (
-    <img
-      src={`${API_BASE}${photoUrl}`}
-      alt=""
-      style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
-    />
-  )
-}
-
-export default function Students() {
-  const [tab, setTab] = useState('active')          // 'active' | 'archived'
+export default function Students({ currentUser, onOpenStudent } = {}) {
+  const isHunter = currentUser?.role === 'hunter' || currentUser?.role === 'admin'
+  const [tab, setTab] = useState('active')          // 'active' | 'demo' | 'archived'
   const [data, setData] = useState({ items: [], meta: null })
   const [search, setSearch] = useState('')
   const [dateFilter, setDateFilter] = useState({ preset: 'all', date_from: '', date_to: '' })
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [modal, setModal] = useState(null)
-  const [editStudent, setEditStudent] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
-  const [photoUploading, setPhotoUploading] = useState(false)
   const [attendanceModal, setAttendanceModal] = useState(null)  // student object
   const [attendanceData, setAttendanceData]   = useState([])
   const [attendanceDays, setAttendanceDays]   = useState(30)
   const [attendanceLoading, setAttendanceLoading] = useState(false)
+  const [vacationModal, setVacationModal] = useState(null)      // student object
+  const [attachModal, setAttachModal] = useState(null)          // student object (demo -> guruhga biriktirish)
+  const [tgCheck, setTgCheck] = useState({})   // { [studentId]: 'checking' | 'ok' | 'fail' }
 
   useEffect(() => { load(search, dateFilter, page, tab) }, [tab])
 
@@ -59,6 +51,7 @@ export default function Students() {
       const res = await fetchStudents({
         search: s || undefined,
         is_archived: t === 'archived' ? true : false,
+        is_demo: t === 'demo' ? true : false,
         date_from: df.date_from || undefined,
         date_to: df.date_to || undefined,
         page: p, page_size: 20,
@@ -92,41 +85,14 @@ export default function Students() {
     setSearch('')
   }
 
-  function openAdd() { setForm(EMPTY); setEditStudent(null); setModal('add') }
-  function openEdit(s) {
-    setForm({
-      full_name: s.full_name, phone1: s.phone1,
-      father_name: s.father_name || '', father_phone: s.father_phone || '',
-      mother_name: s.mother_name || '', mother_phone: s.mother_phone || '',
-      telegram_id: s.telegram_id || '', telegram_user_id: s.telegram_user_id || '', notes: s.notes || '',
-    })
-    setEditStudent(s)
-    setModal(s)
-  }
-
-  async function handlePhotoUpload(file) {
-    if (!editStudent?.id) return
-    setPhotoUploading(true)
-    try {
-      const res = await uploadStudentPhoto(editStudent.id, file)
-      setEditStudent(prev => ({ ...prev, photo_url: res.photo_url }))
-      toast.success('Rasm yuklandi')
-      load()
-    } catch (e) { toast.error(e.message) }
-    finally { setPhotoUploading(false) }
-  }
+  function openAdd() { setForm(EMPTY); setModal('add') }
 
   async function handleSave() {
     if (!form.full_name.trim() || !form.phone1.trim()) return toast.error("Ism va telefon majburiy")
     setSaving(true)
     try {
-      if (modal === 'add') {
-        await createStudent(form)
-        toast.success("Talaba qo'shildi")
-      } else {
-        await updateStudent(modal.id, form)
-        toast.success('Saqlandi')
-      }
+      await createStudent(tab === 'demo' ? { ...form, is_demo: true } : form)
+      toast.success(tab === 'demo' ? "Demo talaba qo'shildi" : "Talaba qo'shildi")
       setModal(null)
       load()
     } catch (e) { toast.error(e.message) }
@@ -148,6 +114,36 @@ export default function Students() {
       toast.success("Arxivdan chiqarildi")
       load()
     } catch (e) { toast.error(e.message) }
+  }
+
+  async function handleMarkDemo(s) {
+    if (!confirm(`"${s.full_name}" demo bo'limiga o'tkazilsinmi? U guruhga biriktirilmaguncha hali demo darsga kelmagan hisoblanadi.`)) return
+    try {
+      await updateStudent(s.id, { is_demo: true })
+      toast.success("Demo bo'limiga o'tkazildi")
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  async function handleUnmarkDemo(s) {
+    try {
+      await updateStudent(s.id, { is_demo: false })
+      toast.success("Demo holatidan chiqarildi")
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  async function handleTelegramCheck(s) {
+    setTgCheck(p => ({ ...p, [s.id]: 'checking' }))
+    try {
+      const res = await checkStudentTelegram(s.id)
+      setTgCheck(p => ({ ...p, [s.id]: res.ok ? 'ok' : 'fail' }))
+      if (res.ok) toast.success("Sinov xabari yuborildi — yetkazish mumkin")
+      else toast.error(res.detail || 'Xabar yuborib bo\'lmadi')
+    } catch (e) {
+      setTgCheck(p => ({ ...p, [s.id]: 'fail' }))
+      toast.error(e.message)
+    }
   }
 
   async function handleToggle(s) {
@@ -189,7 +185,7 @@ export default function Students() {
           <FontAwesomeIcon icon={faUserGraduate} className="page-icon" />
           Talabalar
         </h1>
-        {tab === 'active' && (
+        {(tab === 'active' || tab === 'demo') && (
           <button className="button primary" onClick={openAdd}>
             <FontAwesomeIcon icon={faPlus} /> Talaba qo'shish
           </button>
@@ -198,6 +194,12 @@ export default function Students() {
 
       {/* Tabs */}
       <div className="tab-bar">
+        <button
+          className={`tab-btn ${tab === 'demo' ? 'active' : ''}`}
+          onClick={() => switchTab('demo')}
+        >
+          <FontAwesomeIcon icon={faHourglassHalf} /> Demo
+        </button>
         <button
           className={`tab-btn ${tab === 'active' ? 'active' : ''}`}
           onClick={() => switchTab('active')}
@@ -265,9 +267,20 @@ export default function Students() {
                       ) : <span className="text-muted">—</span>}
                     </td>
                     <td>
-                      {s.telegram_id
-                        ? <span className="tg-badge"><FontAwesomeIcon icon={faTelegramBrand} /> {s.telegram_id}</span>
-                        : <span className="text-muted">—</span>}
+                      {s.telegram_user_id ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span className="badge" style={tgBadgeStyle(tgCheck[s.id])}>ID: {s.telegram_user_id}</span>
+                          <button
+                            className="btn-icon"
+                            title="Yetkazishni sinab ko'rish (sinov xabari yuboradi)"
+                            style={{ padding: 4 }}
+                            disabled={tgCheck[s.id] === 'checking'}
+                            onClick={() => handleTelegramCheck(s)}
+                          >
+                            <FontAwesomeIcon icon={tgCheck[s.id] === 'checking' ? faSpinner : faPaperPlane} spin={tgCheck[s.id] === 'checking'} style={{ fontSize: 11 }} />
+                          </button>
+                        </div>
+                      ) : <span className="text-muted">—</span>}
                     </td>
                     <td>
                       {(s.group_names && s.group_names.length > 0)
@@ -276,22 +289,41 @@ export default function Students() {
                           </div>
                         : <span className="text-muted">—</span>}
                     </td>
-                    <td><PayStatus s={s} /></td>
+                    <td>
+                      {isHunter ? (
+                        <div
+                          onClick={() => setVacationModal(s)}
+                          style={{ cursor: 'pointer' }}
+                          title="Ta'til belgilash uchun bosing"
+                        >
+                          <PayStatus s={s} />
+                        </div>
+                      ) : <PayStatus s={s} />}
+                    </td>
                     <td className="text-muted" style={{ fontSize: 12 }}>{fmtDate(s.created_at)}</td>
                     <td className="text-muted" style={{ fontSize: 12 }}>{fmtDate(s.updated_at)}</td>
                     <td>
-                      <span className={`status-badge ${s.is_active ? 'active' : 'inactive'}`}>
-                        {s.is_active ? 'Faol' : 'Nofaol'}
-                      </span>
+                      {tab === 'demo' ? (
+                        <span className="status-badge inactive" style={{ background: '#fef3c7', color: '#b45309' }}>
+                          Demo darsga kelmagan
+                        </span>
+                      ) : (
+                        <span className={`status-badge ${s.is_active ? 'active' : 'inactive'}`}>
+                          {s.is_active ? 'Faol' : 'Nofaol'}
+                        </span>
+                      )}
                     </td>
                     <td className="actions">
+                      <button className="btn-icon" onClick={() => onOpenStudent?.(s)} title="To'liq ma'lumot / tahrirlash" style={{ color: '#2563eb' }}>
+                        <FontAwesomeIcon icon={faEye} />
+                      </button>
                       <button className="btn-icon" onClick={() => openAttendance(s)} title="Davomat tarixi" style={{ color: '#7c3aed' }}>
                         <FontAwesomeIcon icon={faClockRotateLeft} />
                       </button>
-                      {tab === 'active' ? (
+                      {tab === 'active' && (
                         <>
-                          <button className="btn-icon" onClick={() => openEdit(s)} title="Tahrirlash">
-                            <FontAwesomeIcon icon={faPen} />
+                          <button className="btn-icon" onClick={() => handleMarkDemo(s)} title="Demo bo'limiga o'tkazish" style={{ color: '#b45309' }}>
+                            <FontAwesomeIcon icon={faHourglassHalf} />
                           </button>
                           <button className="btn-icon" onClick={() => handleToggle(s)} title={s.is_active ? "Nofaollashtirish" : "Faollashtirish"}>
                             <FontAwesomeIcon icon={s.is_active ? faToggleOn : faToggleOff} style={{ color: s.is_active ? '#22c55e' : '#ef4444' }} />
@@ -300,7 +332,18 @@ export default function Students() {
                             <FontAwesomeIcon icon={faBoxArchive} />
                           </button>
                         </>
-                      ) : (
+                      )}
+                      {tab === 'demo' && (
+                        <>
+                          <button className="btn-icon" onClick={() => setAttachModal(s)} title="Guruhga biriktirish (haqiqiy talabaga o'tkazish)" style={{ color: '#2563eb' }}>
+                            <FontAwesomeIcon icon={faLayerGroup} />
+                          </button>
+                          <button className="btn-icon" onClick={() => handleUnmarkDemo(s)} title="Demo holatidan chiqarish">
+                            <FontAwesomeIcon icon={faRotateLeft} />
+                          </button>
+                        </>
+                      )}
+                      {tab === 'archived' && (
                         <button className="btn-icon" onClick={() => handleUnarchive(s)} title="Arxivdan chiqarish" style={{ color: '#2563eb' }}>
                           <FontAwesomeIcon icon={faArrowUpFromBracket} />
                         </button>
@@ -311,7 +354,9 @@ export default function Students() {
                 {students.length === 0 && (
                   <tr>
                     <td colSpan={11} className="muted center py-4">
-                      {tab === 'archived' ? 'Arxivlangan talabalar yo\'q' : 'Talabalar topilmadi'}
+                      {tab === 'archived' ? 'Arxivlangan talabalar yo\'q'
+                        : tab === 'demo' ? 'Demo bo\'limida talaba yo\'q'
+                        : 'Talabalar topilmadi'}
                     </td>
                   </tr>
                 )}
@@ -404,31 +449,10 @@ export default function Students() {
         <div className="modal-overlay" onClick={() => setModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{modal === 'add' ? "Yangi talaba" : "Talabani tahrirlash"}</h3>
+              <h3>{tab === 'demo' ? "Yangi demo talaba" : "Yangi talaba"}</h3>
               <button className="modal-close" onClick={() => setModal(null)}>✕</button>
             </div>
             <div className="modal-body">
-              {modal !== 'add' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
-                  <StudentAvatar photoUrl={editStudent?.photo_url} size={72} />
-                  <div>
-                    <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 6 }}>
-                      Kamera tizimi uchun yuz rasmi
-                    </div>
-                    <label className="button secondary" style={{ cursor: 'pointer', fontSize: 13 }}>
-                      <FontAwesomeIcon icon={faCamera} style={{ marginRight: 6 }} />
-                      {photoUploading ? 'Yuklanmoqda...' : 'Rasm yuklash'}
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        style={{ display: 'none' }}
-                        disabled={photoUploading}
-                        onChange={e => e.target.files[0] && handlePhotoUpload(e.target.files[0])}
-                      />
-                    </label>
-                  </div>
-                </div>
-              )}
               <label>Ism Familiya *</label>
               <input className="field" value={form.full_name} onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))} placeholder="To'liq ism" />
               <label><FontAwesomeIcon icon={faPhone} /> Telefon *</label>
@@ -453,8 +477,6 @@ export default function Students() {
                   <input className="field" value={form.mother_phone} onChange={e => setForm(p => ({ ...p, mother_phone: e.target.value }))} placeholder="+998..." />
                 </div>
               </div>
-              <label>Telegram username (faqat ko'rinish uchun)</label>
-              <input className="field" value={form.telegram_id} onChange={e => setForm(p => ({ ...p, telegram_id: e.target.value }))} placeholder="username (@ siz)" />
               <label>Telegram ID (bot xabar yuborishi uchun) *muhim*</label>
               <input className="field" type="text" value={form.telegram_user_id}
                 onChange={e => setForm(p => ({ ...p, telegram_user_id: e.target.value }))}
@@ -474,8 +496,26 @@ export default function Students() {
           </div>
         </div>
       )}
+
+      {vacationModal && (
+        <VacationModal student={vacationModal} onClose={() => setVacationModal(null)} />
+      )}
+
+      {attachModal && (
+        <AttachGroupModal
+          student={attachModal}
+          onClose={() => setAttachModal(null)}
+          onAttached={() => { setAttachModal(null); load() }}
+        />
+      )}
     </div>
   )
+}
+
+// ── Telegram ID badge rangi (yuborish tekshiruvi natijasiga qarab) ─────────
+function tgBadgeStyle(status) {
+  if (status === 'fail') return { background: '#fef3c7', color: '#b45309' }
+  return { background: '#dbeafe', color: '#1d4ed8' }   // default / 'ok' — ko'k
 }
 
 // ── To'lov holati belgisi ───────────────────────────────────────────────────
@@ -614,6 +654,165 @@ function RecordPaymentModal({ student, onClose, onSaved }) {
           <button className="button secondary" onClick={onClose}>Bekor</button>
           <button className="button primary" onClick={handleSave} disabled={saving || loading || !sum?.groups.length}>
             <FontAwesomeIcon icon={faCircleCheck} /> {saving ? 'Saqlanmoqda...' : 'Qabul qilish'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Ta'til belgilash oynasi (hunter/admin) ──────────────────────────────────
+const VAC_TODAY = new Date().toISOString().slice(0, 10)
+
+function VacationModal({ student, onClose }) {
+  const [vacations, setVacations] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [form, setForm] = useState({ start_date: VAC_TODAY, end_date: VAC_TODAY, reason: '' })
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => { load() }, [student.id])
+  async function load() {
+    setLoading(true)
+    try { setVacations(await fetchStudentVacations(student.id)) }
+    catch { toast.error("Yuklab bo'lmadi") } finally { setLoading(false) }
+  }
+
+  async function handleSave() {
+    if (!form.start_date || !form.end_date) return toast.error('Sanalarni kiriting')
+    if (form.end_date < form.start_date) return toast.error("Tugash sanasi boshlanishdan oldin bo'lmasin")
+    setSaving(true)
+    try {
+      await createStudentVacation(student.id, {
+        start_date: form.start_date, end_date: form.end_date,
+        reason: form.reason.trim() || null,
+      })
+      toast.success("Ta'til belgilandi")
+      setForm({ start_date: VAC_TODAY, end_date: VAC_TODAY, reason: '' })
+      await load()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  async function handleDelete(id) {
+    if (!confirm("Bu ta'til yozuvini o'chirishni tasdiqlaysizmi?")) return
+    try {
+      await deleteStudentVacation(student.id, id)
+      toast.success("O'chirildi")
+      await load()
+    } catch (e) { toast.error(e.message) }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+        <div className="modal-header">
+          <h3><FontAwesomeIcon icon={faUmbrellaBeach} /> Ta'til — {student.full_name}</h3>
+          <button className="modal-close" onClick={onClose}><FontAwesomeIcon icon={faXmark} /></button>
+        </div>
+        <div className="modal-body">
+          <p className="text-muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+            Ta'til oralig'iga tushgan darslar oylik to'lovdan avtomatik chiqarib tashlanadi.
+          </p>
+          <div className="row-2">
+            <div>
+              <label>Boshlanish sanasi *</label>
+              <input className="field" type="date" value={form.start_date}
+                onChange={e => setForm(p => ({ ...p, start_date: e.target.value, end_date: p.end_date < e.target.value ? e.target.value : p.end_date }))} />
+            </div>
+            <div>
+              <label>Tugash sanasi *</label>
+              <input className="field" type="date" value={form.end_date} min={form.start_date}
+                onChange={e => setForm(p => ({ ...p, end_date: e.target.value }))} />
+            </div>
+          </div>
+          <label>Sababi (ixtiyoriy)</label>
+          <input className="field" value={form.reason} placeholder="Masalan: shifokor tavsiyasi"
+            onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} />
+          <button className="button primary" style={{ marginTop: 10 }} onClick={handleSave} disabled={saving}>
+            <FontAwesomeIcon icon={faPlus} /> {saving ? 'Saqlanmoqda...' : "Qo'shish"}
+          </button>
+
+          {loading ? (
+            <div className="muted center py-4">Yuklanmoqda...</div>
+          ) : vacations.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <label>Belgilangan ta'til kunlari</label>
+              {vacations.map(v => (
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 8, background: 'var(--bg-secondary, #f5f5f5)', marginBottom: 6 }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>
+                      {new Date(v.start_date + 'T00:00:00').toLocaleDateString('uz-UZ')} — {new Date(v.end_date + 'T00:00:00').toLocaleDateString('uz-UZ')}
+                    </div>
+                    {v.reason && <div className="text-muted" style={{ fontSize: 12 }}>{v.reason}</div>}
+                    {v.created_by_name && <div className="text-muted" style={{ fontSize: 11 }}>{v.created_by_name}</div>}
+                  </div>
+                  <button className="btn-icon danger" onClick={() => handleDelete(v.id)}>
+                    <FontAwesomeIcon icon={faTrash} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Demo talabani guruhga biriktirish (haqiqiy talabaga o'tkazish) ─────────
+function AttachGroupModal({ student, onClose, onAttached }) {
+  const [groups, setGroups] = useState([])
+  const [groupId, setGroupId] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => { load() }, [])
+  async function load() {
+    setLoading(true)
+    try {
+      const res = await fetchGroups({ is_active: true, page_size: 100 })
+      setGroups(res.items || res || [])
+    } catch { toast.error("Guruhlarni yuklab bo'lmadi") } finally { setLoading(false) }
+  }
+
+  async function handleSave() {
+    if (!groupId) return toast.error('Guruhni tanlang')
+    setSaving(true)
+    try {
+      await addStudentToGroup(parseInt(groupId), student.id)
+      toast.success("Talaba guruhga biriktirildi — endi haqiqiy talaba")
+      onAttached()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+        <div className="modal-header">
+          <h3><FontAwesomeIcon icon={faLayerGroup} /> Guruhga biriktirish — {student.full_name}</h3>
+          <button className="modal-close" onClick={onClose}><FontAwesomeIcon icon={faXmark} /></button>
+        </div>
+        <div className="modal-body">
+          <p className="text-muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+            Guruh tanlab biriktirilgach, talaba avtomatik "Faol talabalar" ro'yxatiga o'tadi.
+          </p>
+          {loading ? (
+            <div className="muted center py-4">Yuklanmoqda...</div>
+          ) : (
+            <>
+              <label>Guruh *</label>
+              <select className="field" value={groupId} onChange={e => setGroupId(e.target.value)}>
+                <option value="">— tanlang —</option>
+                {groups.map(g => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="button secondary" onClick={onClose}>Bekor</button>
+          <button className="button primary" onClick={handleSave} disabled={saving || loading}>
+            {saving ? 'Saqlanmoqda...' : 'Biriktirish'}
           </button>
         </div>
       </div>

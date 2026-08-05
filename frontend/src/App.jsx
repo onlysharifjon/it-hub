@@ -9,6 +9,7 @@ import Sidebar from './components/Sidebar'
 import Login from './components/Login'
 import Lessons from './components/Lessons'
 import Students from './components/Students'
+import StudentDetail from './components/StudentDetail'
 import Groups from './components/Groups'
 import GroupDetail from './components/GroupDetail'
 import Payments from './components/Payments'
@@ -27,6 +28,7 @@ import Special from './components/Special'
 import Academic from './components/Academic'
 import FeedbackInbox from './components/FeedbackInbox'
 import Notifications from './components/Notifications'
+import ChatBot from './components/ChatBot'
 import Parents from './components/Parents'
 import PublicIntake from './components/PublicIntake'
 import AuditWarnings from './components/AuditWarnings'
@@ -75,6 +77,9 @@ function App() {
   const [selectedGroup, setSelectedGroup] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('selectedGroup')) || null } catch { return null }
   })
+  const [selectedStudent, setSelectedStudent] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('selectedStudent')) || null } catch { return null }
+  })
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [intakeSlug, setIntakeSlug] = useState(readIntakeSlug)
 
@@ -85,6 +90,7 @@ function App() {
       const page = readHash()
       setActivePage(page)
       if (page !== 'group_detail') setSelectedGroup(null)
+      if (page !== 'student_detail') setSelectedStudent(null)
     }
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
@@ -111,6 +117,7 @@ function App() {
     setIsAuthed(false)
     setCurrentUser(null)
     sessionStorage.removeItem('selectedGroup')
+    sessionStorage.removeItem('selectedStudent')
     window.location.hash = 'lessons'
     setActivePage('lessons')
   }
@@ -176,7 +183,30 @@ function App() {
           {activePage === 'lessons' && (
             <Lessons category={selectedCategory} currentUser={currentUser} />
           )}
-          {activePage === 'students' && <Students />}
+          {activePage === 'students' && (
+            <Students currentUser={currentUser} onOpenStudent={s => {
+              sessionStorage.setItem('selectedStudent', JSON.stringify(s))
+              setSelectedStudent(s)
+              window.location.hash = 'student_detail'
+              setActivePage('student_detail')
+            }} />
+          )}
+          {activePage === 'student_detail' && selectedStudent && (
+            <StudentDetail
+              student={selectedStudent}
+              onBack={() => handleNavigate('students')}
+              currentUser={currentUser}
+              onChanged={s => { setSelectedStudent(s); sessionStorage.setItem('selectedStudent', JSON.stringify(s)) }}
+            />
+          )}
+          {activePage === 'student_detail' && !selectedStudent && (
+            <Students currentUser={currentUser} onOpenStudent={s => {
+              sessionStorage.setItem('selectedStudent', JSON.stringify(s))
+              setSelectedStudent(s)
+              window.location.hash = 'student_detail'
+              setActivePage('student_detail')
+            }} />
+          )}
           {activePage === 'groups' && (
             <Groups onOpenGroup={g => {
               sessionStorage.setItem('selectedGroup', JSON.stringify(g))
@@ -225,6 +255,7 @@ function App() {
           {activePage === 'academic' && <Academic currentUser={currentUser} />}
           {activePage === 'feedbacks' && <FeedbackInbox currentUser={currentUser} />}
           {activePage === 'notifications' && <Notifications />}
+          {activePage === 'chatbot' && <ChatBot />}
           {activePage === 'parents' && <Parents currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
           {activePage === 'audit_warnings' && <AuditWarnings currentUser={currentUser} />}

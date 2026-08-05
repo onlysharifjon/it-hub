@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import crm_client
+from database import async_session
 from keyboards import (
     BTN_MY_WARNINGS,
     BTN_REQUEST_CHILD,
@@ -24,7 +25,68 @@ from keyboards import (
     limited_admin_reply_keyboard,
     parent_reply_keyboard,
 )
-from models import AdminInviteLink, Employee, ParentLink, Role, Setting
+from models import AdminInviteLink, BotMessage, Employee, ParentLink, Role, Setting
+
+
+async def log_bot_message(
+    session: AsyncSession,
+    *,
+    chat_id: int,
+    direction: str,
+    text: str | None = None,
+    full_name: str | None = None,
+    username: str | None = None,
+    message_type: str = "text",
+    sent_ok: bool = True,
+) -> None:
+    """CRM'dagi Chatbot inbox uchun xabarni bot.db'ga yozadi. Xato bo'lsa jim o'tkazib
+    yuboriladi — jurnal yozib bo'lmasligi asosiy oqimni to'xtatmasligi kerak."""
+    try:
+        session.add(BotMessage(
+            chat_id=chat_id, direction=direction, text=text,
+            full_name=full_name, username=username,
+            message_type=message_type, sent_ok=sent_ok,
+        ))
+        await session.commit()
+    except Exception:
+        await session.rollback()
+
+
+async def log_inbound_message(message: Message) -> None:
+    """Foydalanuvchidan botga kelgan har bir xabarni jurnalga yozadi."""
+    text = message.text or message.caption
+    message_type = "text"
+    if message.photo:
+        message_type = "photo"
+        text = text or "[rasm]"
+    elif message.voice or message.audio:
+        message_type = "other"
+        text = text or "[ovozli xabar]"
+    elif message.video or message.video_note:
+        message_type = "other"
+        text = text or "[video]"
+    elif message.document:
+        message_type = "other"
+        text = text or "[fayl]"
+    elif message.sticker:
+        message_type = "other"
+        text = text or f"[stiker {message.sticker.emoji or ''}]"
+    elif text and text.startswith("/"):
+        message_type = "command"
+    elif not text:
+        return  # matnsiz/tanib bo'lmaydigan kontent turi — o'tkazib yuboriladi
+
+    tg_user = message.from_user
+    async with async_session() as session:
+        await log_bot_message(
+            session,
+            chat_id=message.chat.id,
+            direction="in",
+            text=text,
+            full_name=tg_user.full_name if tg_user else None,
+            username=tg_user.username if tg_user else None,
+            message_type=message_type,
+        )
 
 
 async def safe_edit_text(

@@ -8,7 +8,7 @@ import {
   faChalkboardTeacher, faReceipt, faCamera,
   faHeadset, faBullseye, faStar, faBell, faBookOpen,
   faPen, faGraduationCap, faCommentDots, faPeopleRoof,
-  faTriangleExclamation, faRobot,
+  faTriangleExclamation, faRobot, faComments,
 } from '@fortawesome/free-solid-svg-icons'
 import { toast } from 'react-hot-toast'
 import { uploadAvatar, updateProfile, fetchFeedbackNewCount, createExpense, API_BASE } from '../api'
@@ -196,7 +196,7 @@ function Sidebar({
           </>
         )}
 
-        {/* Hunter — Tariflar va Special */}
+        {/* Hunter — Tariflar, Special va To'lovlar */}
         {isHunter && (
           <>
             <div className="nav-section-label">Narxlar</div>
@@ -211,6 +211,12 @@ function Sidebar({
               onClick={() => onNavigate('special')}
             >
               <FontAwesomeIcon icon={faStar} fixedWidth /> Special
+            </button>
+            <button
+              className={`nav-page-btn ${activePage === 'payments' ? 'active' : ''}`}
+              onClick={() => onNavigate('payments')}
+            >
+              <FontAwesomeIcon icon={faCreditCard} fixedWidth /> To'lovlar
             </button>
           </>
         )}
@@ -245,6 +251,14 @@ function Sidebar({
             >
               <FontAwesomeIcon icon={faBell} fixedWidth /> Notifications
             </button>
+            {(isHunter || isAdmin) && (
+              <button
+                className={`nav-page-btn ${activePage === 'chatbot' ? 'active' : ''}`}
+                onClick={() => onNavigate('chatbot')}
+              >
+                <FontAwesomeIcon icon={faComments} fixedWidth /> Chatbot
+              </button>
+            )}
             {canSeeFeedbacks && (
               <button
                 className={`nav-page-btn ${activePage === 'feedbacks' ? 'active' : ''}`}

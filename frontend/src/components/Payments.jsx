@@ -4,8 +4,12 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faTrash, faFileExcel, faCreditCard,
   faChevronDown, faFilter, faPrint, faMoneyBillWave, faPen,
+  faTriangleExclamation, faList, faBolt,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchPayments, createPayment, updatePayment, deletePayment, fetchStudents, fetchGroups, exportExcelUrl, receiptUrl, openDownload, fetchPaymentExpected } from '../api'
+import {
+  fetchPayments, createPayment, updatePayment, deletePayment, fetchStudents, fetchGroups,
+  exportExcelUrl, receiptUrl, openDownload, fetchPaymentExpected, fetchStudentPaymentSummary,
+} from '../api'
 import Pagination from './Pagination'
 import DateFilter from './DateFilter'
 
@@ -15,6 +19,7 @@ const EMPTY = { student_id: '', group_id: '', amount: '', month: NOW.getMonth() 
 
 export default function Payments({ currentUser }) {
   const isAdmin = currentUser?.role === 'admin'
+  const [view, setView] = useState('list')   // 'list' | 'debtors'
   const [data, setData] = useState({ items: [], meta: null })
   const [students, setStudents] = useState([])
   const [groups, setGroups] = useState([])
@@ -28,11 +33,59 @@ export default function Payments({ currentUser }) {
   const [filter, setFilter] = useState({ month: NOW.getMonth() + 1, year: NOW.getFullYear() })
   const [dateFilter, setDateFilter] = useState({ preset: 'all', date_from: '', date_to: '' })
 
+  // Oylik holat (statistika kartalari + Qarzdorlar bo'limi) — filter.month/year'ga bog'liq
+  const [monthStudents, setMonthStudents] = useState([])
+  const [statsLoading, setStatsLoading] = useState(true)
+  const [quickPayLoading, setQuickPayLoading] = useState(null)   // student_id
+
   useEffect(() => {
     fetchStudents({ page_size: 100 }).then(r => setStudents(r.items || []))
     fetchGroups({ page_size: 100 }).then(r => setGroups(r.items || []))
     load(filter, dateFilter, 1)
   }, [])
+
+  useEffect(() => { loadStats(filter.month, filter.year) }, [filter.month, filter.year])
+
+  async function loadStats(month = filter.month, year = filter.year) {
+    setStatsLoading(true)
+    try {
+      const r = await fetchStudents({ is_active: true, month, year, page_size: 100 })
+      setMonthStudents(r.items || [])
+    } catch { /* jim — statistika ixtiyoriy */ }
+    finally { setStatsLoading(false) }
+  }
+
+  const debtors = monthStudents
+    .filter(s => s.payment_status === 'debtor' || s.payment_status === 'partial')
+    .sort((a, b) => Number(b.debt || 0) - Number(a.debt || 0))
+  const totalDebt = debtors.reduce((sum, s) => sum + Number(s.debt || 0), 0)
+  const totalExpected = monthStudents.reduce((sum, s) => sum + Number(s.owed_month || 0), 0)
+  const totalPaidMonth = monthStudents.reduce((sum, s) => sum + Number(s.paid_month || 0), 0)
+
+  async function quickPay(student) {
+    setQuickPayLoading(student.id)
+    try {
+      const sum = await fetchStudentPaymentSummary(student.id, { month: filter.month, year: filter.year })
+      const g = sum.groups.find(g => Number(g.remaining) > 0) || sum.groups[0]
+      if (!g) return toast.error("Talaba faol guruhda emas")
+      setEditing(null)
+      setForm({
+        student_id: String(student.id),
+        group_id: String(g.group_id),
+        amount: String(Math.round(g.remaining)),
+        month: filter.month,
+        year: filter.year,
+        notes: '',
+      })
+      setModal(true)
+    } catch (e) { toast.error(e.message) }
+    finally { setQuickPayLoading(null) }
+  }
+
+  async function afterPaymentChange() {
+    load(filter, dateFilter, page)
+    loadStats(filter.month, filter.year)
+  }
 
   useEffect(() => {
     const { student_id, group_id, month, year } = form
@@ -101,7 +154,7 @@ export default function Payments({ currentUser }) {
       setModal(false)
       setEditing(null)
       setForm(EMPTY)
-      load(filter, page)
+      afterPaymentChange()
     } catch (e) { toast.error(e.message) }
     finally { setSaving(false) }
   }
@@ -124,7 +177,7 @@ export default function Payments({ currentUser }) {
     try {
       await deletePayment(id)
       toast.success("To'lov bekor qilindi")
-      load(filter, page)
+      afterPaymentChange()
     } catch (e) { toast.error(e.message) }
   }
 
@@ -149,6 +202,40 @@ export default function Payments({ currentUser }) {
         </div>
       </div>
 
+      <div className="kpi-grid">
+        <div className="kpi-card" style={{ borderTop: '3px solid #dc2626' }}>
+          <div className="kpi-label"><FontAwesomeIcon icon={faTriangleExclamation} /> Jami qarzdorlik</div>
+          <div className="kpi-value" style={{ color: '#dc2626' }}>
+            {statsLoading ? '—' : totalDebt.toLocaleString()} <span className="kpi-currency">so'm</span>
+          </div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label"><FontAwesomeIcon icon={faTriangleExclamation} /> Qarzdorlar soni</div>
+          <div className="kpi-value">{statsLoading ? '—' : debtors.length}</div>
+        </div>
+        <div className="kpi-card" style={{ borderTop: '3px solid #16a34a' }}>
+          <div className="kpi-label"><FontAwesomeIcon icon={faMoneyBillWave} /> Jami to'langan (oy)</div>
+          <div className="kpi-value" style={{ color: '#16a34a' }}>
+            {statsLoading ? '—' : totalPaidMonth.toLocaleString()} <span className="kpi-currency">so'm</span>
+          </div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label"><FontAwesomeIcon icon={faCreditCard} /> Kutilayotgan (oy)</div>
+          <div className="kpi-value">
+            {statsLoading ? '—' : totalExpected.toLocaleString()} <span className="kpi-currency">so'm</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="toolbar">
+        <button className={`button small ${view === 'list' ? 'primary' : 'secondary'}`} onClick={() => setView('list')}>
+          <FontAwesomeIcon icon={faList} /> Barcha to'lovlar
+        </button>
+        <button className={`button small ${view === 'debtors' ? 'primary' : 'secondary'}`} onClick={() => setView('debtors')}>
+          <FontAwesomeIcon icon={faTriangleExclamation} /> Qarzdorlar {!statsLoading && `(${debtors.length})`}
+        </button>
+      </div>
+
       <div className="toolbar">
         <FontAwesomeIcon icon={faFilter} className="text-muted" />
         <select className="field-sm" value={filter.month} onChange={e => setFilter(p => ({ ...p, month: parseInt(e.target.value) }))}>
@@ -157,17 +244,60 @@ export default function Payments({ currentUser }) {
         <select className="field-sm" value={filter.year} onChange={e => setFilter(p => ({ ...p, year: parseInt(e.target.value) }))}>
           {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
         </select>
-        <button className="button secondary small" onClick={applyFilter}>Filtrlash</button>
-        <div className="total-badge">
-          Sahifada: <strong>{total.toLocaleString()} so'm</strong>
-          {meta && <span className="text-muted"> ({meta.total} ta)</span>}
+        {view === 'list' && <button className="button secondary small" onClick={applyFilter}>Filtrlash</button>}
+        {view === 'list' && (
+          <div className="total-badge">
+            Sahifada: <strong>{total.toLocaleString()} so'm</strong>
+            {meta && <span className="text-muted"> ({meta.total} ta)</span>}
+          </div>
+        )}
+      </div>
+      {view === 'list' && (
+        <div className="toolbar">
+          <DateFilter value={dateFilter} onChange={handleDateFilter} />
         </div>
-      </div>
-      <div className="toolbar">
-        <DateFilter value={dateFilter} onChange={handleDateFilter} />
-      </div>
+      )}
 
-      {loading ? (
+      {view === 'debtors' ? (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Talaba</th>
+                <th>Guruh(lar)</th>
+                <th>Oylik to'lov</th>
+                <th>To'langan</th>
+                <th>Qarz</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {statsLoading ? (
+                <tr><td colSpan={7} className="muted center py-4">Yuklanmoqda...</td></tr>
+              ) : debtors.length === 0 ? (
+                <tr><td colSpan={7} className="muted center py-4">Bu oy uchun qarzdorlar yo'q 🎉</td></tr>
+              ) : debtors.map((s, i) => (
+                <tr key={s.id}>
+                  <td className="text-muted">{i + 1}</td>
+                  <td><strong>{s.full_name}</strong><div className="text-muted" style={{ fontSize: 12 }}>{s.phone1}</div></td>
+                  <td>
+                    {(s.group_names || []).map((n, gi) => <span key={gi} className="badge" style={{ marginRight: 4 }}>{n}</span>)}
+                  </td>
+                  <td className="amount">{Number(s.owed_month || 0).toLocaleString()} so'm</td>
+                  <td className="amount">{Number(s.paid_month || 0).toLocaleString()} so'm</td>
+                  <td className="amount" style={{ color: '#dc2626', fontWeight: 700 }}>{Number(s.debt || 0).toLocaleString()} so'm</td>
+                  <td>
+                    <button className="button primary small" disabled={quickPayLoading === s.id} onClick={() => quickPay(s)}>
+                      <FontAwesomeIcon icon={faBolt} /> {quickPayLoading === s.id ? 'Yuklanmoqda...' : "To'liq to'lash"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : loading ? (
         <div className="muted center py-8">Yuklanmoqda...</div>
       ) : (
         <>

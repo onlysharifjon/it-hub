@@ -7,11 +7,36 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
+import re
+
 from .. import models
 from ..core_calc import student_month_owed, student_month_paid, payment_status
 from . import schemas
 
 DAY_SHORT = {1: "Du", 2: "Se", 3: "Chor", 4: "Pay", 5: "Ju", 6: "Sha", 7: "Yak"}
+
+# Guruh.schedule matnidagi so'zlar → hafta kuni raqami (1=Dushanba .. 7=Yakshanba)
+_DAY_WORDS = {
+    'du': 1, 'dush': 1, 'dushanba': 1,
+    'se': 2, 'sesh': 2, 'seshanba': 2,
+    'chor': 3, 'chorshanba': 3,
+    'pay': 4, 'payshanba': 4,
+    'ju': 5, 'jum': 5, 'juma': 5,
+    'shan': 6, 'shanba': 6,
+    'yak': 7, 'yakshanba': 7,
+}
+
+
+def _weekdays_from_text(schedule: Optional[str]) -> List[int]:
+    """'Toq kunlar' / 'Juft kunlar' / 'Du, Chor, Ju' kabi erkin matnni hafta kunlari ro'yxatiga aylantiradi."""
+    if not schedule:
+        return []
+    s = schedule.lower()
+    if 'toq' in s:
+        return [1, 3, 5]   # Du, Chor, Ju
+    if 'juft' in s:
+        return [2, 4, 6]   # Se, Pay, Shan
+    return sorted({_DAY_WORDS[t] for t in re.split(r'[\s,\-/]+', s) if t in _DAY_WORDS})
 
 
 def _to_int(v) -> int:
@@ -22,20 +47,26 @@ def _active_memberships(student: models.Student) -> List[models.GroupStudent]:
     return [m for m in student.group_memberships if m.group and m.group.is_active]
 
 
-def _schedule_summary(db: Session, group_id: int, fallback: Optional[str]) -> Optional[str]:
-    """ScheduleSlot'lardan 'Du · Chor · Ju, 14:00' ko'rinishida satr. Bo'lmasa — matn fallback."""
+def _schedule_summary(db: Session, group: models.Group) -> Optional[str]:
+    """ScheduleSlot'lardan 'Du · Chor · Ju, 14:00' ko'rinishida satr.
+    ScheduleSlot bo'lmasa — guruh.schedule matnidan (Toq/Juft/kun nomlari) va lesson_time'dan tuziladi."""
     slots = (
         db.query(models.ScheduleSlot)
-        .filter(models.ScheduleSlot.group_id == group_id)
+        .filter(models.ScheduleSlot.group_id == group.id)
         .order_by(models.ScheduleSlot.day_of_week.asc())
         .all()
     )
-    if not slots:
-        return fallback
-    days = " · ".join(DAY_SHORT.get(s.day_of_week, "?") for s in slots)
-    times = {s.start_time for s in slots}
-    time_part = slots[0].start_time if len(times) == 1 else ""
-    return f"{days}, {time_part}".strip().rstrip(",") if time_part else days
+    if slots:
+        days = " · ".join(DAY_SHORT.get(s.day_of_week, "?") for s in slots)
+        times = {s.start_time for s in slots}
+        time_part = slots[0].start_time if len(times) == 1 else ""
+        return f"{days}, {time_part}".strip().rstrip(",") if time_part else days
+
+    weekdays = _weekdays_from_text(group.schedule)
+    if not weekdays:
+        return group.schedule
+    days = " · ".join(DAY_SHORT[d] for d in weekdays)
+    return f"{days}, {group.lesson_time}" if group.lesson_time else days
 
 
 def build_child(db: Session, student: models.Student) -> schemas.ChildRead:
@@ -61,7 +92,7 @@ def build_child(db: Session, student: models.Student) -> schemas.ChildRead:
         group_name=g.name if g else None,
         stage=g.stage if g else None,
         teacher_name=(g.teacher.full_name or g.teacher.username) if (g and g.teacher) else None,
-        schedule=_schedule_summary(db, g.id, g.schedule) if g else None,
+        schedule=_schedule_summary(db, g) if g else None,
         tariff=_to_int(tariff_total),
         start_date=start,
         discount_percent=discount_percent,
@@ -271,11 +302,20 @@ def build_schedule(db: Session, student: models.Student) -> List[schemas.Schedul
             .all()
         )
         teacher = (g.teacher.full_name or g.teacher.username) if g.teacher else None
-        for s in slots:
-            out.append(schemas.ScheduleSlotRead(
-                day_of_week=s.day_of_week, start_time=s.start_time, end_time=s.end_time,
-                group_name=g.name, teacher_name=teacher, stage=g.stage, room=s.room,
-            ))
+        if slots:
+            for s in slots:
+                out.append(schemas.ScheduleSlotRead(
+                    day_of_week=s.day_of_week, start_time=s.start_time, end_time=s.end_time,
+                    group_name=g.name, teacher_name=teacher, stage=g.stage, room=s.room,
+                ))
+        else:
+            # ScheduleSlot yozuvlari hali kiritilmagan guruhlar uchun
+            # guruh.schedule ("Toq/Juft kunlar") va lesson_time'dan tuziladi.
+            for d in _weekdays_from_text(g.schedule):
+                out.append(schemas.ScheduleSlotRead(
+                    day_of_week=d, start_time=g.lesson_time or "", end_time="",
+                    group_name=g.name, teacher_name=teacher, stage=g.stage, room=None,
+                ))
     out.sort(key=lambda x: (x.day_of_week, x.start_time))
     return out
 

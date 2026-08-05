@@ -5,7 +5,7 @@ from logging.handlers import RotatingFileHandler
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, ErrorEvent
+from aiogram.types import BotCommand, ErrorEvent, Message
 from sqlalchemy import select
 
 from config import ADMIN_IDS, BASE_DIR, BOT_TOKEN, DEFAULT_PARENT_CHAT_ID
@@ -14,7 +14,7 @@ from handlers import admin, crm, panel, profile, start
 from handlers.crm import payment_reminder_loop
 from keyboards import KEYBOARD_VERSION
 from models import Employee, Role
-from utils import apply_bot_commands, get_setting, reply_keyboard_for_employee, set_setting
+from utils import apply_bot_commands, get_setting, log_inbound_message, reply_keyboard_for_employee, set_setting
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,16 @@ async def main() -> None:
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+
+    async def _log_inbound_middleware(handler, event: Message, data: dict) -> object:
+        try:
+            await log_inbound_message(event)
+        except Exception:
+            logger.exception("Kiruvchi xabarni jurnalga yozib bo'lmadi")
+        return await handler(event, data)
+
+    dp.message.outer_middleware(_log_inbound_middleware)
+
     dp.include_router(start.router)
     dp.include_router(admin.router)
     dp.include_router(crm.router)

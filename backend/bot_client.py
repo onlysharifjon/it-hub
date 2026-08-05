@@ -16,7 +16,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, create_engine
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -73,6 +73,42 @@ class BotSetting(BotBase):
     id = Column(Integer, primary_key=True)
     key = Column(String(64), unique=True)
     value = Column(String(255))
+
+
+class BotMessage(BotBase):
+    """Bot orqali kelgan/yuborilgan har bir xabar jurnali — bot/models.py'dagi
+    ko'chirma (mustaqil, mos jadval nomi bilan)."""
+    __tablename__ = "bot_messages"
+
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    direction = Column(String(3))          # "in" | "out"
+    full_name = Column(String(255), nullable=True)
+    username = Column(String(255), nullable=True)
+    text = Column(Text, nullable=True)
+    message_type = Column(String(30), default="text")
+    sent_ok = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+def log_bot_message(chat_id, direction: str, text: str = None, message_type: str = "auto_notify",
+                     sent_ok: bool = True, full_name: str = None, username: str = None) -> None:
+    """CRM'dan yuborilgan avtomatik xabarni jurnalga yozadi (Chatbot inbox uchun).
+    Jurnalga yozib bo'lmasa ham asosiy oqim (xabar yuborish) to'xtamasligi kerak."""
+    if not chat_id:
+        return
+    db = BotSessionLocal()
+    try:
+        db.add(BotMessage(
+            chat_id=int(chat_id), direction=direction, text=text,
+            full_name=full_name, username=username,
+            message_type=message_type, sent_ok=sent_ok,
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
 
 
 def get_bot_db():

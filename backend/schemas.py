@@ -2,7 +2,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 from .models import UserRole, LeadStatus
 
@@ -115,6 +115,7 @@ class LeadSourceUpdate(BaseModel):
     name:        Optional[str]  = Field(None, min_length=1, max_length=80)
     is_campaign: Optional[bool] = None
     is_active:   Optional[bool] = None
+    referrer_id: Optional[int]  = None
 
 
 class LeadSourceRead(BaseModel):
@@ -123,6 +124,7 @@ class LeadSourceRead(BaseModel):
     is_campaign: bool
     is_default:  bool
     is_active:   bool
+    referrer_id: Optional[int] = None
 
     class Config:
         orm_mode = True
@@ -285,6 +287,30 @@ class SourceStat(BaseModel):
     conversion_rate: float
 
 
+class ReferralMonth(BaseModel):
+    period:      str   # "YYYY-MM"
+    leads_count: int
+    paid_count:  int
+
+
+class ReferralFunnel(BaseModel):
+    """Hozirgi (jonli) holat bo'yicha bosqichlar: Target → Canceled | Waiting → Comming → Payed."""
+    target:   int
+    canceled: int
+    waiting:  int
+    comming:  int
+    payed:    int
+
+
+class ReferrerStat(BaseModel):
+    referrer_id:   int
+    referrer_name: str
+    total_leads:   int
+    total_paid:    int
+    months:        List[ReferralMonth]
+    funnel:        ReferralFunnel
+
+
 class LeadAnalyticsRead(BaseModel):
     total:        int
     won:          int
@@ -292,6 +318,7 @@ class LeadAnalyticsRead(BaseModel):
     conversion:   float
     distribution: List[FunnelStep]
     sources:      List[SourceStat]
+    referrals:    List[ReferrerStat] = []
 
 
 # ── Intake forms (public lead capture) ──────────────────────────────────────
@@ -341,6 +368,17 @@ class PublicLeadSubmit(BaseModel):
     course_interest: Optional[str] = Field(None, max_length=200)
     parent_phone:    Optional[str] = Field(None, max_length=30)
     notes:           Optional[str] = Field(None, max_length=2000)
+
+
+class FacebookLeadIn(BaseModel):
+    """Make.com Facebook Lead Ads webhook'idan keladigan tana — hamma maydon
+    Optional, chunki Facebook formasida (masalan faqat email so'raydigan
+    formalarda) telefon ham, boshqa maydonlar ham bo'lmasligi mumkin."""
+    full_name:    Optional[str] = Field(None, max_length=200)
+    phone:        Optional[str] = Field(None, max_length=30)
+    email:        Optional[str] = Field(None, max_length=200)
+    form_name:    Optional[str] = Field(None, max_length=200)
+    created_time: Optional[str] = None
 
 
 class BlockUserRequest(BaseModel):
@@ -504,6 +542,7 @@ class StudentRead(BaseModel):
     advance_balance: Optional[Decimal] = Decimal('0')
     is_active: bool
     is_archived: bool = False
+    is_demo: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
     group_count: Optional[int] = 0
@@ -537,6 +576,7 @@ class StudentCreate(BaseModel):
     telegram_user_id: Optional[str] = Field(None, max_length=50)
     notes: Optional[str] = None
     advance: Decimal = Field(Decimal('0'), ge=0)   # avans (yangi ro'yxatda)
+    is_demo: bool = False   # Demo bo'limidan qo'shilsa — hali demo darsga kelmagan
 
 
 class StudentUpdate(BaseModel):
@@ -551,6 +591,7 @@ class StudentUpdate(BaseModel):
     notes: Optional[str] = None
     is_active: Optional[bool] = None
     is_archived: Optional[bool] = None
+    is_demo: Optional[bool] = None
 
 
 # ── Groups ────────────────────────────────────────────────────────────────────
@@ -916,6 +957,34 @@ class SpecialDiscountUpdate(BaseModel):
     reason: Optional[str] = Field(None, max_length=300)
 
 
+# ── Student vacations (talaba ta'tili) ────────────────────────────────────────
+
+class StudentVacationRead(BaseModel):
+    id: int
+    student_id: int
+    start_date: date
+    end_date: date
+    reason: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class StudentVacationCreate(BaseModel):
+    start_date: date
+    end_date: date
+    reason: Optional[str] = Field(None, max_length=300)
+
+    @validator("end_date")
+    def _end_after_start(cls, v, values):
+        start = values.get("start_date")
+        if start and v < start:
+            raise ValueError("Tugash sanasi boshlanish sanasidan oldin bo'lishi mumkin emas")
+        return v
+
+
 # ── Holidays (dam olish kunlari) ──────────────────────────────────────────────
 
 class HolidayRead(BaseModel):
@@ -1250,3 +1319,29 @@ class BotInviteLinkRead(BaseModel):
     tier: str
     link: str
     used: bool
+
+
+class BotChatRead(BaseModel):
+    chat_id: int
+    display_name: str
+    kind: str               # student | staff | unknown
+    last_text: Optional[str] = None
+    last_direction: Optional[str] = None
+    last_sent_ok: bool = True
+    last_at: Optional[datetime] = None
+    message_count: int = 0
+
+
+class BotMessageRead(BaseModel):
+    id: int
+    chat_id: int
+    direction: str
+    full_name: Optional[str] = None
+    username: Optional[str] = None
+    text: Optional[str] = None
+    message_type: str
+    sent_ok: bool
+    created_at: datetime
+
+    class Config:
+        orm_mode = True

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -46,11 +46,13 @@ const fmtDate = (s) => s ? new Date(s).toLocaleString('uz-UZ', { dateStyle: 'sho
 export default function Leads({ currentUser }) {
   const role = currentUser?.role
   const isAdmin = role === 'admin'
-  // Hunter va Sales — faqat o'z lidlari doirasida ishlaydi (backend ham shunday filtrlaydi)
-  const isHunter = role === 'hunter' || role === 'sales'
-  const canAddLead = isHunter || role === 'call_center' || isAdmin
-  const canMove    = isHunter || role === 'call_center' || isAdmin
-  const canDelete  = isHunter || isAdmin
+  const isHunter = role === 'hunter'
+  // Sales — faqat o'z lidlari doirasida ishlaydi (backend ham shunday filtrlaydi)
+  const isSales = role === 'sales'
+  const canAddLead = isHunter || isSales || role === 'call_center' || isAdmin
+  const canMove    = isHunter || isSales || role === 'call_center' || isAdmin
+  const canDelete  = isHunter || isSales || isAdmin
+  const canSeeOwner = isHunter || role === 'call_center' || isAdmin
 
   const [view, setView]     = useState('kanban')     // 'kanban' | 'list'
   const [leads, setLeads]   = useState([])
@@ -279,12 +281,16 @@ export default function Leads({ currentUser }) {
                         {lead.course_interest && <span className="kc-tag">{lead.course_interest}</span>}
                         {lead.source_name && <span className="kc-tag">{lead.source_name}</span>}
                         {lead.interested_group_name && <span className="kc-tag">{lead.interested_group_name}</span>}
-                        {!isHunter && lead.claimed_by_name && <span className="kc-tag">👤 {lead.claimed_by_name}</span>}
-                        {!isHunter && !lead.claimed_by_name && lead.created_by_name && <span className="kc-tag">{lead.created_by_name}</span>}
+                        {canSeeOwner && lead.claimed_by_name && <span className="kc-tag">👤 {lead.claimed_by_name}</span>}
+                        {canSeeOwner && !lead.claimed_by_name && lead.created_by_name && <span className="kc-tag">{lead.created_by_name}</span>}
                       </div>
-                      {lead.callback_at && (
+                      {lead.callback_at ? (
                         <div className="kc-row kc-callback" style={{ marginTop: 6 }}>
                           <FontAwesomeIcon icon={faClockRotateLeft} /> {fmtDate(lead.callback_at)}
+                        </div>
+                      ) : (
+                        <div className="kc-row text-muted" style={{ marginTop: 6, fontSize: 12 }}>
+                          <FontAwesomeIcon icon={faClock} /> {fmtDate(lead.created_at)}
                         </div>
                       )}
                       {lead.is_shared && !lead.claimed_by_id && canMove && (
@@ -301,7 +307,7 @@ export default function Leads({ currentUser }) {
           })}
         </div>
       ) : (
-        <ListView leads={leads} stages={stages} isHunter={isHunter}
+        <ListView leads={leads} stages={stages} canSeeOwner={canSeeOwner}
           canDelete={canDelete} onOpen={openDrawer} onDelete={handleDelete} />
       )}
 
@@ -399,7 +405,7 @@ export default function Leads({ currentUser }) {
 }
 
 // ── List (table) view ──────────────────────────────────────────────────────
-function ListView({ leads, stages, isHunter, canDelete, onOpen, onDelete }) {
+function ListView({ leads, stages, canSeeOwner, canDelete, onOpen, onDelete }) {
   const stageOf = (id) => stages.find(s => s.id === id)
   return (
     <div className="table-wrap">
@@ -408,7 +414,7 @@ function ListView({ leads, stages, isHunter, canDelete, onOpen, onDelete }) {
           <tr>
             <th>#</th><th>Ism Familiya</th><th><FontAwesomeIcon icon={faPhone} /> Telefon</th>
             <th>Manba</th><th>Bosqich</th><th>Vaqt / Izoh</th>
-            {!isHunter && <th>Hunter</th>}<th>Amallar</th>
+            {canSeeOwner && <th>Hunter</th>}<th>Amallar</th>
           </tr>
         </thead>
         <tbody>
@@ -427,10 +433,12 @@ function ListView({ leads, stages, isHunter, canDelete, onOpen, onDelete }) {
                   </span>
                 </td>
                 <td style={{ fontSize: 12, maxWidth: 200 }}>
-                  {lead.callback_at && <div style={{ color: 'var(--warning)', fontWeight: 600 }}>{fmtDate(lead.callback_at)}</div>}
+                  {lead.callback_at
+                    ? <div style={{ color: 'var(--warning)', fontWeight: 600 }}>{fmtDate(lead.callback_at)}</div>
+                    : <div className="text-muted">{fmtDate(lead.created_at)}</div>}
                   {lead.notes && <div className="text-muted" style={{ marginTop: 2 }}>{lead.notes}</div>}
                 </td>
-                {!isHunter && <td className="text-muted" style={{ fontSize: 12 }}>{lead.created_by_name || '—'}</td>}
+                {canSeeOwner && <td className="text-muted" style={{ fontSize: 12 }}>{lead.created_by_name || '—'}</td>}
                 <td className="actions" onClick={e => e.stopPropagation()}>
                   <button className="btn-icon" title="Ochish" onClick={() => onOpen(lead)}><FontAwesomeIcon icon={faPen} /></button>
                   {canDelete && <button className="btn-icon danger" title="O'chirish" onClick={() => onDelete(lead)}><FontAwesomeIcon icon={faTrash} /></button>}
@@ -439,7 +447,7 @@ function ListView({ leads, stages, isHunter, canDelete, onOpen, onDelete }) {
             )
           })}
           {leads.length === 0 && (
-            <tr><td colSpan={isHunter ? 7 : 8} className="muted center py-4">Lidlar topilmadi</td></tr>
+            <tr><td colSpan={canSeeOwner ? 8 : 7} className="muted center py-4">Lidlar topilmadi</td></tr>
           )}
         </tbody>
       </table>
@@ -507,7 +515,7 @@ function LeadDrawer({ lead, stages, activities, canMove, canDelete, currentUser,
                   <FontAwesomeIcon icon={faHandHolding} /> Band qilish
                 </button>
               )}
-              {lead.claimed_by_id && (lead.claimed_by_id === currentUser?.id || currentUser?.role === 'admin') && (
+              {lead.claimed_by_id && (lead.claimed_by_id === currentUser?.id || currentUser?.role === 'admin' || currentUser?.role === 'hunter') && (
                 <button className="button secondary" style={{ flex: 1, justifyContent: 'center' }} onClick={onRelease}>
                   <FontAwesomeIcon icon={faShareNodes} /> Havzaga qaytarish
                 </button>
@@ -743,10 +751,249 @@ function NotificationBell() {
   )
 }
 
+// ── Referral funnel board — draggable nodes, full-page ──────────────────────
+const FF_NODE_W = 190
+const FF_NODE_H = 96
+const FF_DEFAULT_POS = {
+  target:   { x: 60,  y: 260 },
+  canceled: { x: 400, y: 60  },
+  waiting:  { x: 400, y: 260 },
+  comming:  { x: 740, y: 460 },
+  payed:    { x: 1040, y: 460 },
+}
+const FF_STORAGE_KEY = 'ithub_referral_funnel_positions_v1'
+
+const FF_NODE_DEFS = [
+  { key: 'target',   label: 'Kelgan',        color: COLORS.sky },
+  { key: 'canceled', label: 'Bekor qilindi', color: COLORS.red },
+  { key: 'waiting',  label: 'Kutilmoqda',    color: COLORS.amber },
+  { key: 'comming',  label: 'Kelmoqchi',     color: COLORS.violet },
+  { key: 'payed',    label: "To'landi",      color: COLORS.emerald },
+]
+
+const FF_VIEW_DEFAULT = { x: 0, y: 0, scale: 1 }
+const FF_MIN_SCALE = 0.3
+const FF_MAX_SCALE = 2.5
+
+function FunnelBoard({ referrer, onClose }) {
+  const boardRef = useRef(null)
+  const dragRef = useRef(null)   // node drag
+  const panRef = useRef(null)    // whole-board pan
+  const [pos, setPos] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(FF_STORAGE_KEY))
+      return saved?.positions ? { ...FF_DEFAULT_POS, ...saved.positions } : { ...FF_DEFAULT_POS }
+    } catch { return { ...FF_DEFAULT_POS } }
+  })
+  const [view, setView] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(FF_STORAGE_KEY))
+      return saved?.view || { ...FF_VIEW_DEFAULT }
+    } catch { return { ...FF_VIEW_DEFAULT } }
+  })
+  const [panel, setPanel] = useState(null)     // { key, label, color } | null
+  const [panelLeads, setPanelLeads] = useState(null)
+  const [panelLoading, setPanelLoading] = useState(false)
+
+  useEffect(() => {
+    localStorage.setItem(FF_STORAGE_KEY, JSON.stringify({ positions: pos, view }))
+  }, [pos, view])
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  const nodes = FF_NODE_DEFS.map(n => ({ ...n, count: referrer.funnel[n.key] }))
+  const edges = [
+    ['target', 'canceled'], ['target', 'waiting'], ['target', 'comming'],
+    ['waiting', 'comming'], ['comming', 'payed'],
+  ]
+  const center = (k) => ({ x: pos[k].x + FF_NODE_W / 2, y: pos[k].y + FF_NODE_H / 2 })
+
+  function onNodePointerDown(e, key) {
+    e.stopPropagation()
+    dragRef.current = {
+      key, moved: false,
+      startX: e.clientX, startY: e.clientY,
+      startPosX: pos[key].x, startPosY: pos[key].y,
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  function onBoardPointerDown(e) {
+    if (e.target.closest('.ff-node')) return
+    panRef.current = {
+      startX: e.clientX, startY: e.clientY,
+      startViewX: view.x, startViewY: view.y,
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+  }
+  function onPointerMove(e) {
+    if (dragRef.current) {
+      const d = dragRef.current
+      if (Math.abs(e.clientX - d.startX) > 4 || Math.abs(e.clientY - d.startY) > 4) d.moved = true
+      const dx = (e.clientX - d.startX) / view.scale
+      const dy = (e.clientY - d.startY) / view.scale
+      setPos(p => ({ ...p, [d.key]: { x: d.startPosX + dx, y: d.startPosY + dy } }))
+      return
+    }
+    if (panRef.current) {
+      const { startX, startY, startViewX, startViewY } = panRef.current
+      setView(v => ({ ...v, x: startViewX + (e.clientX - startX), y: startViewY + (e.clientY - startY) }))
+    }
+  }
+  function onPointerUp() {
+    const d = dragRef.current
+    dragRef.current = null
+    panRef.current = null
+    if (d && !d.moved) openPanel(d.key)
+  }
+
+  function onWheel(e) {
+    e.preventDefault()
+    const rect = boardRef.current.getBoundingClientRect()
+    const cx = e.clientX - rect.left
+    const cy = e.clientY - rect.top
+    if (e.ctrlKey) {
+      // Trackpadda ikki barmoq bilan pinch (yoki ctrl+scroll) — kursor tagini markaz qilib zoom
+      setView(v => {
+        const factor = Math.exp(-e.deltaY * 0.012)
+        const scale = Math.min(FF_MAX_SCALE, Math.max(FF_MIN_SCALE, v.scale * factor))
+        const k = scale / v.scale
+        return { scale, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k }
+      })
+    } else {
+      // Trackpadda ikki barmoq bilan surish (pan)
+      setView(v => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }))
+    }
+  }
+
+  function zoomBy(factor) {
+    const rect = boardRef.current.getBoundingClientRect()
+    const cx = rect.width / 2, cy = rect.height / 2
+    setView(v => {
+      const scale = Math.min(FF_MAX_SCALE, Math.max(FF_MIN_SCALE, v.scale * factor))
+      const k = scale / v.scale
+      return { scale, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k }
+    })
+  }
+
+  async function openPanel(key) {
+    const node = FF_NODE_DEFS.find(n => n.key === key)
+    setPanel(node)
+    setPanelLeads(null)
+    setPanelLoading(true)
+    try {
+      const params = { referred_by_id: referrer.referrer_id }
+      if (key !== 'target') params.bucket = key
+      const leads = await fetchLeads(params)
+      setPanelLeads(leads)
+    } catch {
+      toast.error("Lidlarni yuklab bo'lmadi")
+      setPanelLeads([])
+    } finally {
+      setPanelLoading(false)
+    }
+  }
+
+  return (
+    <div className="ff-overlay">
+      <div className="ff-header">
+        <div>
+          <h2>{referrer.referrer_name} — taklif qilingan bolalar</h2>
+          <div className="text-muted" style={{ fontSize: 13 }}>
+            {referrer.total_leads} ta lid · {referrer.total_paid} ta to'landi · bo'sh joyni sudrab butun boardni suring, trackpadda ikki barmoq bilan suring/pinch qiling
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="button secondary" onClick={() => { setPos({ ...FF_DEFAULT_POS }); setView({ ...FF_VIEW_DEFAULT }) }}>Joylashuvni tiklash</button>
+          <button className="button" onClick={onClose}><FontAwesomeIcon icon={faXmark} /> Yopish</button>
+        </div>
+      </div>
+      <div className="ff-body">
+        <div
+          className="ff-board"
+          ref={boardRef}
+          onWheel={onWheel}
+          onPointerDown={onBoardPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+        >
+          <div className="ff-canvas" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
+            <svg className="ff-edges">
+              <defs>
+                <marker id="ff-arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+                  <path d="M0,0 L8,4 L0,8 Z" fill="#94a3b8" />
+                </marker>
+              </defs>
+              {edges.map(([a, b]) => {
+                const p1 = center(a), p2 = center(b)
+                const mx = (p1.x + p2.x) / 2
+                return (
+                  <path key={a + b}
+                    d={`M${p1.x},${p1.y} C ${mx},${p1.y} ${mx},${p2.y} ${p2.x},${p2.y}`}
+                    stroke="#94a3b8" strokeWidth="2.5" fill="none" markerEnd="url(#ff-arrowhead)" />
+                )
+              })}
+            </svg>
+            {nodes.map(n => (
+              <div key={n.key} className={`ff-node${panel?.key === n.key ? ' active' : ''}`}
+                style={{ left: pos[n.key].x, top: pos[n.key].y, width: FF_NODE_W, height: FF_NODE_H, '--ff-accent': n.color }}
+                onPointerDown={e => onNodePointerDown(e, n.key)}>
+                <div className="ff-node-label">{n.label}</div>
+                <div className="ff-node-count">{n.count}</div>
+                <div className="ff-node-hint">bosing →</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="ff-zoom">
+            <button className="btn-icon" onClick={() => zoomBy(1 / 1.2)}>−</button>
+            <span>{Math.round(view.scale * 100)}%</span>
+            <button className="btn-icon" onClick={() => zoomBy(1.2)}>+</button>
+          </div>
+        </div>
+
+        {panel && (
+          <div className="ff-panel">
+            <div className="ff-panel-head" style={{ '--ff-accent': panel.color }}>
+              <div>
+                <div className="ff-panel-title">{panel.label}</div>
+                <div className="text-muted" style={{ fontSize: 12 }}>
+                  {panelLeads ? `${panelLeads.length} ta lid` : 'Yuklanmoqda...'}
+                </div>
+              </div>
+              <button className="btn-icon" onClick={() => setPanel(null)}><FontAwesomeIcon icon={faXmark} /></button>
+            </div>
+            <div className="ff-panel-list">
+              {panelLoading && <div className="muted center py-8">Yuklanmoqda...</div>}
+              {!panelLoading && panelLeads && panelLeads.length === 0 && (
+                <div className="muted center py-8">Bu guruhda lid yo'q</div>
+              )}
+              {!panelLoading && panelLeads && panelLeads.map(l => (
+                <div key={l.id} className="ff-panel-row">
+                  <div className="ff-panel-row-name">{l.full_name}</div>
+                  <div className="ff-panel-row-meta">
+                    <span><FontAwesomeIcon icon={faPhone} /> {l.phone}</span>
+                    {l.stage_name && <span className="kc-tag">{l.stage_name}</span>}
+                  </div>
+                  <div className="text-muted" style={{ fontSize: 11.5 }}>{fmtDate(l.created_at)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Analytics view ──────────────────────────────────────────────────────────
 function Analytics() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [boardOpen, setBoardOpen] = useState(null)
 
   useEffect(() => { (async () => {
     try { setData(await fetchLeadAnalytics()) } catch { toast.error("Yuklab bo'lmadi") } finally { setLoading(false) }
@@ -810,6 +1057,65 @@ function Analytics() {
           )}
         </div>
       </div>
+
+      {data.referrals && data.referrals.length > 0 && (
+        <div className="panel-card" style={{ marginTop: 22 }}>
+          <h4>Taklif qilingan bolalar (oylik)</h4>
+          <div className="text-muted" style={{ fontSize: 12, marginBottom: 14 }}>
+            Facebook/Instagram orqali kelgan va shu xodimga bog'langan lidlar — kulrang: kelgan lidlar, yashil: to'lov qilib ro'yxatdan o'tganlar
+          </div>
+          {data.referrals.map(r => {
+            const maxM = Math.max(1, ...r.months.map(m => Math.max(m.leads_count, m.paid_count)))
+            return (
+              <div key={r.referrer_id} style={{ marginBottom: 30 }}>
+                <div className="fr-top" style={{ marginBottom: 10 }}>
+                  <span>{r.referrer_name}</span>
+                  <span className="text-muted">{r.total_leads} ta lid · {r.total_paid} ta to'landi</span>
+                </div>
+                <div className="ff-preview">
+                  {[
+                    { label: 'Kelgan', count: r.funnel.target, color: COLORS.sky },
+                    { label: 'Bekor qilindi', count: r.funnel.canceled, color: COLORS.red },
+                    { label: 'Kutilmoqda', count: r.funnel.waiting, color: COLORS.amber },
+                    { label: 'Kelmoqchi', count: r.funnel.comming, color: COLORS.violet },
+                    { label: "To'landi", count: r.funnel.payed, color: COLORS.emerald },
+                  ].map(chip => (
+                    <div key={chip.label} className="ff-chip" style={{ '--ff-accent': chip.color }}>
+                      <span className="ff-chip-count">{chip.count}</span>
+                      <span className="ff-chip-label">{chip.label}</span>
+                    </div>
+                  ))}
+                  <button className="button secondary" onClick={() => setBoardOpen(r)}>
+                    <FontAwesomeIcon icon={faChartPie} /> To'liq sxema
+                  </button>
+                </div>
+                <div className="text-muted" style={{ fontSize: 11.5, margin: '14px 0 6px' }}>Oylik tarix</div>
+                <div className="bar-chart" style={{ height: 150 }}>
+                  {r.months.map(m => {
+                    const [y, mo] = m.period.split('-')
+                    return (
+                      <div key={m.period} className="bar-col">
+                        <div className="bar-amount">{m.leads_count}</div>
+                        <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end', width: '100%', height: 100 }}>
+                          <div className="bar" style={{ height: Math.max((m.leads_count / maxM) * 100, 3) }}
+                            title={`Lidlar: ${m.leads_count}`} />
+                          <div className="bar" style={{
+                            height: m.paid_count ? Math.max((m.paid_count / maxM) * 100, 3) : 0,
+                            background: COLORS.emerald,
+                          }} title={`To'landi: ${m.paid_count}`} />
+                        </div>
+                        <div className="bar-label">{mo}/{y.slice(2)}</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {boardOpen && <FunnelBoard referrer={boardOpen} onClose={() => setBoardOpen(null)} />}
     </div>
   )
 }

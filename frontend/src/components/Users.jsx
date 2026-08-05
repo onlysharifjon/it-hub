@@ -64,7 +64,6 @@ export default function Users() {
 
   // Permanent delete modal
   const [deleteModal, setDeleteModal] = useState(null)  // null | user object
-  const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [deleting, setDeleting] = useState(false)
 
   // Telegram orqali barcha xodimlarga xabar yuborish
@@ -184,15 +183,10 @@ export default function Users() {
   }
 
   function openDelete(u) {
-    setDeleteConfirmText('')
     setDeleteModal(u)
   }
 
   async function handleDeletePermanent() {
-    if (deleteConfirmText !== deleteModal.username) {
-      toast.error('Username to\'g\'ri kiritilmadi')
-      return
-    }
     setDeleting(true)
     try {
       await deleteUserPermanent(deleteModal.id)
@@ -255,9 +249,9 @@ export default function Users() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(u => (
+              {filtered.map((u, i) => (
                 <tr key={u.id}>
-                  <td className="text-muted">{u.id}</td>
+                  <td className="text-muted">{i + 1}</td>
                   <td style={{ fontWeight: 500 }}>{u.full_name || '—'}</td>
                   <td className="text-muted">{u.username}</td>
                   <td>
@@ -430,19 +424,15 @@ export default function Users() {
                 bazadan butunlay o'chiriladi. Unga bog'liq barcha yozuvlar (to'lov, lid, chegirma va h.k.) o'chirilmaydi,
                 lekin ularga tegishli "kim qildi" ma'lumoti serverda backup faylga saqlanadi.
               </p>
-              <div className="form-group">
-                <label className="form-label">Tasdiqlash uchun username kiriting: <strong>{deleteModal.username}</strong></label>
-                <input className="form-input" value={deleteConfirmText}
-                  onChange={e => setDeleteConfirmText(e.target.value)}
-                  placeholder={deleteModal.username} />
-              </div>
+              <p style={{ fontSize: 14, fontWeight: 600 }}>
+                Rostdan ham <strong>@{deleteModal.username}</strong> ni o'chirmoqchimisiz?
+              </p>
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setDeleteModal(null)}>Bekor</button>
-              <button className="button danger" onClick={handleDeletePermanent}
-                disabled={deleting || deleteConfirmText !== deleteModal.username}>
+              <button className="button danger" onClick={handleDeletePermanent} disabled={deleting}>
                 {deleting ? 'O\'chirilmoqda...' : (
-                  <><FontAwesomeIcon icon={faTrash} /> Butunlay o'chirish</>
+                  <><FontAwesomeIcon icon={faTrash} /> Ha, o'chirish</>
                 )}
               </button>
             </div>

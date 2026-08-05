@@ -135,6 +135,7 @@ class Student(Base):
     advance_balance = Column(Numeric(12, 2), nullable=False, default=0)  # avans (oldindan to'lov)
     is_active = Column(Boolean, nullable=False, default=True)
     is_archived = Column(Boolean, nullable=False, default=False)
+    is_demo = Column(Boolean, nullable=False, default=False, index=True)  # hali demo darsga kelmagan, guruhga biriktirilmagan
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -268,6 +269,9 @@ class LeadSource(Base):
     is_default = Column(Boolean, nullable=False, default=False)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # Bu manbadan kelgan lidlar avtomatik shu xodimga (masalan reklama/SMM
+    # yurituvchi sales) "taklif qilgan" sifatida bog'lanadi — Lead.referred_by_id.
+    referrer_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
 
 class Lead(Base):
@@ -293,12 +297,20 @@ class Lead(Base):
     claimed_at = Column(DateTime, nullable=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Manba (masalan Facebook/Instagram) qaysi sales xodimga tegishli bo'lsa,
+    # lid yaratilganda o'sha manbaning referrer_id'sidan ko'chiriladi —
+    # hunter/call_center keyinchalik claim/close qilsa ham o'zgarmaydi.
+    referred_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    # Referral paid_count'ga faqat BIR MARTA hisoblanishi uchun — bosqich
+    # "To'landi"ga qaytarilib-qaytarilib o'zgartirilsa ham qayta sanalmaydi.
+    referral_credited_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=True)
 
     created_by = relationship("User", foreign_keys=[created_by_id])
     updated_by = relationship("User", foreign_keys=[updated_by_id])
     claimed_by = relationship("User", foreign_keys=[claimed_by_id])
+    referred_by = relationship("User", foreign_keys=[referred_by_id])
     stage = relationship("LeadStage", foreign_keys=[stage_id])
     source = relationship("LeadSource", foreign_keys=[source_id])
     interested_group = relationship("Group", foreign_keys=[interested_group_id])
@@ -322,6 +334,40 @@ class LeadActivity(Base):
 
     lead = relationship("Lead", back_populates="activities")
     author = relationship("User", foreign_keys=[author_id])
+
+
+class LeadReferralStat(Base):
+    """Oylik tarix: har sales xodim (referrer) uchun qancha lid kelgani va
+    qanchasi to'landi — har oy alohida qator, o'tgan oylar qayta hisoblanmaydi."""
+    __tablename__ = "lead_referral_stats"
+    __table_args__ = (UniqueConstraint("referrer_id", "period", name="uq_referral_stat_period"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    referrer_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    period = Column(String(7), nullable=False, index=True)   # "YYYY-MM"
+    leads_count = Column(Integer, nullable=False, default=0)
+    paid_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    referrer = relationship("User", foreign_keys=[referrer_id])
+
+
+class FacebookLead(Base):
+    """Facebook Lead Ads'dan Make.com orqali kelgan xom lidlar (dedup uchun alohida jadval)."""
+    __tablename__ = "facebook_leads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    full_name = Column(String(200), nullable=True)
+    phone = Column(String(30), nullable=True, index=True)  # Facebook'da telefonsiz (faqat email) forma ham bo'lishi mumkin
+    email = Column(String(200), nullable=True)
+    form_name = Column(String(200), nullable=True)
+    source = Column(String(30), nullable=False, default="facebook")
+    created_time = Column(DateTime, nullable=True)     # Facebook'da lid yaratilgan vaqt
+    received_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)  # bizga yetib kelgan vaqt
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True, index=True)  # CRM Lidlar bo'limidagi mos yozuv
+
+    lead = relationship("Lead", foreign_keys=[lead_id])
 
 
 class Reminder(Base):
@@ -533,6 +579,25 @@ class SpecialDiscount(Base):
 
     student = relationship("Student", foreign_keys=[student_id])
     group = relationship("Group", foreign_keys=[group_id])
+    created_by = relationship("User", foreign_keys=[created_by_id])
+
+
+class StudentVacation(Base):
+    """Talabaning ta'til oralig'i — shu kunlarga to'g'ri kelgan darslar oylik
+    to'lovdan chiqarib tashlanadi (core_calc orqali, kurs_narxi/12 * dars soni).
+    Talabaning barcha guruhlariga tegishli (guruh-bazli emas).
+    """
+    __tablename__ = "student_vacations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)
+    reason = Column(String(300), nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    student = relationship("Student", foreign_keys=[student_id])
     created_by = relationship("User", foreign_keys=[created_by_id])
 
 
