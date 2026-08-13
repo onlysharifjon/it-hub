@@ -1111,7 +1111,7 @@ class StudentCoinTotal(BaseModel):
 class CoinDeduct(BaseModel):
     """Admin talabadan coin yechadi (jarima/tuzatish) — manfiy yozuv sifatida saqlanadi."""
     student_id: int
-    amount: int = Field(..., ge=1, le=100000)
+    amount: int = Field(..., ge=1, le=1000)   # CoinGive bilan bir xil chegara
     reason: Optional[str] = Field(None, max_length=300)
 
 

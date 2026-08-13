@@ -2962,9 +2962,14 @@ def _teacher_group_ids(db: Session, actor: models.User) -> set:
 
 
 def _check_academic_target(db: Session, actor: models.User, student_id: int, group_id: Optional[int]) -> None:
-    """Talaba/guruh mavjudligini va teacher faqat o'z guruhida ishlashini tekshiradi."""
-    if not db.query(models.Student).filter(models.Student.id == student_id).first():
+    """Talaba/guruh mavjudligini, talaba faolligini va teacher faqat o'z guruhida
+    ishlashini tekshiradi. group_id berilgan bo'lsa, talaba shu guruhda ekanligi
+    har qanday rol uchun tekshiriladi (faqat teacher uchun emas)."""
+    student = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not student:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    if not student.is_active or student.is_archived:
+        raise HTTPException(status_code=400, detail="Talaba faol emas / arxivlangan")
     if group_id and not db.query(models.Group).filter(models.Group.id == group_id).first():
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
     if actor.role == UserRole.teacher.value:
@@ -2972,6 +2977,7 @@ def _check_academic_target(db: Session, actor: models.User, student_id: int, gro
             raise HTTPException(status_code=400, detail="O'qituvchi uchun guruh tanlanishi shart")
         if group_id not in _teacher_group_ids(db, actor):
             raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
+    if group_id:
         enrolled = db.query(models.GroupStudent).filter(
             models.GroupStudent.group_id == group_id,
             models.GroupStudent.student_id == student_id,
@@ -3457,7 +3463,7 @@ def _teacher_coin_budget(db: Session, teacher_id: int) -> int:
 
 
 def _coins_spent_this_month(db: Session, teacher_id: int, now: Optional[datetime] = None) -> int:
-    now = now or datetime.utcnow()
+    now = now or (datetime.utcnow() + timedelta(hours=5))  # Toshkent vaqti — oy chegarasi mahalliy vaqt bo'yicha
     return int(
         db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0))
         .filter(
@@ -3481,7 +3487,7 @@ def _coin_tx_read(t: models.CoinTransaction) -> schemas.CoinTransactionRead:
 
 @app.get("/coins/summary", response_model=schemas.CoinSummary)
 def coin_summary(db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
-    now = datetime.utcnow()
+    now = datetime.utcnow() + timedelta(hours=5)  # Toshkent vaqti
     spent = _coins_spent_this_month(db, actor.id, now)
     if actor.role == UserRole.teacher.value:
         budget = _teacher_coin_budget(db, actor.id)
@@ -3492,10 +3498,15 @@ def coin_summary(db: Session = Depends(get_db), actor: models.User = Depends(req
 
 @app.post("/coins/give", response_model=schemas.CoinTransactionRead, status_code=201)
 def give_coins(payload: schemas.CoinGive, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    rate_limit(f"coins-give:{actor.id}", limit=30, window=60)
     _check_academic_target(db, actor, payload.student_id, payload.group_id)
 
     # Teacher uchun oylik budjet nazorati (boshqa rollar cheklanmagan)
     if actor.role == UserRole.teacher.value:
+        # Actor qatorini qulflaymiz — shu o'qituvchidan bir vaqtda kelgan
+        # bir nechta so'rov ketma-ket ishlashini ta'minlaydi, aks holda ikkalasi
+        # ham eski "spent"ni ko'rib, birgalikda budjetdan oshib ketishi mumkin.
+        db.query(models.User).filter(models.User.id == actor.id).with_for_update().first()
         budget = _teacher_coin_budget(db, actor.id)
         remaining = budget - _coins_spent_this_month(db, actor.id)
         if payload.amount > remaining:
@@ -3503,6 +3514,9 @@ def give_coins(payload: schemas.CoinGive, db: Session = Depends(get_db), actor: 
                 status_code=400,
                 detail=f"Coin yetarli emas: qoldiq {max(0, remaining)} (har oy 1-sanada {budget} ga to'ladi)",
             )
+
+    _reject_if_duplicate_coin_tx(db, student_id=payload.student_id, teacher_id=actor.id,
+                                  amount=payload.amount, reason=payload.reason)
 
     t = models.CoinTransaction(
         student_id=payload.student_id, teacher_id=actor.id, group_id=payload.group_id,
@@ -3522,6 +3536,26 @@ def give_coins(payload: schemas.CoinGive, db: Session = Depends(get_db), actor: 
     return _coin_tx_read(t)
 
 
+def _reject_if_duplicate_coin_tx(db: Session, *, student_id: int, teacher_id: int, amount: int, reason: Optional[str]) -> None:
+    """Ikki marta bosish / tarmoq qayta yuborishi bilan bir xil yozuv ikki marta
+    tushib qolmasligi uchun — so'nggi 5 soniyada aynan bir xil (talaba, muallif,
+    summa, sabab) tranzaksiya bo'lgan bo'lsa, so'rovni rad etamiz."""
+    cutoff = datetime.utcnow() - timedelta(seconds=5)
+    dup = (
+        db.query(models.CoinTransaction.id)
+        .filter(
+            models.CoinTransaction.student_id == student_id,
+            models.CoinTransaction.teacher_id == teacher_id,
+            models.CoinTransaction.amount == amount,
+            models.CoinTransaction.reason == reason,
+            models.CoinTransaction.created_at >= cutoff,
+        )
+        .first()
+    )
+    if dup:
+        raise HTTPException(status_code=409, detail="Bir xil amal bir necha soniya ichida allaqachon bajarilgan")
+
+
 def _student_coin_total(db: Session, student_id: int) -> int:
     return int(
         db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0))
@@ -3533,13 +3567,22 @@ def _student_coin_total(db: Session, student_id: int) -> int:
 @app.post("/coins/deduct", response_model=schemas.CoinTransactionRead, status_code=201)
 def deduct_coins(payload: schemas.CoinDeduct, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
     """Talabadan coin yechish (jarima/tuzatish) — faqat admin. Manfiy yozuv sifatida saqlanadi."""
-    student = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
+    rate_limit(f"coins-deduct:{actor.id}", limit=30, window=60)
+    # Talaba qatorini qulflaymiz — bir vaqtda kelgan bir nechta yechish so'rovi
+    # ketma-ket ishlaydi, aks holda ikkalasi ham eski balansni ko'rib balans
+    # manfiyga tushib ketishi mumkin.
+    student = db.query(models.Student).filter(models.Student.id == payload.student_id).with_for_update().first()
     if not student:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    if not student.is_active or student.is_archived:
+        raise HTTPException(status_code=400, detail="Talaba faol emas / arxivlangan")
 
     total = _student_coin_total(db, payload.student_id)
     if payload.amount > total:
         raise HTTPException(status_code=400, detail=f"Talabada faqat {max(0, total)} coin bor — balans manfiy bo'lolmaydi")
+
+    _reject_if_duplicate_coin_tx(db, student_id=payload.student_id, teacher_id=actor.id,
+                                  amount=-payload.amount, reason=payload.reason)
 
     t = models.CoinTransaction(
         student_id=payload.student_id, teacher_id=actor.id, group_id=None,
@@ -3588,8 +3631,15 @@ def coin_totals(db: Session = Depends(get_db), actor: models.User = Depends(requ
     )
     if actor.role == UserRole.teacher.value:
         gids = _teacher_group_ids(db, actor) or {0}
-        q = q.join(models.GroupStudent, models.GroupStudent.student_id == models.Student.id) \
-             .filter(models.GroupStudent.group_id.in_(gids)).group_by(models.Student.id)
+        # DISTINCT student_id filtri — talaba bir nechta guruhda bo'lsa ham,
+        # to'g'ridan-to'g'ri JOIN orqali qatorlarni ko'paytirib yubormaydi
+        # (aks holda SUM() har bir mos guruh uchun tranzaksiyani qayta sanaydi).
+        student_ids = (
+            db.query(models.GroupStudent.student_id)
+            .filter(models.GroupStudent.group_id.in_(gids))
+            .distinct()
+        )
+        q = q.filter(models.Student.id.in_(student_ids))
     rows = q.order_by(func.sum(models.CoinTransaction.amount).desc()).limit(100).all()
     return [schemas.StudentCoinTotal(student_id=r[0], student_name=r[1], total=int(r[2])) for r in rows]
 
