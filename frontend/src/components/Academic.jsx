@@ -152,6 +152,7 @@ export default function Academic({ currentUser }) {
         if (!form.student_id) throw new Error('Talabani tanlang')
         const amount = parseInt(form.amount)
         if (!amount || amount < 1) throw new Error('Coin miqdorini kiriting')
+        if (amount > 1000) throw new Error("Bir amalda maksimal 1000 coin berish/yechish mumkin")
         if (coinMode === 'deduct') {
           await deductCoins({
             student_id: parseInt(form.student_id),
@@ -550,7 +551,7 @@ export default function Academic({ currentUser }) {
               {tab === 'coins' && (
                 <>
                   <label>Coin miqdori *</label>
-                  <input className="field" type="number" min="1" value={form.amount}
+                  <input className="field" type="number" min="1" max="1000" value={form.amount}
                     onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
                     placeholder={coinMode === 'give' && coinSummary?.remaining != null ? `Maks. ${coinSummary.remaining}` : '50'} />
                   {coinMode === 'deduct' ? (

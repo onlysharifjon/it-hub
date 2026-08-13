@@ -18,7 +18,9 @@ async function request(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), ...options })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
-    const msg = typeof err.detail === 'string' ? err.detail : 'Server xatosi'
+    let msg = 'Server xatosi'
+    if (typeof err.detail === 'string') msg = err.detail
+    else if (Array.isArray(err.detail)) msg = err.detail.map(d => d.msg).filter(Boolean).join('; ') || msg
     const error = Object.assign(new Error(msg), { status: res.status })
     if (err.detail && typeof err.detail === 'object') error.detail = err.detail
     throw error
