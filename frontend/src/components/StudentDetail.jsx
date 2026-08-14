@@ -13,11 +13,11 @@ import {
   getStudent, updateStudent, uploadStudentPhoto, archiveStudent, unarchiveStudent,
   fetchStudentCameraAttendance, fetchStudentPaymentSummary,
   fetchStudentVacations, createStudentVacation, deleteStudentVacation,
-  fetchGroups, addStudentToGroup, checkStudentTelegram, API_BASE,
+  fetchGroups, addStudentToGroup, checkStudentTelegram, API_BASE, tashkentToday,
 } from '../api'
 
 const fmtSum = n => Number(n || 0).toLocaleString('uz-UZ')
-const VAC_TODAY = new Date().toISOString().slice(0, 10)
+const VAC_TODAY = tashkentToday()
 
 export default function StudentDetail({ student: studentProp, onBack, currentUser, onChanged }) {
   const isHunter = currentUser?.role === 'hunter' || currentUser?.role === 'admin'

@@ -543,6 +543,7 @@ class StudentRead(BaseModel):
     is_active: bool
     is_archived: bool = False
     is_demo: bool = False
+    sales_credited: bool = False   # sales rolidagi xodimga allaqachon +1 hisoblanganmi
     created_at: datetime
     updated_at: Optional[datetime] = None
     group_count: Optional[int] = 0
@@ -711,6 +712,7 @@ class PaymentRead(BaseModel):
     year: int
     paid_at: datetime
     notes: Optional[str] = None
+    via_sales: bool = False
     recorded_by_name: Optional[str] = None    # kim qabul qilgan
     # Oylik qarz holati (student-group-month bo'yicha):
     expected: Optional[Decimal] = None    # to'liq oylik summa
@@ -732,6 +734,7 @@ class PaymentCreate(BaseModel):
     month: int = Field(..., ge=1, le=12)
     year: int = Field(..., ge=2020)
     notes: Optional[str] = None
+    via_sales: bool = False
 
 
 class PaymentUpdate(BaseModel):
@@ -739,6 +742,7 @@ class PaymentUpdate(BaseModel):
     month: Optional[int] = Field(None, ge=1, le=12)
     year: Optional[int] = Field(None, ge=2020)
     notes: Optional[str] = None
+    via_sales: Optional[bool] = None
 
 
 # ── Expenses ──────────────────────────────────────────────────────────────────

@@ -5,9 +5,9 @@ import {
   faBell, faRightToBracket, faRightFromBracket,
   faCamera, faMagnifyingGlass,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchStudents, fetchVisits, createVisit, uploadStudentPhoto, API_BASE } from '../api'
+import { fetchStudents, fetchVisits, createVisit, uploadStudentPhoto, API_BASE, tashkentToday } from '../api'
 
-const TODAY_STR = new Date().toISOString().slice(0, 10)
+const TODAY_STR = tashkentToday()
 
 export default function Notifications() {
   const [students, setStudents] = useState([])

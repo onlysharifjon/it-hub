@@ -3,7 +3,7 @@ import html
 import json
 import os
 from uuid import uuid4
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal
 from typing import List, Optional
 import io
@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
+import fastapi.encoders as _fastapi_encoders
 import bcrypt as _bcrypt
 from jose import JWTError, jwt
 from sqlalchemy import func, extract
@@ -24,6 +25,21 @@ from .database import get_db
 from .models import UserRole
 
 load_dotenv()
+
+# ── Vaqt zonasi: bazadagi barcha datetime'lar UTC (datetime.utcnow()) sifatida
+# saqlanadi (JWT va boshqa ichki hisob-kitoblar shunga tayanadi — o'zgarmaydi),
+# lekin API javoblarida Toshkent (+05:00) offset bilan chiqariladi — frontend
+# hech qanday qo'shimcha konversiyasiz to'g'ri mahalliy vaqtni ko'rsatadi.
+TASHKENT_TZ = timezone(timedelta(hours=5))
+
+
+def _tashkent_isoformat(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(TASHKENT_TZ).isoformat()
+
+
+_fastapi_encoders.ENCODERS_BY_TYPE[datetime] = _tashkent_isoformat
 
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
 ALGORITHM = "HS256"
@@ -1064,6 +1080,7 @@ def _student_read(s: models.Student, pay: Optional[tuple] = None) -> schemas.Stu
         telegram_id=s.telegram_id, telegram_user_id=s.telegram_user_id,
         photo=s.photo, notes=s.notes, is_active=s.is_active,
         is_archived=s.is_archived, is_demo=s.is_demo, advance_balance=s.advance_balance,
+        sales_credited=s.sales_credited_at is not None,
         created_at=s.created_at, updated_at=s.updated_at, group_count=len(s.group_memberships),
         group_names=[m.group.name for m in s.group_memberships if m.group],
         owed_month=owed, paid_month=paid, debt=debt, payment_status=pstatus,
@@ -1445,6 +1462,7 @@ def _payment_read(p: models.Payment, db: Optional[Session] = None) -> schemas.Pa
         amount=p.amount, month=p.month, year=p.year,
         paid_at=p.paid_at, notes=p.notes,
         recorded_by_name=(p.recorded_by.full_name or p.recorded_by.username) if p.recorded_by else None,
+        via_sales=p.via_sales,
         expected=expected, paid_total=paid_total, remaining=remaining, status=status,
     )
 
@@ -1583,6 +1601,20 @@ def create_payment(payload: schemas.PaymentCreate, db: Session = Depends(get_db)
     db.flush()
     write_audit(db, entity_type="payment", entity_id=p.id, action="create",
                 changed_by_id=actor.id, new_value=payload.dict())
+    # "Sales" tugmasi bosilgan bo'lsa — sales rolidagi xodimga har talaba uchun
+    # FAQAT BIR MARTA (referral tizimidagi kabi) paid_count +1 qo'shiladi.
+    if payload.via_sales:
+        student = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
+        if student and student.sales_credited_at is None:
+            sales_user = (
+                db.query(models.User)
+                .filter(models.User.role == UserRole.sales.value, models.User.is_active == True)  # noqa: E712
+                .order_by(models.User.id)
+                .first()
+            )
+            if sales_user:
+                student.sales_credited_at = datetime.utcnow()
+                _bump_referral_stat(db, sales_user.id, paid_delta=1)
     # Ota-onalarga bildirishnoma
     _amount = int(Decimal(str(payload.amount)))
     notify_parents_of_student(
@@ -1607,6 +1639,20 @@ def update_payment(payment_id: int, payload: schemas.PaymentUpdate, db: Session 
     write_audit(db, entity_type="payment", entity_id=p.id, action="update",
                 changed_by_id=actor.id, old_value=old,
                 new_value={k: str(v) for k, v in changes.items()})
+    # To'lab bo'lingan (bo'lib-bo'lib to'lagan) talabalar uchun ham "Sales"
+    # belgisi keyinroq tahrirlanishi mumkin — create'dagi kabi FAQAT BIR MARTA hisoblanadi.
+    if changes.get("via_sales"):
+        student = db.query(models.Student).filter(models.Student.id == p.student_id).first()
+        if student and student.sales_credited_at is None:
+            sales_user = (
+                db.query(models.User)
+                .filter(models.User.role == UserRole.sales.value, models.User.is_active == True)  # noqa: E712
+                .order_by(models.User.id)
+                .first()
+            )
+            if sales_user:
+                student.sales_credited_at = datetime.utcnow()
+                _bump_referral_stat(db, sales_user.id, paid_delta=1)
     db.commit()
     db.refresh(p)
     return _payment_read(p, db)
@@ -3987,6 +4033,7 @@ def list_leads(
     stage: Optional[str] = Query(None),      # stage.slug bo'yicha filtr
     source_id: Optional[int] = Query(None),
     pool: bool = Query(False),               # faqat umumiy havza (band qilinmagan)
+    today: bool = Query(False),              # faqat bugun kelishi/qo'ng'iroq qilinishi kerak bo'lganlar
     search: Optional[str] = Query(None),
     referred_by_id: Optional[int] = Query(None),
     bucket: Optional[str] = Query(None),     # referral funnel qutisi: canceled|waiting|comming|payed|target
@@ -4017,6 +4064,12 @@ def list_leads(
         q = q.filter(models.Lead.referred_by_id == referred_by_id)
     if bucket and bucket in _FUNNEL_BUCKET_STATUSES:
         q = q.filter(models.Lead.status.in_(_FUNNEL_BUCKET_STATUSES[bucket]))
+    if today:
+        now_tashkent = datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
+        day_start_tashkent = now_tashkent.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start_utc = day_start_tashkent.astimezone(timezone.utc).replace(tzinfo=None)
+        day_end_utc = day_start_utc + timedelta(days=1)
+        q = q.filter(models.Lead.callback_at >= day_start_utc, models.Lead.callback_at < day_end_utc)
     if search:
         q = q.filter(
             models.Lead.full_name.ilike(f"%{search}%") |

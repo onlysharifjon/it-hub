@@ -136,6 +136,9 @@ class Student(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     is_archived = Column(Boolean, nullable=False, default=False)
     is_demo = Column(Boolean, nullable=False, default=False, index=True)  # hali demo darsga kelmagan, guruhga biriktirilmagan
+    # Sales orqali jalb qilingan talaba — to'lov qo'shishda "Sales" tugmasi bosilsa
+    # belgilanadi, LeadReferralStat.paid_count'ga faqat BIR MARTA hisoblanadi.
+    sales_credited_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -199,6 +202,7 @@ class Payment(Base):
     paid_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     notes = Column(Text, nullable=True)                                   # to'lov izohi
     recorded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # kim qabul qilgan
+    via_sales = Column(Boolean, nullable=False, default=False)  # "Sales" tugmasi bosilganmi (audit uchun)
 
     student = relationship("Student", back_populates="payments")
     group = relationship("Group", back_populates="payments")

@@ -1,5 +1,11 @@
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
+// "Bugun" — Toshkent (+05:00) taqvim sanasi, brauzer/server UTC bo'lsa ham
+// yarim tundan ertalab 5 gachagi oraliqda noto'g'ri kunni ko'rsatmasligi uchun.
+export function tashkentToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tashkent' }).format(new Date())
+}
+
 let token = localStorage.getItem('token') || ''
 
 export function setToken(newToken) {
@@ -73,6 +79,8 @@ export async function fetchLeads(params = {}) {
   if (params.source_id) q.set('source_id', params.source_id)
   if (params.referred_by_id) q.set('referred_by_id', params.referred_by_id)
   if (params.bucket)    q.set('bucket', params.bucket)
+  if (params.pool)      q.set('pool', 'true')
+  if (params.today)     q.set('today', 'true')
   return request(`/leads${q.toString() ? '?' + q : ''}`)
 }
 export async function createLead(p)                    { return request('/leads', { method: 'POST', body: JSON.stringify(p) }) }

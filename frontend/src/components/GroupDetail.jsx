@@ -7,7 +7,7 @@ import {
   faUserGraduate, faChartBar, faTag, faBookOpen, faPaperPlane,
   faVideo, faArrowRightToBracket, faArrowRightFromBracket,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework, fetchGroupCameraAttendance } from '../api'
+import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework, fetchGroupCameraAttendance, tashkentToday } from '../api'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
@@ -187,7 +187,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   const students = data?.students || []
   const totalLessons = dates.length
 
-  const TODAY_STR = NOW.toISOString().slice(0, 10)
+  const TODAY_STR = tashkentToday()
   const attendanceDatesSet = new Set(dates)
   const schedSet = scheduledWeekdays(group.schedule)
   const isScheduledDay = (d) => !!schedSet && schedSet.has(new Date(`${d}T00:00:00`).getDay())

@@ -12,7 +12,7 @@ import {
 import {
   fetchStudents, createStudent, updateStudent, archiveStudent, unarchiveStudent, fetchStudentCameraAttendance,
   fetchStudentVacations, createStudentVacation, deleteStudentVacation,
-  fetchGroups, addStudentToGroup, checkStudentTelegram,
+  fetchGroups, addStudentToGroup, checkStudentTelegram, tashkentToday,
 } from '../api'
 import Pagination from './Pagination'
 import DateFilter from './DateFilter'
@@ -662,7 +662,7 @@ function RecordPaymentModal({ student, onClose, onSaved }) {
 }
 
 // ── Ta'til belgilash oynasi (hunter/admin) ──────────────────────────────────
-const VAC_TODAY = new Date().toISOString().slice(0, 10)
+const VAC_TODAY = tashkentToday()
 
 function VacationModal({ student, onClose }) {
   const [vacations, setVacations] = useState([])

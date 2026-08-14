@@ -45,8 +45,8 @@ function Sidebar({
   const { theme, setTheme } = useTheme()
   const fileInputRef = useRef(null)
 
-  // Yangi (hal qilinmagan) o'quvchi izohlari soni — qizil badge (hunter/call_center/admin)
-  const canSeeFeedbacks = isHunter || isCallCenter || isAdmin
+  // Yangi (hal qilinmagan) o'quvchi izohlari soni — qizil badge (call_center/admin; hunter ko'rmaydi)
+  const canSeeFeedbacks = isCallCenter || isAdmin
   const [feedbackCount, setFeedbackCount] = useState(0)
   useEffect(() => {
     if (!canSeeFeedbacks) return
@@ -196,22 +196,10 @@ function Sidebar({
           </>
         )}
 
-        {/* Hunter — Tariflar, Special va To'lovlar */}
+        {/* Hunter — To'lovlar (Tariflar va Special olib tashlandi) */}
         {isHunter && (
           <>
             <div className="nav-section-label">Narxlar</div>
-            <button
-              className={`nav-page-btn ${activePage === 'tariffs' ? 'active' : ''}`}
-              onClick={() => onNavigate('tariffs')}
-            >
-              <FontAwesomeIcon icon={faTag} fixedWidth /> Kurs tariflari
-            </button>
-            <button
-              className={`nav-page-btn ${activePage === 'special' ? 'active' : ''}`}
-              onClick={() => onNavigate('special')}
-            >
-              <FontAwesomeIcon icon={faStar} fixedWidth /> Special
-            </button>
             <button
               className={`nav-page-btn ${activePage === 'payments' ? 'active' : ''}`}
               onClick={() => onNavigate('payments')}
@@ -285,8 +273,8 @@ function Sidebar({
           </>
         )}
 
-        {/* Akademik — teacher + metodist + hunter + admin (baholar, izohlar, sertifikatlar, tadbirlar) */}
-        {!isCallCenter && !isSales && !isAudit && (
+        {/* Akademik — teacher + metodist + admin (baholar, izohlar, sertifikatlar, tadbirlar); hunter ko'rmaydi */}
+        {!isCallCenter && !isSales && !isAudit && !isHunter && (
           <>
             <div className="nav-section-label mt-3">Akademik</div>
             <button

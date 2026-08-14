@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faTrash, faFileExcel, faCreditCard,
   faChevronDown, faFilter, faPrint, faMoneyBillWave, faPen,
-  faTriangleExclamation, faList, faBolt,
+  faTriangleExclamation, faList, faBolt, faBullseye,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchPayments, createPayment, updatePayment, deletePayment, fetchStudents, fetchGroups,
@@ -15,7 +15,7 @@ import DateFilter from './DateFilter'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
-const EMPTY = { student_id: '', group_id: '', amount: '', month: NOW.getMonth() + 1, year: NOW.getFullYear(), notes: '' }
+const EMPTY = { student_id: '', group_id: '', amount: '', month: NOW.getMonth() + 1, year: NOW.getFullYear(), notes: '', via_sales: false }
 
 export default function Payments({ currentUser }) {
   const isAdmin = currentUser?.role === 'admin'
@@ -76,6 +76,7 @@ export default function Payments({ currentUser }) {
         month: filter.month,
         year: filter.year,
         notes: '',
+        via_sales: false,
       })
       setModal(true)
     } catch (e) { toast.error(e.message) }
@@ -138,6 +139,7 @@ export default function Payments({ currentUser }) {
           month: parseInt(form.month),
           year: parseInt(form.year),
           notes: form.notes || null,
+          via_sales: !!form.via_sales,
         })
         toast.success("To'lov yangilandi")
       } else {
@@ -148,6 +150,7 @@ export default function Payments({ currentUser }) {
           month: parseInt(form.month),
           year: parseInt(form.year),
           notes: form.notes || null,
+          via_sales: !!form.via_sales,
         })
         toast.success("To'lov qo'shildi")
       }
@@ -168,6 +171,7 @@ export default function Payments({ currentUser }) {
       month: p.month,
       year: p.year,
       notes: p.notes || '',
+      via_sales: !!p.via_sales,
     })
     setModal(true)
   }
@@ -320,7 +324,14 @@ export default function Payments({ currentUser }) {
                 {payments.map((p, i) => (
                   <tr key={p.id}>
                     <td className="text-muted">{(page - 1) * 25 + i + 1}</td>
-                    <td>{p.student_name}</td>
+                    <td>
+                      {p.student_name}
+                      {p.via_sales && (
+                        <span className="badge" style={{ marginLeft: 6, background: '#dcfce7', color: '#16a34a' }} title="Sales orqali jalb qilingan">
+                          <FontAwesomeIcon icon={faBullseye} /> Sales
+                        </span>
+                      )}
+                    </td>
                     <td>{p.group_name}</td>
                     <td className="amount">{Number(p.amount).toLocaleString()} so'm</td>
                     <td>
@@ -377,6 +388,28 @@ export default function Payments({ currentUser }) {
                 <option value="">— Tanlang —</option>
                 {students.map(s => <option key={s.id} value={s.id}>{s.full_name} ({s.phone1})</option>)}
               </select>
+              {(() => {
+                const selectedStudent = students.find(s => String(s.id) === String(form.student_id))
+                // Tahrirlashda joriy to'lov o'zi hisoblagan bo'lishi mumkin — shu holda
+                // hali ham o'chirib qo'yish (belgini olib tashlash) imkoni qoldiriladi.
+                const alreadyCredited = !!selectedStudent?.sales_credited && !(editing && form.via_sales)
+                return (
+                  <>
+                    <label>Sales</label>
+                    <button
+                      type="button"
+                      className={`button small ${form.via_sales || alreadyCredited ? 'primary' : 'secondary'}`}
+                      disabled={alreadyCredited}
+                      style={form.via_sales || alreadyCredited ? { background: '#16a34a', borderColor: '#16a34a' } : undefined}
+                      title={alreadyCredited ? "Bu talaba uchun Sales'ga allaqachon hisoblangan" : "Bu talabani sales rolidagi xodim jalb qilgan bo'lsa bosing"}
+                      onClick={() => setForm(p => ({ ...p, via_sales: !p.via_sales }))}
+                    >
+                      <FontAwesomeIcon icon={faBullseye} />{' '}
+                      {alreadyCredited ? 'Sales — hisoblangan ✓' : form.via_sales ? 'Sales — belgilandi' : 'Sales'}
+                    </button>
+                  </>
+                )
+              })()}
               <label>Guruh *</label>
               <select className="field" value={form.group_id} disabled={!!editing} onChange={e => setForm(p => ({ ...p, group_id: e.target.value }))}>
                 <option value="">— Tanlang —</option>

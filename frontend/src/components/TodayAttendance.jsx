@@ -6,9 +6,9 @@ import {
   faArrowLeft, faUsers, faChalkboardTeacher, faCalendarDay,
   faUmbrellaBeach, faPlus, faTrash,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchTodayGroups, fetchAttendance, saveAttendance, fetchHolidays, createHoliday, deleteHoliday } from '../api'
+import { fetchTodayGroups, fetchAttendance, saveAttendance, fetchHolidays, createHoliday, deleteHoliday, tashkentToday } from '../api'
 
-const TODAY_STR = new Date().toISOString().slice(0, 10)
+const TODAY_STR = tashkentToday()
 const DAY_NAMES = ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba']
 
 function formatDateLabel(dateStr) {

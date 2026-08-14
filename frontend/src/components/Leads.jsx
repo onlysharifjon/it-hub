@@ -47,6 +47,7 @@ export default function Leads({ currentUser }) {
   const role = currentUser?.role
   const isAdmin = role === 'admin'
   const isHunter = role === 'hunter'
+  const isCallCenter = role === 'call_center'
   // Sales — faqat o'z lidlari doirasida ishlaydi (backend ham shunday filtrlaydi)
   const isSales = role === 'sales'
   const canAddLead = isHunter || isSales || role === 'call_center' || isAdmin
@@ -71,6 +72,7 @@ export default function Leads({ currentUser }) {
   const [stageModal, setStageModal] = useState(false)
   const [formModal, setFormModal]   = useState(false)
   const [poolMode, setPoolMode]     = useState(false)
+  const [todayMode, setTodayMode]   = useState(false)
   const [groups, setGroups]         = useState([])
 
   const [dragId, setDragId]       = useState(null)
@@ -90,19 +92,28 @@ export default function Leads({ currentUser }) {
     finally { setLoading(false) }
   }
 
-  async function load(pool = poolMode) {
+  async function load(pool = poolMode, today = todayMode) {
     const data = await fetchLeads({
       search: search || undefined,
       source_id: filterSource || undefined,
       pool: pool || undefined,
+      today: today || undefined,
     })
     setLeads(data)
   }
   function togglePool() {
     const next = !poolMode
     setPoolMode(next)
+    if (next) setTodayMode(false)
     setLoading(true)
-    load(next).catch(() => toast.error("Yuklab bo'lmadi")).finally(() => setLoading(false))
+    load(next, next ? false : todayMode).catch(() => toast.error("Yuklab bo'lmadi")).finally(() => setLoading(false))
+  }
+  function toggleToday() {
+    const next = !todayMode
+    setTodayMode(next)
+    if (next) setPoolMode(false)
+    setLoading(true)
+    load(next ? false : poolMode, next).catch(() => toast.error("Yuklab bo'lmadi")).finally(() => setLoading(false))
   }
   async function reload() {
     setLoading(true)
@@ -228,6 +239,11 @@ export default function Leads({ currentUser }) {
         <button className={`df-preset${poolMode ? ' active' : ''}`} onClick={togglePool} title="Band qilinmagan umumiy lidlar">
           <FontAwesomeIcon icon={faInbox} /> Umumiy havza
         </button>
+        {(isHunter || isCallCenter) && (
+          <button className={`df-preset${todayMode ? ' active' : ''}`} onClick={toggleToday} title="Faqat bugun kelishi kerak bo'lgan lidlar">
+            <FontAwesomeIcon icon={faClock} /> Bugun
+          </button>
+        )}
         <span style={{ flex: 1 }} />
         <div className="view-toggle">
           <button className={view === 'kanban' ? 'active' : ''} onClick={() => setView('kanban')}>
