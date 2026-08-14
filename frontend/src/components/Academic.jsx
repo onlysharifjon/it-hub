@@ -503,7 +503,16 @@ export default function Academic({ currentUser }) {
 
                   <label>Talaba *</label>
                   <select className="field" value={form.student_id}
-                    onChange={e => setForm(p => ({ ...p, student_id: e.target.value }))}>
+                    onChange={e => {
+                      const sid = e.target.value
+                      setForm(p => {
+                        if (p.group_id || !sid) return { ...p, student_id: sid }
+                        // Guruh tanlanmagan bo'lsa (masalan teacher to'g'ridan-to'g'ri talabani tanlasa),
+                        // talaba tegishli guruhni avtomatik aniqlaymiz — aks holda backend teacher uchun guruh talab qiladi.
+                        const owner = options.find(o => o.students.some(s => String(s.id) === sid))
+                        return { ...p, student_id: sid, group_id: owner ? String(owner.group_id) : p.group_id }
+                      })
+                    }}>
                     <option value="">— Tanlang —</option>
                     {formStudents.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
                   </select>
