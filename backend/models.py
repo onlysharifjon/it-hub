@@ -742,6 +742,7 @@ class CoinTransaction(Base):
 
     student = relationship("Student", foreign_keys=[student_id])
     teacher = relationship("User", foreign_keys=[teacher_id])
+    group = relationship("Group", foreign_keys=[group_id])
 
 
 class DisciplineCode(Base):
