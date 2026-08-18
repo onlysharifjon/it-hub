@@ -11,7 +11,7 @@ import {
   fetchFeedbacks, createFeedback, updateFeedback, deleteFeedback,
   fetchCertificates, createCertificate, updateCertificate, deleteCertificate, uploadCertificatePdf,
   fetchEvents, createEvent, updateEvent, deleteEvent,
-  fetchCoinSummary, giveCoins, deductCoins, fetchCoinTransactions, fetchCoinTotals,
+  fetchCoinSummary, giveCoins, deductCoins, fetchCoinTransactions, fetchCoinTotals, cancelCoinTransaction,
 } from '../api'
 
 const EXAM_TYPES = { exam: 'Imtihon', test: 'Test', quiz: 'Quiz', project: 'Loyiha' }
@@ -195,6 +195,15 @@ export default function Academic({ currentUser }) {
     } catch (e) { toast.error(e.message) }
   }
 
+  async function handleCancelCoin(t) {
+    if (!confirm(`${Math.abs(t.amount)} coinlik yozuv bekor qilinadi. Tasdiqlaysizmi?`)) return
+    try {
+      await cancelCoinTransaction(t.id)
+      toast.success('Bekor qilindi')
+      load()
+    } catch (e) { toast.error(e.message) }
+  }
+
   async function handlePdfFile(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -336,7 +345,7 @@ export default function Academic({ currentUser }) {
             {tab === 'coins' && (
               <>
                 <thead>
-                  <tr><th>#</th><th>Talaba</th><th>Guruh</th><th>Coin</th><th>Sabab</th><th>Kim berdi</th><th>Sana</th></tr>
+                  <tr><th>#</th><th>Talaba</th><th>Guruh</th><th>Coin</th><th>Sabab</th><th>Kim berdi</th><th>Sana</th><th></th></tr>
                 </thead>
                 <tbody>
                   {items.map((t, i) => (
@@ -354,9 +363,16 @@ export default function Academic({ currentUser }) {
                       <td>{t.reason || <span className="text-muted">—</span>}</td>
                       <td className="text-muted">{t.teacher_name || '—'}</td>
                       <td>{fmtDate(t.created_at)}</td>
+                      <td>
+                        {(isAdmin || t.teacher_id === currentUser?.id) && (
+                          <button className="btn-icon danger" title="Bekor qilish" onClick={() => handleCancelCoin(t)}>
+                            <FontAwesomeIcon icon={faTrash} />
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
-                  {items.length === 0 && <tr><td colSpan={7} className="muted center py-4">Hali coin berilmagan</td></tr>}
+                  {items.length === 0 && <tr><td colSpan={8} className="muted center py-4">Hali coin berilmagan</td></tr>}
                 </tbody>
               </>
             )}

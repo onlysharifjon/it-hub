@@ -304,6 +304,12 @@ function Sidebar({
           <>
             <div className="nav-section-label mt-3">Audit</div>
             <button
+              className={`nav-page-btn ${activePage === 'employees' ? 'active' : ''}`}
+              onClick={() => onNavigate('employees')}
+            >
+              <FontAwesomeIcon icon={faUsers} fixedWidth /> Xodimlar
+            </button>
+            <button
               className={`nav-page-btn ${activePage === 'audit_warnings' ? 'active' : ''}`}
               onClick={() => onNavigate('audit_warnings')}
             >

@@ -931,6 +931,9 @@ def list_tariffs(db: Session = Depends(get_db), _: models.User = Depends(require
 def create_tariff(payload: schemas.TariffCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_hunter)):
     t = models.Tariff(**payload.dict())
     db.add(t)
+    db.flush()
+    write_audit(db, entity_type="tariff", entity_id=t.id, action="create",
+                changed_by_id=actor.id, new_value=payload.dict())
     db.commit()
     db.refresh(t)
     return t
@@ -941,8 +944,12 @@ def update_tariff(tariff_id: int, payload: schemas.TariffUpdate, db: Session = D
     t = db.query(models.Tariff).filter(models.Tariff.id == tariff_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Tarif topilmadi")
-    for k, v in payload.dict(exclude_unset=True).items():
+    changes = payload.dict(exclude_unset=True)
+    old = {k: str(getattr(t, k)) for k in changes}
+    for k, v in changes.items():
         setattr(t, k, v)
+    write_audit(db, entity_type="tariff", entity_id=t.id, action="update",
+                changed_by_id=actor.id, old_value=old, new_value={k: str(v) for k, v in changes.items()})
     db.commit()
     db.refresh(t)
     return t
@@ -953,6 +960,10 @@ def delete_tariff(tariff_id: int, db: Session = Depends(get_db), actor: models.U
     t = db.query(models.Tariff).filter(models.Tariff.id == tariff_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Tarif topilmadi")
+    if db.query(models.GroupStudent).filter(models.GroupStudent.tariff_id == tariff_id).first():
+        raise HTTPException(status_code=400, detail="Bu tarifdan foydalanayotgan talabalar mavjud")
+    write_audit(db, entity_type="tariff", entity_id=t.id, action="delete",
+                changed_by_id=actor.id, old_value={"name": t.name, "price": str(t.price)})
     db.delete(t)
     db.commit()
 
@@ -965,33 +976,42 @@ def list_courses(db: Session = Depends(get_db), _: models.User = Depends(require
 
 
 @app.post("/courses", response_model=schemas.CourseRead, status_code=201)
-def create_course(payload: schemas.CourseCreate, db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
+def create_course(payload: schemas.CourseCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
     c = models.Course(**payload.dict())
     db.add(c)
+    db.flush()
+    write_audit(db, entity_type="course", entity_id=c.id, action="create",
+                changed_by_id=actor.id, new_value=payload.dict())
     db.commit()
     db.refresh(c)
     return c
 
 
 @app.put("/courses/{course_id}", response_model=schemas.CourseRead)
-def update_course(course_id: int, payload: schemas.CourseUpdate, db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
+def update_course(course_id: int, payload: schemas.CourseUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
     c = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Kurs topilmadi")
-    for k, v in payload.dict(exclude_unset=True).items():
+    changes = payload.dict(exclude_unset=True)
+    old = {k: str(getattr(c, k)) for k in changes}
+    for k, v in changes.items():
         setattr(c, k, v)
+    write_audit(db, entity_type="course", entity_id=c.id, action="update",
+                changed_by_id=actor.id, old_value=old, new_value={k: str(v) for k, v in changes.items()})
     db.commit()
     db.refresh(c)
     return c
 
 
 @app.delete("/courses/{course_id}", status_code=204)
-def delete_course(course_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_metodist)):
+def delete_course(course_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_metodist)):
     c = db.query(models.Course).filter(models.Course.id == course_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Kurs topilmadi")
     if db.query(models.Group).filter(models.Group.course_id == course_id).first():
         raise HTTPException(status_code=400, detail="Bu kursga bog'liq guruhlar mavjud")
+    write_audit(db, entity_type="course", entity_id=c.id, action="delete",
+                changed_by_id=actor.id, old_value={"name": c.name})
     db.delete(c)
     db.commit()
 
@@ -1003,12 +1023,18 @@ def _student_owed_total(db: Session, s: models.Student, month: int = None, year:
     """Talabaning oylik to'liq summasi — faol guruhlar bo'yicha (tarif yoki guruh narxi).
     _student_month_owed bilan bir xil mantiq — ta'til va Special chegirmalar qo'llanadi."""
     total = Decimal(0)
+    active_group_ids = [m.group.id for m in s.group_memberships if m.group and m.group.is_active]
+    primary_group_id = min(active_group_ids) if active_group_ids else None
     for m in s.group_memberships:
         g = m.group
         if not g or not g.is_active:
             continue
-        if g.start_date and g.start_date.date() > date.today():
-            continue  # guruh hali boshlanmagan — talaba hali qarzdor emas
+        if g.start_date:
+            if month is not None and year is not None:
+                if (g.start_date.year, g.start_date.month) > (year, month):
+                    continue  # guruh so'ralgan oyda hali boshlanmagan edi
+            elif g.start_date.date() > date.today():
+                continue  # guruh hali boshlanmagan — talaba hali qarzdor emas
         if m.tariff and m.tariff.price:
             price = Decimal(str(m.tariff.price))
         elif g.course_price and Decimal(str(g.course_price)) > 0:
@@ -1018,7 +1044,8 @@ def _student_owed_total(db: Session, s: models.Student, month: int = None, year:
         if vacations:
             price = core_calc.apply_vacations_to_price(db, s.id, g, month, year, price, vacations)
         if discounts:
-            price = core_calc.apply_special_discounts(price, discounts, g.id, month, year)
+            apply_global = primary_group_id is None or primary_group_id == g.id
+            price = core_calc.apply_special_discounts(price, discounts, g.id, month, year, apply_global=apply_global)
         total += price
     return total.quantize(Decimal('1'))
 
@@ -1052,8 +1079,8 @@ def _students_payment_map(db: Session, students, month: int, year: int) -> dict:
     for s in students:
         owed = _student_owed_total(db, s, month, year, discounts_by.get(s.id), vacations_by.get(s.id))
         paid = paid_by.get(s.id, Decimal(0))
-        advance = Decimal(str(s.advance_balance or 0))
-        # Avans balansi qarzni kamaytiradi
+        advance = core_calc.advance_amount_for_month(s, month, year)
+        # Avans balansi qarzni kamaytiradi (faqat birinchi oyda — pastga qarang)
         advance_applied = min(advance, max(Decimal(0), owed - paid))
         covered = paid + advance
         debt = max(Decimal(0), owed - covered)
@@ -1196,6 +1223,8 @@ def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session 
     if changes.get("is_demo") and not s.is_demo:
         if any(m.group and m.group.is_active for m in s.group_memberships):
             raise HTTPException(status_code=400, detail="Aktiv guruhda o'qiyotgan talabani Demo bo'limiga o'tkazib bo'lmaydi")
+    if "advance_balance" in changes and actor.role != UserRole.admin.value:
+        raise HTTPException(status_code=403, detail="Avans balansini faqat admin o'zgartira oladi")
     for k, v in changes.items():
         setattr(s, k, v)
     db.commit()
@@ -1525,8 +1554,9 @@ def student_payment_summary(
             remaining=max(Decimal(0), owed - paid),
         ))
 
-    advance = Decimal(str(s.advance_balance or 0))
-    covered = total_paid + advance
+    advance_display = Decimal(str(s.advance_balance or 0))     # umumiy avans balansi (ma'lumot uchun)
+    advance_applied = core_calc.advance_amount_for_month(s, month, year)  # shu oyga qo'llanadigani
+    covered = total_paid + advance_applied
     debt = max(Decimal(0), total_owed - covered)
     if total_owed <= 0:
         status = "none"
@@ -1549,7 +1579,7 @@ def student_payment_summary(
     )
     return schemas.StudentPaymentSummary(
         student_id=s.id, student_name=s.full_name, month=month, year=year,
-        advance_balance=advance, total_owed=total_owed, total_paid=total_paid,
+        advance_balance=advance_display, total_owed=total_owed, total_paid=total_paid,
         debt=debt, payment_status=status, groups=groups,
         recent_payments=[_payment_read(p, db) for p in recent],
     )
@@ -1594,8 +1624,67 @@ def list_payments(
     }
 
 
+def _credit_sales_payment(db: Session, student_id: int, actor: models.User) -> None:
+    """"Sales" belgisi qo'yilganda kredit beriladi: to'lovni yozayotgan xodim
+    o'zi sales bo'lsa — o'ziga, aks holda birinchi faol sales xodimiga.
+    Atomic UPDATE (WHERE sales_credited_at IS NULL) — ikkita parallel so'rov
+    bir xil talabani ikki marta kredit qilib yubormasligi uchun."""
+    credited_user_id = actor.id if actor.role == UserRole.sales.value else None
+    if not credited_user_id:
+        sales_user = (
+            db.query(models.User)
+            .filter(models.User.role == UserRole.sales.value, models.User.is_active == True)  # noqa: E712
+            .order_by(models.User.id)
+            .first()
+        )
+        credited_user_id = sales_user.id if sales_user else None
+    if not credited_user_id:
+        return
+    updated = (
+        db.query(models.Student)
+        .filter(models.Student.id == student_id, models.Student.sales_credited_at.is_(None))
+        .update({"sales_credited_at": datetime.utcnow(), "sales_credited_by_id": credited_user_id},
+                synchronize_session=False)
+    )
+    if updated:
+        _bump_referral_stat(db, credited_user_id, paid_delta=1)
+
+
+def _reverse_sales_credit_if_orphaned(db: Session, student_id: int) -> None:
+    """To'lov o'chirilganda: agar bu talabaning boshqa via_sales to'lovi
+    qolmagan bo'lsa, berilgan kredit qaytariladi — aks holda xodim keyinchalik
+    to'g'ri to'lov yozilganda qayta kredit ololmay qoladi (flag abadiy band)."""
+    still_has_sales_payment = (
+        db.query(models.Payment)
+        .filter(models.Payment.student_id == student_id, models.Payment.via_sales == True)  # noqa: E712
+        .first()
+    )
+    if still_has_sales_payment:
+        return
+    student = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if student and student.sales_credited_by_id:
+        _bump_referral_stat(db, student.sales_credited_by_id, paid_delta=-1)
+        student.sales_credited_at = None
+        student.sales_credited_by_id = None
+
+
 @app.post("/payments", response_model=schemas.PaymentRead, status_code=201)
 def create_payment(payload: schemas.PaymentCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_crm_access)):
+    student = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    group = db.query(models.Group).filter(models.Group.id == payload.group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Guruh topilmadi")
+    is_member = (
+        db.query(models.GroupStudent)
+        .filter(models.GroupStudent.student_id == payload.student_id,
+                models.GroupStudent.group_id == payload.group_id)
+        .first()
+    )
+    if not is_member:
+        raise HTTPException(status_code=400, detail="Talaba shu guruhga biriktirilmagan")
+
     p = models.Payment(**payload.dict(), paid_at=datetime.utcnow(), recorded_by_id=actor.id)
     db.add(p)
     db.flush()
@@ -1604,17 +1693,7 @@ def create_payment(payload: schemas.PaymentCreate, db: Session = Depends(get_db)
     # "Sales" tugmasi bosilgan bo'lsa — sales rolidagi xodimga har talaba uchun
     # FAQAT BIR MARTA (referral tizimidagi kabi) paid_count +1 qo'shiladi.
     if payload.via_sales:
-        student = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
-        if student and student.sales_credited_at is None:
-            sales_user = (
-                db.query(models.User)
-                .filter(models.User.role == UserRole.sales.value, models.User.is_active == True)  # noqa: E712
-                .order_by(models.User.id)
-                .first()
-            )
-            if sales_user:
-                student.sales_credited_at = datetime.utcnow()
-                _bump_referral_stat(db, sales_user.id, paid_delta=1)
+        _credit_sales_payment(db, payload.student_id, actor)
     # Ota-onalarga bildirishnoma
     _amount = int(Decimal(str(payload.amount)))
     notify_parents_of_student(
@@ -1642,17 +1721,9 @@ def update_payment(payment_id: int, payload: schemas.PaymentUpdate, db: Session 
     # To'lab bo'lingan (bo'lib-bo'lib to'lagan) talabalar uchun ham "Sales"
     # belgisi keyinroq tahrirlanishi mumkin — create'dagi kabi FAQAT BIR MARTA hisoblanadi.
     if changes.get("via_sales"):
-        student = db.query(models.Student).filter(models.Student.id == p.student_id).first()
-        if student and student.sales_credited_at is None:
-            sales_user = (
-                db.query(models.User)
-                .filter(models.User.role == UserRole.sales.value, models.User.is_active == True)  # noqa: E712
-                .order_by(models.User.id)
-                .first()
-            )
-            if sales_user:
-                student.sales_credited_at = datetime.utcnow()
-                _bump_referral_stat(db, sales_user.id, paid_delta=1)
+        _credit_sales_payment(db, p.student_id, actor)
+    elif changes.get("via_sales") is False:
+        _reverse_sales_credit_if_orphaned(db, p.student_id)
     db.commit()
     db.refresh(p)
     return _payment_read(p, db)
@@ -1667,7 +1738,12 @@ def delete_payment(payment_id: int, db: Session = Depends(get_db), actor: models
                 changed_by_id=actor.id,
                 old_value={"student_id": p.student_id, "group_id": p.group_id,
                            "amount": str(p.amount), "month": p.month, "year": p.year})
+    was_sales = bool(p.via_sales)
+    student_id = p.student_id
     db.delete(p)
+    db.flush()
+    if was_sales:
+        _reverse_sales_credit_if_orphaned(db, student_id)
     db.commit()
 
 
@@ -1879,6 +1955,14 @@ def teacher_salaries_breakdown(
         if group_salary == 0 and not student_details:
             continue
 
+        total_lessons_held = db.query(
+            func.count(func.distinct(models.Attendance.lesson_date))
+        ).filter(
+            models.Attendance.group_id == g.id,
+            extract('month', models.Attendance.lesson_date) == month,
+            extract('year', models.Attendance.lesson_date) == year,
+        ).scalar() or 0
+
         grand_total += group_salary
         tid = g.teacher_id  # may be None
         if tid not in teachers:
@@ -1896,7 +1980,8 @@ def teacher_salaries_breakdown(
             "group_id": g.id,
             "group_name": g.name,
             "stage": g.stage or "foundation",
-            "teacher_pay_per_student": float(pay_per),
+            "teacher_pay_per_student": float(g.teacher_pay_per_student or 0),
+            "total_lessons_held": total_lessons_held,
             "students": student_details,
             "total_attended": sum(s["attended"] for s in student_details),
             "group_salary": float(group_salary),
@@ -2084,31 +2169,41 @@ def list_expenses(
 
 
 @app.post("/expenses", response_model=schemas.ExpenseRead, status_code=201)
-def create_expense(payload: schemas.ExpenseCreate, db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
+def create_expense(payload: schemas.ExpenseCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_hunter)):
     exp = models.Expense(**payload.dict())
     db.add(exp)
+    db.flush()
+    write_audit(db, entity_type="expense", entity_id=exp.id, action="create",
+                changed_by_id=actor.id, new_value=payload.dict())
     db.commit()
     db.refresh(exp)
     return exp
 
 
 @app.put("/expenses/{expense_id}", response_model=schemas.ExpenseRead)
-def update_expense(expense_id: int, payload: schemas.ExpenseUpdate, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+def update_expense(expense_id: int, payload: schemas.ExpenseUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
     exp = db.query(models.Expense).filter(models.Expense.id == expense_id).first()
     if not exp:
         raise HTTPException(status_code=404, detail="Xarajat topilmadi")
-    for k, v in payload.dict(exclude_unset=True).items():
+    changes = payload.dict(exclude_unset=True)
+    old = {k: str(getattr(exp, k)) for k in changes}
+    for k, v in changes.items():
         setattr(exp, k, v)
+    write_audit(db, entity_type="expense", entity_id=exp.id, action="update",
+                changed_by_id=actor.id, old_value=old, new_value={k: str(v) for k, v in changes.items()})
     db.commit()
     db.refresh(exp)
     return exp
 
 
 @app.delete("/expenses/{expense_id}", status_code=204)
-def delete_expense(expense_id: int, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+def delete_expense(expense_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_admin)):
     exp = db.query(models.Expense).filter(models.Expense.id == expense_id).first()
     if not exp:
         raise HTTPException(status_code=404, detail="Xarajat topilmadi")
+    write_audit(db, entity_type="expense", entity_id=exp.id, action="delete",
+                changed_by_id=actor.id,
+                old_value={"name": exp.name, "amount": str(exp.amount), "month": exp.month, "year": exp.year})
     db.delete(exp)
     db.commit()
 
@@ -2418,6 +2513,12 @@ def finance_monthly(
     total_actual = Decimal(0)
 
     for g in groups:
+        # Guruh so'ralgan oyda hali boshlanmagan bo'lsa — hech kim qarzdor emas
+        # (core_calc.student_month_owed bilan bir xil qoida — Students/Payments
+        # sahifalari bilan mos kelishi uchun). Guruh baribir ro'yxatda ko'rinadi,
+        # faqat expected/owed 0 bo'ladi.
+        group_started = not (g.start_date and (g.start_date.year, g.start_date.month) > (year, month))
+
         # Actual payments for this group this month
         actual = db.query(func.sum(models.Payment.amount)).filter(
             models.Payment.group_id == g.id,
@@ -2447,7 +2548,10 @@ def finance_monthly(
                 extract('year', models.Attendance.lesson_date) == year,
             ).scalar() or 0
 
-            if m.tariff:
+            if not group_started:
+                price = Decimal(0)
+                tariff_name = None
+            elif m.tariff:
                 price = Decimal(str(m.tariff.price))
                 tariff_name = m.tariff.name
             elif g.course_price and Decimal(str(g.course_price)) > 0:
@@ -2460,9 +2564,10 @@ def finance_monthly(
 
             if price > 0:
                 price = core_calc.vacation_adjusted_price(db, m.student_id, g.id, month, year, price)
+                apply_global = core_calc._primary_group_id(db, m.student_id) in (None, g.id)
                 price = core_calc.apply_special_discounts(
                     price, core_calc.active_special_discounts(db, m.student_id),
-                    g.id, month, year,
+                    g.id, month, year, apply_global=apply_global,
                 )
 
             if price > 0:
@@ -2474,7 +2579,8 @@ def finance_monthly(
                     models.Payment.month == month,
                     models.Payment.year == year,
                 ).scalar() or Decimal(0)
-                is_paid = paid_amount >= owed
+                advance = core_calc.advance_amount_for_month(m.student, month, year)
+                is_paid = (paid_amount + advance) >= owed
                 expected += owed
             else:
                 owed = Decimal(0)
@@ -2885,6 +2991,21 @@ def create_special_discount(
             raise HTTPException(status_code=400, detail="Bepul oy uchun oy va yil kiritilishi kerak")
     if payload.kind == "monthly" and not payload.amount:
         raise HTTPException(status_code=400, detail="Oylik chegirma uchun summa kiritilishi kerak")
+
+    # Bir xil talaba/guruh/turga ikkinchi marta aktiv chegirma qo'shilib
+    # ketmasligi uchun (aks holda ikkalasi ham qo'llanadi — narx ikki marta
+    # kamayadi). free_month uchun oy/yil ham solishtiriladi.
+    dup_q = db.query(models.SpecialDiscount).filter(
+        models.SpecialDiscount.student_id == payload.student_id,
+        models.SpecialDiscount.group_id == payload.group_id,
+        models.SpecialDiscount.kind == payload.kind,
+        models.SpecialDiscount.is_active == True,  # noqa: E712
+    )
+    if payload.kind == "free_month":
+        dup_q = dup_q.filter(models.SpecialDiscount.month == payload.month,
+                              models.SpecialDiscount.year == payload.year)
+    if dup_q.first():
+        raise HTTPException(status_code=400, detail="Bu talaba/guruh uchun shunday aktiv chegirma allaqachon mavjud")
 
     d = models.SpecialDiscount(
         student_id=payload.student_id,
@@ -3765,6 +3886,7 @@ def _coin_tx_read(t: models.CoinTransaction) -> schemas.CoinTransactionRead:
         id=t.id, student_id=t.student_id,
         student_name=t.student.full_name if t.student else None,
         group_name=t.group.name if t.group else None,
+        teacher_id=t.teacher_id,
         teacher_name=(t.teacher.full_name or t.teacher.username) if t.teacher else None,
         amount=t.amount, reason=t.reason, created_at=t.created_at,
     )
@@ -3848,6 +3970,34 @@ def deduct_coins(payload: schemas.CoinDeduct, db: Session = Depends(get_db), act
     db.commit()
     db.refresh(t)
     return _coin_tx_read(t)
+
+
+@app.delete("/coins/transactions/{transaction_id}", status_code=204)
+def cancel_coin_transaction(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_attendance_editor),
+):
+    """Berilgan/yechilgan coin yozuvini bekor qilish (o'chirish). Teacher — faqat o'zi bergan, admin — barchasi."""
+    t = db.query(models.CoinTransaction).filter(models.CoinTransaction.id == transaction_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Coin yozuvi topilmadi")
+    if actor.role == UserRole.teacher.value and t.teacher_id != actor.id:
+        raise HTTPException(status_code=403, detail="Faqat o'zingiz bergan coinni bekor qila olasiz")
+
+    write_audit(db, entity_type="coin", entity_id=t.id, action="cancel", changed_by_id=actor.id,
+                old_value={"student_id": t.student_id, "amount": t.amount, "reason": t.reason})
+    student_id = t.student_id
+    amount = t.amount
+    db.delete(t)
+    db.flush()
+    notify_parents_of_student(
+        db, student_id=student_id, ntype="announcement",
+        title="Coin operatsiyasi bekor qilindi",
+        body=f"{abs(amount)} coin{'lik yozuv' if amount >= 0 else ' yechish'} bekor qilindi",
+    )
+    db.commit()
+    return None
 
 
 @app.get("/coins/transactions", response_model=List[schemas.CoinTransactionRead])
@@ -5490,6 +5640,29 @@ def list_staff_options(db: Session = Depends(get_db), _: models.User = Depends(r
         .order_by(models.User.full_name, models.User.username)
         .all()
     )
+
+
+@app.patch("/staff-options/{user_id}/telegram", response_model=schemas.StaffOption)
+def set_staff_telegram_chat_id(
+    user_id: int,
+    payload: schemas.StaffTelegramUpdate,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_audit),
+):
+    """Audit (yoki admin) xodimga Telegram chat ID biriktiradi — faqat shu
+    maydon o'zgaradi, role/parol/is_active kabi maydonlarga tegilmaydi."""
+    staff = db.query(models.User).filter(models.User.id == user_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Xodim topilmadi")
+    old_val = staff.telegram_chat_id
+    new_val = (payload.telegram_chat_id or "").strip() or None
+    staff.telegram_chat_id = new_val
+    write_audit(db, entity_type="user", entity_id=staff.id, action="set_telegram_chat_id",
+                changed_by_id=actor.id,
+                old_value={"telegram_chat_id": old_val}, new_value={"telegram_chat_id": new_val})
+    db.commit()
+    db.refresh(staff)
+    return staff
 
 
 @app.get("/discipline-codes", response_model=List[schemas.DisciplineCodeRead])

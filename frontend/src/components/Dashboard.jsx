@@ -101,8 +101,6 @@ export default function Dashboard({ onNavigate }) {
   const netProfit = parseFloat(stats.net_profit || 0)
   const netColor = netProfit >= 0 ? '#16a34a' : '#dc2626'
 
-  const totalExp = parseFloat(stats.expenses || 0) + parseFloat(stats.teacher_salary || 0)
-
   const expTotal = expenses.reduce((s, e) => s + parseFloat(e.amount), 0)
 
   return (
@@ -113,7 +111,7 @@ export default function Dashboard({ onNavigate }) {
           <select className="field-sm" value={year} onChange={e => setYear(parseInt(e.target.value))}>
             {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-          <button className="button secondary" onClick={() => openDownload(exportExcelUrl())}>
+          <button className="button secondary" onClick={() => openDownload(exportExcelUrl()).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
             <FontAwesomeIcon icon={faFileExcel} /> Excel
           </button>
         </div>

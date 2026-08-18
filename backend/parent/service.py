@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 import re
 
 from .. import models
-from ..core_calc import student_month_owed, student_month_paid, payment_status
+from ..core_calc import student_month_owed, student_month_paid, payment_status, advance_amount_for_month
 from . import schemas
 
 DAY_SHORT = {1: "Du", 2: "Se", 3: "Chor", 4: "Pay", 5: "Ju", 6: "Sha", 7: "Yak"}
@@ -115,10 +115,11 @@ def build_payment_summary(db: Session, student: models.Student, month: int, year
             remaining=_to_int(max(Decimal(0), owed - paid)),
         ))
 
-    advance = Decimal(str(student.advance_balance or 0))
-    advance_applied = min(advance, max(Decimal(0), total_owed - total_paid))
-    debt = max(Decimal(0), total_owed - total_paid - advance)
-    status = payment_status(total_owed, total_paid, advance)
+    advance = Decimal(str(student.advance_balance or 0))  # umumiy avans (ma'lumot uchun)
+    advance_this_month = advance_amount_for_month(student, month, year)  # shu oyga qo'llanadigani
+    advance_applied = min(advance_this_month, max(Decimal(0), total_owed - total_paid))
+    debt = max(Decimal(0), total_owed - total_paid - advance_this_month)
+    status = payment_status(total_owed, total_paid, advance_this_month)
 
     recent = (
         db.query(models.Payment)

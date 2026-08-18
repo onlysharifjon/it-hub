@@ -15,6 +15,7 @@ import DateFilter from './DateFilter'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
+const YEARS = Array.from({ length: 5 }, (_, i) => NOW.getFullYear() - 2 + i)
 const EMPTY = { student_id: '', group_id: '', amount: '', month: NOW.getMonth() + 1, year: NOW.getFullYear(), notes: '', via_sales: false }
 
 export default function Payments({ currentUser }) {
@@ -131,6 +132,7 @@ export default function Payments({ currentUser }) {
 
   async function handleSave() {
     if (!form.student_id || !form.group_id || !form.amount) return toast.error("Barcha maydonlarni to'ldiring")
+    if (parseFloat(form.amount) <= 0) return toast.error("Miqdor musbat bo'lishi kerak")
     setSaving(true)
     try {
       if (editing) {
@@ -197,7 +199,7 @@ export default function Payments({ currentUser }) {
           To'lovlar
         </h1>
         <div className="header-actions">
-          <button className="button secondary" onClick={() => openDownload(exportExcelUrl(filter.month, filter.year))}>
+          <button className="button secondary" onClick={() => openDownload(exportExcelUrl(filter.month, filter.year)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
             <FontAwesomeIcon icon={faFileExcel} /> Excel
           </button>
           <button className="button primary" onClick={() => { setEditing(null); setForm(EMPTY); setModal(true) }}>
@@ -246,7 +248,7 @@ export default function Payments({ currentUser }) {
           {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
         </select>
         <select className="field-sm" value={filter.year} onChange={e => setFilter(p => ({ ...p, year: parseInt(e.target.value) }))}>
-          {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         {view === 'list' && <button className="button secondary small" onClick={applyFilter}>Filtrlash</button>}
         {view === 'list' && (
@@ -348,7 +350,7 @@ export default function Payments({ currentUser }) {
                       <button
                         className="btn-icon"
                         title="Chek ko'rish"
-                        onClick={() => openDownload(receiptUrl(p.id))}
+                        onClick={() => openDownload(receiptUrl(p.id)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}
                       >
                         <FontAwesomeIcon icon={faPrint} />
                       </button>
@@ -417,7 +419,7 @@ export default function Payments({ currentUser }) {
               </select>
               <label>Miqdor (so'm) *</label>
               <div style={{ display: 'flex', gap: 8 }}>
-                <input className="field" style={{ flex: 1 }} type="number" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} placeholder="500000" />
+                <input className="field" style={{ flex: 1 }} type="number" min="1" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} placeholder="500000" />
                 {expected && expected.remaining > 0 && (
                   <button type="button" className="button secondary" title="To'liq summani yozish"
                     onClick={() => setForm(p => ({ ...p, amount: String(expected.remaining) }))}>
@@ -448,7 +450,7 @@ export default function Payments({ currentUser }) {
                 <div>
                   <label>Yil *</label>
                   <select className="field" value={form.year} onChange={e => setForm(p => ({ ...p, year: e.target.value }))}>
-                    {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+                    {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
                   </select>
                 </div>
               </div>

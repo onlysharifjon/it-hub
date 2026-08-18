@@ -31,6 +31,7 @@ import Notifications from './components/Notifications'
 import ChatBot from './components/ChatBot'
 import Parents from './components/Parents'
 import PublicIntake from './components/PublicIntake'
+import Employees from './components/Employees'
 import AuditWarnings from './components/AuditWarnings'
 import MyWarnings from './components/MyWarnings'
 import BotAdmin from './components/BotAdmin'
@@ -258,6 +259,7 @@ function App() {
           {activePage === 'chatbot' && <ChatBot />}
           {activePage === 'parents' && <Parents currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
+          {activePage === 'employees' && <Employees currentUser={currentUser} />}
           {activePage === 'audit_warnings' && <AuditWarnings currentUser={currentUser} />}
           {activePage === 'my_warnings' && <MyWarnings />}
           {activePage === 'bot_admin' && <BotAdmin />}

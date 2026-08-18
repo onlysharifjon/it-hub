@@ -31,18 +31,24 @@ def active_special_discounts(db: Session, student_id: int) -> list:
 
 
 def apply_special_discounts(price: Decimal, discounts: list, group_id: int,
-                            month: int = None, year: int = None) -> Decimal:
+                            month: int = None, year: int = None, apply_global: bool = True) -> Decimal:
     """Special chegirmalarni narxga qo'llaydi.
 
     - free_month: month/year mos kelsa oy to'liq bepul (0).
     - monthly:    har oy amount so'm ayiriladi (butun kurs davomida).
-    group_id NULL bo'lgan chegirma barcha guruhlarga tegishli.
+    group_id NULL bo'lgan chegirma barcha guruhlarga tegishli — lekin talaba
+    bir nechta guruhda bo'lsa, bu funksiya har guruh uchun alohida chaqirilgani
+    sababli, `apply_global=False` berib faqat BITTA guruh uchun qo'llash kerak
+    (aks holda bitta global chegirma har guruhda alohida ayirilib, talaba
+    guruhlar soniga qarab bir necha barobar ko'p chegirma olib qo'yadi).
     """
     if price <= 0 or not discounts:
         return price
     off = ZERO
     for d in discounts:
         if d.group_id and d.group_id != group_id:
+            continue
+        if not d.group_id and not apply_global:
             continue
         if d.kind == "free_month":
             if month is not None and year is not None and d.month == month and d.year == year:
@@ -113,7 +119,7 @@ def apply_vacations_to_price(db: Session, student_id: int, group: models.Group,
         return price
     total_lessons = len(lesson_dates)
     billable = max(total_lessons - vacation_lessons, 0)
-    per_lesson = price / Decimal(12)
+    per_lesson = price / Decimal(total_lessons)
     return (per_lesson * billable).quantize(Decimal("1"))
 
 
@@ -136,6 +142,17 @@ def vacation_adjusted_price(db: Session, student_id: int, group_id: int,
     return apply_vacations_to_price(db, student_id, group, month, year, price, vacations)
 
 
+def _primary_group_id(db: Session, student_id: int) -> Optional[int]:
+    """Talabaning global (group_id=NULL) chegirmasi faqat BITTA guruhga
+    qo'llanishi uchun — eng kichik ID'li faol guruh 'asosiy' hisoblanadi."""
+    return (
+        db.query(func.min(models.GroupStudent.group_id))
+        .join(models.Group, models.Group.id == models.GroupStudent.group_id)
+        .filter(models.GroupStudent.student_id == student_id, models.Group.is_active == True)
+        .scalar()
+    )
+
+
 def student_month_owed(db: Session, student_id: int, group_id: int,
                        month: int = None, year: int = None) -> Decimal:
     """Bitta guruh uchun oylik to'liq summa: tarif narxi, aks holda guruh narxi.
@@ -146,8 +163,12 @@ def student_month_owed(db: Session, student_id: int, group_id: int,
     g = db.query(models.Group).filter(models.Group.id == group_id).first()
     if not g:
         return ZERO
-    if g.start_date and g.start_date.date() > date.today():
-        return ZERO  # guruh hali boshlanmagan — talaba hali qarzdor emas
+    if g.start_date:
+        if month is not None and year is not None:
+            if (g.start_date.year, g.start_date.month) > (year, month):
+                return ZERO  # guruh so'ralgan oyda hali boshlanmagan edi
+        elif g.start_date.date() > date.today():
+            return ZERO  # guruh hali boshlanmagan — talaba hali qarzdor emas
     member = next((m for m in g.members if m.student_id == student_id), None)
     if member and member.tariff:
         price = Decimal(str(member.tariff.price))
@@ -158,8 +179,10 @@ def student_month_owed(db: Session, student_id: int, group_id: int,
     if price <= 0:
         return ZERO
     price = vacation_adjusted_price(db, student_id, group_id, month, year, price)
+    primary_group_id = _primary_group_id(db, student_id)
+    apply_global = primary_group_id is None or primary_group_id == group_id
     price = apply_special_discounts(price, active_special_discounts(db, student_id),
-                                    group_id, month, year)
+                                    group_id, month, year, apply_global=apply_global)
     return price.quantize(Decimal("1")) if price > 0 else ZERO
 
 
@@ -176,6 +199,37 @@ def student_month_paid(db: Session, student_id: int, group_id: int, month: int, 
         .scalar()
     )
     return total or ZERO
+
+
+def advance_eligible_month(student: models.Student) -> Optional[tuple]:
+    """Avans balansi (`Student.advance_balance`) qaysi (yil, oy) uchun
+    qo'llanishi kerak — talabaning eng erta boshlangan faol guruhi bo'yicha
+    (yoki guruh bo'lmasa/start_date yo'q bo'lsa, ro'yxatga olingan oyi).
+
+    Muhim: bu FAQAT bitta oyga tegishli bo'lishi kerak — aks holda avans har
+    so'ralgan oyda qayta-qayta qo'llanib, cheksiz bepul oylarga aylanib
+    ketadi (avans hech qachon "sarflanmagan" hisoblanadi, chunki hech qayerda
+    kamaytirilmaydi)."""
+    starts = [
+        m.group.start_date for m in student.group_memberships
+        if m.group and m.group.is_active and m.group.start_date
+    ]
+    base = min(starts) if starts else student.created_at
+    if not base:
+        return None
+    return (base.year, base.month)
+
+
+def advance_amount_for_month(student: models.Student, month: int, year: int) -> Decimal:
+    """`student.advance_balance`ni faqat talabaning birinchi oyi uchun qaytaradi
+    — boshqa har qanday oy uchun ZERO (avans cheksiz qayta berilib ketmasligi
+    uchun, ko'ring: `advance_eligible_month`)."""
+    balance = Decimal(str(student.advance_balance or 0))
+    if balance <= 0:
+        return ZERO
+    if advance_eligible_month(student) != (year, month):
+        return ZERO
+    return balance
 
 
 def payment_status(total_owed: Decimal, total_paid: Decimal, advance: Decimal = ZERO) -> str:

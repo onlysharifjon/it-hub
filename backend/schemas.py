@@ -511,15 +511,17 @@ class TariffRead(BaseModel):
         orm_mode = True
 
 
+_MAX_MONEY = Decimal("9999999999.99")  # Numeric(12,2) ustunlarining maksimal qiymati
+
 class TariffCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)
-    price: Decimal = Field(..., ge=0)
+    price: Decimal = Field(..., ge=0, le=_MAX_MONEY)
     description: Optional[str] = None
 
 
 class TariffUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=200)
-    price: Optional[Decimal] = Field(None, ge=0)
+    price: Optional[Decimal] = Field(None, ge=0, le=_MAX_MONEY)
     description: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -593,6 +595,7 @@ class StudentUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_archived: Optional[bool] = None
     is_demo: Optional[bool] = None
+    advance_balance: Optional[Decimal] = Field(None, ge=0, le=_MAX_MONEY)  # faqat admin o'zgartira oladi
 
 
 # ── Groups ────────────────────────────────────────────────────────────────────
@@ -730,7 +733,7 @@ StudentPaymentSummary.update_forward_refs()
 class PaymentCreate(BaseModel):
     student_id: int
     group_id: int
-    amount: Decimal = Field(..., gt=0)
+    amount: Decimal = Field(..., gt=0, le=_MAX_MONEY)
     month: int = Field(..., ge=1, le=12)
     year: int = Field(..., ge=2020)
     notes: Optional[str] = None
@@ -738,7 +741,7 @@ class PaymentCreate(BaseModel):
 
 
 class PaymentUpdate(BaseModel):
-    amount: Optional[Decimal] = Field(None, gt=0)
+    amount: Optional[Decimal] = Field(None, gt=0, le=_MAX_MONEY)
     month: Optional[int] = Field(None, ge=1, le=12)
     year: Optional[int] = Field(None, ge=2020)
     notes: Optional[str] = None
@@ -761,14 +764,14 @@ class ExpenseRead(BaseModel):
 
 class ExpenseCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=300)
-    amount: Decimal = Field(..., gt=0)
+    amount: Decimal = Field(..., gt=0, le=_MAX_MONEY)
     month: int = Field(..., ge=1, le=12)
     year: int = Field(..., ge=2020)
 
 
 class ExpenseUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=300)
-    amount: Optional[Decimal] = Field(None, gt=0)
+    amount: Optional[Decimal] = Field(None, gt=0, le=_MAX_MONEY)
     month: Optional[int] = Field(None, ge=1, le=12)
     year: Optional[int] = Field(None, ge=2020)
 
@@ -950,7 +953,7 @@ class SpecialDiscountCreate(BaseModel):
     student_id: int
     group_id: Optional[int] = None           # NULL = barcha guruhlar
     kind: str = Field(..., regex="^(free_month|monthly)$")
-    amount: Optional[Decimal] = Field(None, gt=0)   # monthly uchun
+    amount: Optional[Decimal] = Field(None, gt=0, le=_MAX_MONEY)   # monthly uchun
     month: Optional[int] = Field(None, ge=1, le=12) # free_month uchun
     year: Optional[int] = Field(None, ge=2020)      # free_month uchun
     reason: Optional[str] = Field(None, max_length=300)
@@ -1199,6 +1202,7 @@ class CoinTransactionRead(BaseModel):
     student_id: int
     student_name: Optional[str] = None
     group_name: Optional[str] = None
+    teacher_id: int
     teacher_name: Optional[str] = None
     amount: int
     reason: Optional[str] = None
@@ -1225,9 +1229,14 @@ class StaffOption(BaseModel):
     full_name: Optional[str] = None
     username: str
     role: str
+    telegram_chat_id: Optional[str] = None
 
     class Config:
         orm_mode = True
+
+
+class StaffTelegramUpdate(BaseModel):
+    telegram_chat_id: Optional[str] = Field(None, max_length=50)
 
 
 class DisciplineCodeRead(BaseModel):

@@ -9,6 +9,7 @@ import { fetchFinanceMonthly, exportExcelUrl, openDownload } from '../api'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
+const YEARS = Array.from({ length: 5 }, (_, i) => NOW.getFullYear() - 2 + i)
 
 export default function Finance() {
   const [month, setMonth] = useState(NOW.getMonth() + 1)
@@ -40,7 +41,7 @@ export default function Finance() {
     <div className="page">
       <div className="page-header">
         <h1><FontAwesomeIcon icon={faWallet} className="page-icon" /> Moliya</h1>
-        <button className="button secondary" onClick={() => openDownload(exportExcelUrl(month, year))}>
+        <button className="button secondary" onClick={() => openDownload(exportExcelUrl(month, year)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
           <FontAwesomeIcon icon={faFileExcel} /> Excel
         </button>
       </div>
@@ -51,7 +52,7 @@ export default function Finance() {
           {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
         </select>
         <select className="field-sm" value={year} onChange={e => setYear(Number(e.target.value))}>
-          {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <span className="text-muted" style={{ fontSize: 12, marginLeft: 4 }}>
           Kutilgan: talaba soni × to'liq tarif

@@ -8,6 +8,7 @@ import { fetchExpenses, createExpense, updateExpense, deleteExpense } from '../a
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
+const YEARS = Array.from({ length: 5 }, (_, i) => NOW.getFullYear() - 2 + i)
 const fmt = n => Number(n || 0).toLocaleString()
 
 function fmtDate(isoStr) {
@@ -105,7 +106,7 @@ export default function Expenses() {
           {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
         </select>
         <select className="field-sm" value={year} onChange={e => setYear(Number(e.target.value))}>
-          {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         {expenses.length > 0 && (
           <span style={{ marginLeft: 'auto', fontWeight: 600, color: '#dc2626', fontSize: 14 }}>
@@ -213,7 +214,7 @@ export default function Expenses() {
                       {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
                     </select>
                     <select className="form-input" style={{ maxWidth: 100 }} value={year} onChange={e => setYear(Number(e.target.value))}>
-                      {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+                      {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   </div>
                 </div>

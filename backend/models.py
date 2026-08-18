@@ -139,6 +139,7 @@ class Student(Base):
     # Sales orqali jalb qilingan talaba — to'lov qo'shishda "Sales" tugmasi bosilsa
     # belgilanadi, LeadReferralStat.paid_count'ga faqat BIR MARTA hisoblanadi.
     sales_credited_at = Column(DateTime, nullable=True)
+    sales_credited_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # kim uchun hisoblangani — to'lov o'chirilsa qaytarish uchun
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

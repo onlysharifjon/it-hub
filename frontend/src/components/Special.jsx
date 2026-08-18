@@ -9,6 +9,7 @@ import {
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
+const YEARS = Array.from({ length: 5 }, (_, i) => NOW.getFullYear() - 2 + i)
 const EMPTY = {
   student_id: '', group_id: '', kind: 'free_month',
   amount: '', month: NOW.getMonth() + 1, year: NOW.getFullYear(), reason: '',
@@ -190,7 +191,7 @@ export default function Special() {
                   <div>
                     <label>Yil *</label>
                     <select className="field" value={form.year} onChange={e => setForm(p => ({ ...p, year: e.target.value }))}>
-                      {[2025, 2026, 2027, 2028].map(y => <option key={y} value={y}>{y}</option>)}
+                      {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   </div>
                 </div>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faPen, faTrash, faTag } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faPen, faTrash, faTag, faToggleOn, faToggleOff } from '@fortawesome/free-solid-svg-icons'
 import { fetchTariffs, createTariff, updateTariff, deleteTariff } from '../api'
 
 const EMPTY = { name: '', price: '100000', description: '' }
@@ -30,6 +30,7 @@ export default function Tariffs() {
 
   async function handleSave() {
     if (!form.name.trim() || !form.price) return toast.error("Ism va narx majburiy")
+    if (parseFloat(form.price) <= 0) return toast.error("Narx musbat bo'lishi kerak")
     setSaving(true)
     try {
       const payload = { name: form.name, price: parseFloat(form.price), description: form.description || null }
@@ -99,6 +100,9 @@ export default function Tariffs() {
                     </span>
                   </td>
                   <td className="actions">
+                    <button className="btn-icon" onClick={() => handleToggle(t)} title={t.is_active ? 'Nofaol qilish' : 'Faol qilish'}>
+                      <FontAwesomeIcon icon={t.is_active ? faToggleOn : faToggleOff} />
+                    </button>
                     <button className="btn-icon" onClick={() => openEdit(t)} title="Tahrirlash">
                       <FontAwesomeIcon icon={faPen} />
                     </button>
@@ -135,6 +139,7 @@ export default function Tariffs() {
               <input
                 className="field"
                 type="number"
+                min="1"
                 value={form.price}
                 onChange={e => setForm(p => ({ ...p, price: e.target.value }))}
                 placeholder="100000"

@@ -9,6 +9,7 @@ import { fetchTeacherSalaries } from '../api'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const NOW = new Date()
+const YEARS = Array.from({ length: 5 }, (_, i) => NOW.getFullYear() - 2 + i)
 const fmt = n => Number(n || 0).toLocaleString()
 
 const STAGE_COLORS = {
@@ -58,10 +59,10 @@ export default function TeacherSalaries() {
           {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
         </select>
         <select className="field-sm" value={year} onChange={e => setYear(Number(e.target.value))}>
-          {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <span className="text-muted" style={{ fontSize: 12 }}>
-          Formula: maosh/talaba ÷ 12 × kelgan darslar
+          Formula: maosh/talaba (dars boshiga) × kelgan darslar soni
         </span>
       </div>
 
@@ -175,7 +176,7 @@ export default function TeacherSalaries() {
                                     <span style={{ fontWeight: 600, color: s.attended > 0 ? '#2563eb' : '#9ca3af' }}>
                                       {s.attended}
                                     </span>
-                                    <span className="text-muted" style={{ fontSize: 11 }}>/12</span>
+                                    <span className="text-muted" style={{ fontSize: 11 }}>/{g.total_lessons_held || '–'}</span>
                                   </td>
                                   <td style={{ textAlign: 'right', fontWeight: 600 }}>
                                     {s.attended > 0

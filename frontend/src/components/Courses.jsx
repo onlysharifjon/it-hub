@@ -36,6 +36,8 @@ export default function Courses() {
   async function handleSave() {
     if (!form.name.trim()) return toast.error("Kurs nomi majburiy")
     if (!form.total_lessons) return toast.error("Darslar soni majburiy")
+    if (parseInt(form.total_lessons) <= 0) return toast.error("Darslar soni musbat bo'lishi kerak")
+    if (form.duration_months && parseInt(form.duration_months) <= 0) return toast.error("Davomiylik musbat bo'lishi kerak")
     setSaving(true)
     const payload = {
       name: form.name.trim(),
