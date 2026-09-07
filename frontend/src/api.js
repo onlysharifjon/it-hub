@@ -1,5 +1,10 @@
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
+// Dev'da qaysi backend bilan gaplashayotganini konsolda ko'rsatamiz — lokalda
+// "Login yoki parol xato" ko'pincha noto'g'ri (bo'sh bazali) backendga urilishdan
+// kelib chiqadi. '/api' bo'lsa vite proxy ishlayapti (vite.config.js).
+if (import.meta.env.DEV) console.info('[api] API_BASE =', API_BASE)
+
 // "Bugun" — Toshkent (+05:00) taqvim sanasi, brauzer/server UTC bo'lsa ham
 // yarim tundan ertalab 5 gachagi oraliqda noto'g'ri kunni ko'rsatmasligi uchun.
 export function tashkentToday() {

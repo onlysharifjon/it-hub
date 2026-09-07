@@ -285,8 +285,19 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# Vaqtincha o'chirish kaliti: .env da RATE_LIMIT_ENABLED=false (keyin
+# `pm2 restart it_hub_api --update-env`). O'chirilganda login brute-force
+# himoyasi ham ishlamaydi — faqat nosozlikni tekshirish uchun, uzoq muddatga
+# emas.
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() not in (
+    "false", "0", "no", "off",
+)
+
+
 def rate_limit(key: str, *, limit: int, window: int):
     """Oddiy sliding-window limiter. Limitdan oshsa 429 qaytaradi."""
+    if not RATE_LIMIT_ENABLED:
+        return
     now = _time.time()
     hits = [t for t in _rate_hits[key] if now - t < window]
     if len(hits) >= limit:

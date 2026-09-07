@@ -81,8 +81,16 @@ def refresh_expiry() -> datetime:
 _hits: dict[str, list[float]] = defaultdict(list)
 
 
+# main.py dagi RATE_LIMIT_ENABLED bilan bir xil kalit (ota-onalar API'si uchun).
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() not in (
+    "false", "0", "no", "off",
+)
+
+
 def rate_limit_ok(key: str, *, limit: int, window: int) -> bool:
     """True — ruxsat; False — limit oshdi."""
+    if not RATE_LIMIT_ENABLED:
+        return True
     now = time.time()
     hits = [t for t in _hits[key] if now - t < window]
     if len(hits) >= limit:
