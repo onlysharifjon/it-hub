@@ -37,7 +37,18 @@ function formatValidationDetail(detail) {
 }
 
 async function request(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), ...options })
+  // Backendga umuman ulanib bo'lmasa fetch TypeError ("Failed to fetch")
+  // beradi — uni "Login yoki parol xato" kabi mazmunsiz xabarga aylanib
+  // ketmasligi uchun aniq matn va status 0 bilan qayta uloqtiramiz.
+  let res
+  try {
+    res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), ...options })
+  } catch {
+    throw Object.assign(
+      new Error(`Serverga ulanib bo'lmadi (${API_BASE}${path}). Backend ishlayaptimi?`),
+      { status: 0 },
+    )
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     const msg = typeof err.detail === 'string'

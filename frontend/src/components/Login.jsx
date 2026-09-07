@@ -19,8 +19,12 @@ function Login({ onSuccess, error }) {
     } catch (err) {
       if (err.status === 403 && err.detail?.code) {
         setBlockInfo(err.detail)
-      } else {
+      } else if (err.status === 401 || !err.message) {
         setLocalError('Login yoki parol xato')
+      } else {
+        // Tarmoq uzilishi, 429, 500 va h.k. — ilgari bularning hammasi
+        // "Login yoki parol xato" bo'lib ko'rinar, sababni topish qiyin edi.
+        setLocalError(err.message)
       }
     } finally {
       setLoading(false)
