@@ -44,12 +44,7 @@ function LessonList({ lessons, selectedLessonId, onSelectLesson, canEdit, onReor
               >▼</button>
               <button
                 className="icon-action danger"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (confirm(`"${lesson.title}" darsini o'chirasizmi?`)) {
-                    onDelete(lesson.id)
-                  }
-                }}
+                onClick={(e) => { e.stopPropagation(); onDelete(lesson) }}
                 title="O'chirish"
               >✕</button>
             </div>

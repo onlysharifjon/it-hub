@@ -79,7 +79,7 @@ def _cleanup(photo_path: str | None) -> None:
 
 def notify_arrival(student: dict, photo_path: str | None = None) -> None:
     """O'quvchi markazga keldi."""
-    ts     = datetime.now().strftime("%H:%M")
+    ts     = config.now().strftime("%H:%M")
     name   = student.get("full_name", f"ID {student.get('id')}")
     groups = student.get("groups", [])
     group_str = ", ".join(g["name"] for g in groups) if groups else "—"
@@ -133,7 +133,7 @@ def notify_unknown(photo_path: str | None = None) -> None:
         _cleanup(photo_path)
         return
     _last_unknown = now
-    ts  = datetime.now().strftime("%H:%M")
+    ts  = config.now().strftime("%H:%M")
     msg = f"⚠️ <b>Noma'lum shaxs</b> aniqlandi!\n🕒 {ts}"
     if config.NOTIFY_CHAT_ID:
         _send_photo(config.NOTIFY_CHAT_ID, photo_path, msg)
@@ -143,7 +143,7 @@ def notify_unknown(photo_path: str | None = None) -> None:
 
 def notify_departure(student: dict, photo_path: str | None = None) -> None:
     """O'quvchi markazdan ketdi."""
-    ts = datetime.now().strftime("%H:%M")
+    ts = config.now().strftime("%H:%M")
     name = student.get("full_name", f"ID {student.get('id')}")
 
     school_msg = f"🚪 <b>{name}</b> markazdan <b>ketdi</b>\n🕒 {ts}"

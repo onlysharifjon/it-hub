@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { tashkentNow } from '../utils/datetime'
 
 const MONTHS   = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
 const WEEKDAYS = ['Du','Se','Ch','Pa','Ju','Sh','Ya']
@@ -7,7 +8,7 @@ function toStr(d) {
   const p = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`
 }
-const TODAY = toStr(new Date())
+const TODAY = toStr(tashkentNow())
 
 export default function DateRangePicker({ dateFrom, dateTo, onChange }) {
   const [open,    setOpen]    = useState(false)

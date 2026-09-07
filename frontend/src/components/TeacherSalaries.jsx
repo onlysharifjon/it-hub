@@ -6,17 +6,16 @@ import {
   faUsers, faCheck,
 } from '@fortawesome/free-solid-svg-icons'
 import { fetchTeacherSalaries } from '../api'
+import { Metric, MetricStrip } from './ui/Metric'
+import { TableSkeleton } from './ui/States'
+import { STAGE_COLORS } from '../constants/domain'
+import { tashkentNow } from '../utils/datetime'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
-const NOW = new Date()
+const NOW = tashkentNow()
 const YEARS = Array.from({ length: 5 }, (_, i) => NOW.getFullYear() - 2 + i)
 const fmt = n => Number(n || 0).toLocaleString()
 
-const STAGE_COLORS = {
-  foundation: { bg: '#eff6ff', color: '#1d4ed8' },
-  frontend:   { bg: '#f0fdf4', color: '#15803d' },
-  backend:    { bg: '#faf5ff', color: '#7e22ce' },
-}
 
 export default function TeacherSalaries() {
   const [month, setMonth] = useState(NOW.getMonth() + 1)
@@ -47,42 +46,34 @@ export default function TeacherSalaries() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1>
-          <FontAwesomeIcon icon={faChalkboardTeacher} className="page-icon" />
-          O'qituvchi maoshlari
-        </h1>
-      </div>
-
-      {/* Month selector */}
-      <div className="toolbar">
-        <select className="field-sm" value={month} onChange={e => setMonth(Number(e.target.value))}>
-          {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-        </select>
-        <select className="field-sm" value={year} onChange={e => setYear(Number(e.target.value))}>
-          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
-        <span className="text-muted" style={{ fontSize: 12 }}>
-          Formula: maosh/talaba (dars boshiga) × kelgan darslar soni
-        </span>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faChalkboardTeacher} className="page-icon" /> O'qituvchi maoshlari</h1>
+          <p className="page-subtitle">
+            Formula: 50 000 so'm / oydagi darslar soni × talaba kelgan darslar soni
+          </p>
+        </div>
+        <div className="header-actions">
+          <select className="field-sm" value={month} onChange={e => setMonth(Number(e.target.value))} aria-label="Oy">
+            {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+          <select className="field-sm" value={year} onChange={e => setYear(Number(e.target.value))} aria-label="Yil">
+            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
       </div>
 
       {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
+        <TableSkeleton />
       ) : data ? (
         <>
-          {/* Total KPI */}
-          <div className="finance-kpi-row" style={{ marginBottom: 24 }}>
-            <div className="finance-kpi" style={{ borderTop: '3px solid #3b82f6' }}>
-              <div className="finance-kpi-label">Jami o'qituvchi maoshi</div>
-              <div className="finance-kpi-value">{fmt(data.total_teacher_salary)}</div>
-              <div className="finance-kpi-sub">so'm · {MONTHS[month - 1]} {year}</div>
-            </div>
-            <div className="finance-kpi" style={{ borderTop: '3px solid #22c55e' }}>
-              <div className="finance-kpi-label">O'qituvchilar soni</div>
-              <div className="finance-kpi-value">{teachers.length}</div>
-              <div className="finance-kpi-sub">faol guruhlar bo'yicha</div>
-            </div>
-          </div>
+          <MetricStrip columns={3}>
+            <Metric label="Jami o'qituvchi maoshi" value={fmt(data.total_teacher_salary)} unit="so'm"
+              sub={`${MONTHS[month - 1]} ${year}`} />
+            <Metric label="O'qituvchilar" value={teachers.length} sub="faol guruhlar bo'yicha" />
+            <Metric label="O'rtacha maosh"
+              value={teachers.length ? fmt(Math.round(Number(data.total_teacher_salary) / teachers.length)) : '—'}
+              unit="so'm" sub="bitta o'qituvchiga" />
+          </MetricStrip>
 
           {/* Per-teacher list */}
           <div className="finance-groups">
@@ -98,7 +89,7 @@ export default function TeacherSalaries() {
                   <div className="finance-group-name">
                     <FontAwesomeIcon
                       icon={expanded[t.teacher_id] ? faChevronDown : faChevronRight}
-                      style={{ fontSize: 11, marginRight: 8, color: '#737373' }}
+                      style={{ fontSize: 11, marginRight: 8, color: 'var(--muted)' }}
                     />
                     <strong>{t.teacher_name}</strong>
                     <span className="text-muted" style={{ fontSize: 12, marginLeft: 8 }}>
@@ -106,7 +97,7 @@ export default function TeacherSalaries() {
                     </span>
                   </div>
                   <div className="finance-group-stats">
-                    <span style={{ fontWeight: 700, color: '#2563eb', fontSize: 15 }}>
+                    <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 15 }}>
                       {fmt(t.total_salary)} so'm
                     </span>
                   </div>
@@ -130,29 +121,29 @@ export default function TeacherSalaries() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <FontAwesomeIcon
                               icon={expandedGroup[g.group_id] ? faChevronDown : faChevronRight}
-                              style={{ fontSize: 10, color: '#737373' }}
+                              style={{ fontSize: 10, color: 'var(--muted)' }}
                             />
                             <span style={{ fontWeight: 500 }}>{g.group_name}</span>
                             <span
                               style={{
                                 fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 12,
-                                background: STAGE_COLORS[g.stage]?.bg || '#f3f4f6',
-                                color: STAGE_COLORS[g.stage]?.color || '#374151',
+                                background: STAGE_COLORS[g.stage]?.bg || 'var(--surface-2)',
+                                color: STAGE_COLORS[g.stage]?.color || 'var(--text-2)',
                               }}
                             >
                               {g.stage}
                             </span>
                           </div>
-                          <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#4b5563', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-2)', alignItems: 'center' }}>
                             <span>
                               <FontAwesomeIcon icon={faUsers} style={{ marginRight: 4 }} />
                               {g.students.length} o'quvchi
                             </span>
                             <span>Jami kelgan: <strong>{g.total_attended}</strong></span>
-                            <span style={{ fontSize: 11, color: '#6b7280' }}>
-                              {fmt(g.teacher_pay_per_student)}/talaba/oy
+                            <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                              {fmt(g.per_lesson)}/dars/talaba
                             </span>
-                            <span style={{ fontWeight: 700, color: '#2563eb' }}>
+                            <span style={{ fontWeight: 700, color: 'var(--primary)' }}>
                               {fmt(g.group_salary)} so'm
                             </span>
                           </div>
@@ -173,7 +164,7 @@ export default function TeacherSalaries() {
                                 <tr key={s.student_id}>
                                   <td style={{ fontWeight: 500 }}>{s.student_name}</td>
                                   <td style={{ textAlign: 'center' }}>
-                                    <span style={{ fontWeight: 600, color: s.attended > 0 ? '#2563eb' : '#9ca3af' }}>
+                                    <span style={{ fontWeight: 600, color: s.attended > 0 ? 'var(--primary)' : 'var(--muted)' }}>
                                       {s.attended}
                                     </span>
                                     <span className="text-muted" style={{ fontSize: 11 }}>/{g.total_lessons_held || '–'}</span>
@@ -191,7 +182,7 @@ export default function TeacherSalaries() {
                               <tr>
                                 <td style={{ fontWeight: 700 }}>Jami</td>
                                 <td style={{ textAlign: 'center', fontWeight: 700 }}>{g.total_attended}</td>
-                                <td style={{ textAlign: 'right', fontWeight: 700, color: '#2563eb' }}>
+                                <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--primary)' }}>
                                   {fmt(g.group_salary)} so'm
                                 </td>
                               </tr>

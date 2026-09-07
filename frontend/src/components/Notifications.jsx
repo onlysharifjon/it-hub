@@ -6,6 +6,8 @@ import {
   faCamera, faMagnifyingGlass,
 } from '@fortawesome/free-solid-svg-icons'
 import { fetchStudents, fetchVisits, createVisit, uploadStudentPhoto, API_BASE, tashkentToday } from '../api'
+import DataTable from './ui/DataTable'
+import Badge from './ui/Badge'
 
 const TODAY_STR = tashkentToday()
 
@@ -90,10 +92,104 @@ export default function Notifications() {
     return new Date(iso).toLocaleTimeString('uz', { hour: '2-digit', minute: '2-digit' })
   }
 
+  const studentColumns = [
+    {
+      key: 'photo', header: 'Rasm', width: 64,
+      render: s => (
+        <div className="avatar-cell">
+          {s.photo
+            ? <img src={photoUrl(s.photo)} alt="" className="avatar-cell-img" />
+            : <div className="avatar-cell-img is-initial">{s.full_name[0]}</div>}
+          <button
+            className="avatar-cell-btn" title="Rasm yuklash" aria-label="Rasm yuklash"
+            disabled={uploadingId === s.id} onClick={() => pickPhoto(s)}
+          >
+            <FontAwesomeIcon icon={faCamera} />
+          </button>
+        </div>
+      ),
+    },
+    {
+      key: 'full_name', header: 'Talaba', sortable: true,
+      render: s => (
+        <>
+          <strong>{s.full_name}</strong>
+          <div className="muted-sm">{s.phone1}</div>
+        </>
+      ),
+    },
+    {
+      key: 'telegram_user_id', header: 'Telegram', sortable: true,
+      sortValue: s => (s.telegram_user_id ? 0 : 1),
+      render: s => s.telegram_user_id
+        // Har qatorda ID bo'lgani uchun badge neytral: bu ma'lumot,
+        // holat emas — rangli bo'lsa ustun "chiroqlar qatori" ga aylanardi.
+        ? <Badge variant="neutral" size="sm">ID: {s.telegram_user_id}</Badge>
+        : <span className="muted-sm">Biriktirilmagan</span>,
+    },
+    {
+      key: 'last', header: 'Oxirgi holat (bugun)',
+      render: s => {
+        const last = lastVisitByStudent[s.id]
+        if (!last) return <span className="text-muted">—</span>
+        return (
+          <Badge variant={last.kind === 'arrived' ? 'success' : 'warning'} size="sm">
+            {last.kind === 'arrived' ? 'Keldi' : 'Ketdi'} · {timeLabel(last.created_at)}
+            {last.telegram_sent ? ' ✓' : ' ⚠'}
+          </Badge>
+        )
+      },
+    },
+    {
+      key: 'actions', header: '', align: 'right', className: 'actions',
+      render: s => (
+        <span className="row-actions">
+          {/* Ilgari bu har bir qatorda to'ldirilgan BINAFSHA tugma edi —
+              o'nlab qator bo'lganda binafsha "asosiy amal" ma'nosini
+              yo'qotardi. Endi rang semantik: kelish = yashil, ketish =
+              neytral. Binafsha esa sahifaning yagona birlamchi amali uchun. */}
+          <button className="btn-sm is-success" disabled={sendingId === `${s.id}-arrived`}
+            onClick={() => handleVisit(s, 'arrived')}>
+            <FontAwesomeIcon icon={faRightToBracket} /> Keldi
+          </button>
+          <button className="btn-sm" disabled={sendingId === `${s.id}-left`}
+            onClick={() => handleVisit(s, 'left')}>
+            <FontAwesomeIcon icon={faRightFromBracket} /> Ketdi
+          </button>
+        </span>
+      ),
+    },
+  ]
+
+  const visitColumns = [
+    { key: 'created_at', header: 'Vaqt', sortable: true, render: v => <span className="num">{timeLabel(v.created_at)}</span> },
+    { key: 'student_name', header: 'Talaba', sortable: true, render: v => <strong>{v.student_name}</strong> },
+    {
+      key: 'kind', header: 'Holat', sortable: true,
+      render: v => (
+        <Badge variant={v.kind === 'arrived' ? 'success' : 'warning'} size="sm">
+          {v.kind === 'arrived' ? 'Keldi' : 'Ketdi'}
+        </Badge>
+      ),
+    },
+    { key: 'noted_by_name', header: 'Kim belgiladi', sortable: true, render: v => <span className="text-muted">{v.noted_by_name || '—'}</span> },
+    {
+      key: 'telegram_sent', header: 'Telegram', sortable: true,
+      render: v => v.telegram_sent
+        ? <span className="tone-success">Yuborildi</span>
+        : <span className="tone-warning" title={v.telegram_error || ''}>{v.telegram_error || 'Yuborilmadi'}</span>,
+    },
+  ]
+
   return (
     <div className="page">
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faBell} className="page-icon" /> Notifications</h1>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faBell} className="page-icon" /> Kelish-ketish</h1>
+          <p className="page-subtitle">
+            Talaba kelganda/ketganda ota-onasiga Telegram orqali xabar boradi · bugun {visits.length} ta belgi
+          </p>
+        </div>
       </div>
 
       <input
@@ -104,145 +200,40 @@ export default function Notifications() {
         onChange={handlePhotoFile}
       />
 
-      <div className="toolbar">
-        <FontAwesomeIcon icon={faMagnifyingGlass} className="text-muted" />
-        <input
-          className="field-sm"
-          style={{ minWidth: 220 }}
-          placeholder="Talaba ismi yoki telefon..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-        <span className="muted" style={{ marginLeft: 'auto', fontSize: 13 }}>
-          Bugun: {visits.length} ta belgi
-        </span>
-      </div>
+      <DataTable
+        columns={studentColumns}
+        rows={filtered}
+        clientPageSize={20}
+        toolbar={
+          <div className="search-wrap">
+            <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
+            <input
+              className="search-input"
+              placeholder="Talaba ismi yoki telefon..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+        }
+        empty={{ icon: faMagnifyingGlass, title: 'Talaba topilmadi', description: "Qidiruv so'zini o'zgartirib ko'ring." }}
+      />
 
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Rasm</th>
-              <th>Talaba</th>
-              <th>Telegram</th>
-              <th>Oxirgi holat (bugun)</th>
-              <th>Amallar</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(s => {
-              const last = lastVisitByStudent[s.id]
-              return (
-                <tr key={s.id}>
-                  <td>
-                    <div style={{ position: 'relative', width: 42 }}>
-                      {s.photo
-                        ? <img src={photoUrl(s.photo)} alt="" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover' }} />
-                        : <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--bg-secondary, #e5e5e5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
-                            {s.full_name[0]}
-                          </div>}
-                      <button
-                        className="btn-icon"
-                        title="Rasm yuklash"
-                        style={{ position: 'absolute', right: -8, bottom: -6, fontSize: 10 }}
-                        disabled={uploadingId === s.id}
-                        onClick={() => pickPhoto(s)}
-                      >
-                        <FontAwesomeIcon icon={faCamera} />
-                      </button>
-                    </div>
-                  </td>
-                  <td>
-                    <strong>{s.full_name}</strong>
-                    <div className="text-muted" style={{ fontSize: 12 }}>{s.phone1}</div>
-                  </td>
-                  <td>
-                    {s.telegram_user_id
-                      ? <span className="badge" style={{ background: '#dbeafe', color: '#1d4ed8' }}>ID: {s.telegram_user_id}</span>
-                      : <span className="text-muted" style={{ fontSize: 12 }}>Biriktirilmagan</span>}
-                  </td>
-                  <td>
-                    {last ? (
-                      <span className="badge" style={{
-                        background: last.kind === 'arrived' ? '#dcfce7' : '#fef3c7',
-                        color: last.kind === 'arrived' ? '#16a34a' : '#d97706',
-                      }}>
-                        {last.kind === 'arrived' ? 'Keldi' : 'Ketdi'} · {timeLabel(last.created_at)}
-                        {last.telegram_sent ? ' ✅' : ' ⚠️'}
-                      </span>
-                    ) : <span className="text-muted">—</span>}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button
-                        className="button primary small"
-                        disabled={sendingId === `${s.id}-arrived`}
-                        onClick={() => handleVisit(s, 'arrived')}
-                      >
-                        <FontAwesomeIcon icon={faRightToBracket} /> Keldi
-                      </button>
-                      <button
-                        className="button secondary small"
-                        disabled={sendingId === `${s.id}-left`}
-                        onClick={() => handleVisit(s, 'left')}
-                      >
-                        <FontAwesomeIcon icon={faRightFromBracket} /> Ketdi
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
-            {filtered.length === 0 && (
-              <tr><td colSpan={5} className="muted center py-4">Talaba topilmadi</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <h3 style={{ marginTop: 24 }}>Bugungi tarix</h3>
-      {loading ? (
-        <div className="muted center py-4">Yuklanmoqda...</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Vaqt</th>
-                <th>Talaba</th>
-                <th>Holat</th>
-                <th>Kim belgiladi</th>
-                <th>Telegram</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visits.map(v => (
-                <tr key={v.id}>
-                  <td>{timeLabel(v.created_at)}</td>
-                  <td>{v.student_name}</td>
-                  <td>
-                    <span className="badge" style={{
-                      background: v.kind === 'arrived' ? '#dcfce7' : '#fef3c7',
-                      color: v.kind === 'arrived' ? '#16a34a' : '#d97706',
-                    }}>
-                      {v.kind === 'arrived' ? 'Keldi' : 'Ketdi'}
-                    </span>
-                  </td>
-                  <td className="text-muted">{v.noted_by_name || '—'}</td>
-                  <td>
-                    {v.telegram_sent
-                      ? <span style={{ color: '#16a34a' }}>Yuborildi ✅</span>
-                      : <span className="text-muted" title={v.telegram_error || ''}>⚠️ {v.telegram_error || 'Yuborilmadi'}</span>}
-                  </td>
-                </tr>
-              ))}
-              {visits.length === 0 && (
-                <tr><td colSpan={5} className="muted center py-4">Bugun hali belgi yo'q</td></tr>
-              )}
-            </tbody>
-          </table>
+      <section>
+        <div className="ui-section-head">
+          <div className="ui-section-head-text">
+            <h2>Bugungi tarix</h2>
+            <p>Bugun belgilangan barcha kelish-ketishlar</p>
+          </div>
         </div>
-      )}
+        <DataTable
+          columns={visitColumns}
+          rows={visits}
+          loading={loading}
+          clientPageSize={25}
+          empty={{ icon: faBell, title: "Bugun hali belgi yo'q", description: 'Yuqoridagi ro\'yxatdan talabani belgilang.' }}
+        />
+      </section>
+
     </div>
   )
 }

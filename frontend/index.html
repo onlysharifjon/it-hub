@@ -3,11 +3,44 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>O'quv metodikasi</title>
+
+    <!-- Brend ikonkasi: oq belgi to'q ko'k kvadratda (Untitled-1-01).
+         Brauzer yorlig'ida to'liq gorizontal lokap o'qilmaydi — shuning
+         uchun bu yerda faqat BELGI ishlatiladi. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/brand/minar-icon-32.png?v=1" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/brand/minar-icon-192.png?v=1" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/brand/minar-icon-180.png?v=1" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <meta name="theme-color" content="#FFFFFF" />
+    <meta name="application-name" content="Minar Academy LMS" />
+    <meta name="apple-mobile-web-app-title" content="Minar LMS" />
+    <meta name="description" content="Minar Academy — o'quv markazining CRM va LMS tizimi." />
+    <meta name="robots" content="noindex, nofollow" />
+
+    <title>Minar Academy LMS</title>
+
+    <!-- Mavzuni JS bundle yuklanguncha o'rnatamiz. Aks holda sahifa avval
+         yorug' chiqib, keyin qorayadi ("oq chaqnash"). Bu skript atigi bir
+         necha qator va bloklovchi bo'lishi ATAYLAB — u <body> chizilishidan
+         oldin ishlashi kerak. -->
+    <script>
+      (function () {
+        try {
+          var v = localStorage.getItem('theme')
+          var dark = v === 'dark' || (v !== 'light' &&
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          if (dark) {
+            document.documentElement.setAttribute('data-theme', 'dark')
+            var m = document.querySelector('meta[name="theme-color"]')
+            if (m) m.setAttribute('content', '#0B0F19')
+          }
+        } catch (e) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
-

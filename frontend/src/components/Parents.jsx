@@ -9,10 +9,13 @@ import {
   fetchParents, createParent, updateParent, resetParentPassword,
   linkParentChild, unlinkParentChild, fetchStudents, broadcastToParents,
 } from '../api'
+import useConfirm from './ui/useConfirm'
+import DataTable, { RowActions } from './ui/DataTable'
 
 const EMPTY = { full_name: '', phone: '', username: '', password: '', student_ids: [] }
 
 export default function Parents({ currentUser }) {
+  const [confirmUI, ask] = useConfirm()
   const canManage = currentUser?.role === 'hunter' || currentUser?.role === 'admin'
   const isAdmin = currentUser?.role === 'admin'
 
@@ -112,7 +115,13 @@ export default function Parents({ currentUser }) {
   }
 
   async function handleReset(p) {
-    if (!confirm(`${p.full_name} uchun yangi parol yaratiladi. Eski parol ishlamay qoladi. Davom etasizmi?`)) return
+    const ok = await ask({
+      title: 'Parolni yangilash',
+      message: `${p.full_name} uchun yangi parol yaratilsinmi?`,
+      detail: 'Eski parol darhol ishlamay qoladi — yangi parol bir marta ko\'rsatiladi.',
+      confirmLabel: 'Ha, yangilash',
+    })
+    if (!ok) return
     try {
       const res = await resetParentPassword(p.id)
       setCreds({ full_name: p.full_name, username: p.username, password: res.generated_password })
@@ -130,7 +139,13 @@ export default function Parents({ currentUser }) {
   }
 
   async function handleUnlink(p, child) {
-    if (!confirm(`${child.student_name} ushbu ota-onadan uziladi. Tasdiqlaysizmi?`)) return
+    const ok = await ask({
+      title: 'Farzandni uzish',
+      message: `${child.student_name} ushbu ota-onadan uzilsinmi?`,
+      detail: "Ota-ona mobil ilovada bu farzandning ma'lumotlarini ko'ra olmaydi.",
+      confirmLabel: 'Ha, uzish',
+    })
+    if (!ok) return
     try {
       await unlinkParentChild(p.id, child.student_id)
       toast.success("Uzildi")
@@ -145,117 +160,117 @@ export default function Parents({ currentUser }) {
     )
   }
 
+  const columns = [
+    { key: 'full_name', header: 'Ota-ona', sortable: true, render: p => <strong>{p.full_name}</strong> },
+    { key: 'phone', header: 'Telefon', sortable: true },
+    {
+      key: 'username', header: 'Login', sortable: true,
+      render: p => (
+        <span className="cell-copy">
+          <code>{p.username}</code>
+          <button className="btn-icon" title="Loginni nusxalash" aria-label="Loginni nusxalash" onClick={() => copy(p.username)}>
+            <FontAwesomeIcon icon={faCopy} />
+          </button>
+        </span>
+      ),
+    },
+    {
+      key: 'children', header: 'Farzandlari', sortable: true,
+      sortValue: p => p.children.length,
+      render: p => p.children.length === 0
+        ? <span className="text-muted">—</span>
+        : (
+          <div className="chip-row">
+            {p.children.map(c => (
+              <span key={c.student_id} className="ui-badge ui-badge-sm ui-badge-primary">
+                {c.student_name}
+                {canManage && (
+                  <button className="chip-x" title="Uzish" aria-label="Uzish" onClick={() => handleUnlink(p, c)}>
+                    <FontAwesomeIcon icon={faXmark} />
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        ),
+    },
+    {
+      key: 'is_active', header: 'Holat', sortable: true,
+      render: p => (
+        <span className={`status-badge ${p.is_active ? 'active' : 'inactive'}`}>
+          {p.is_active ? 'Faol' : 'Bloklangan'}
+        </span>
+      ),
+    },
+    ...(canManage ? [{
+      key: 'actions', header: '', align: 'right', className: 'actions',
+      render: p => (
+        <RowActions>
+          <button className="btn-icon" title="Farzand biriktirish" aria-label="Farzand biriktirish" onClick={() => setLinkFor(p)}>
+            <FontAwesomeIcon icon={faUserPlus} />
+          </button>
+          <button className="btn-icon" title="Parolni yangilash" aria-label="Parolni yangilash" onClick={() => handleReset(p)}>
+            <FontAwesomeIcon icon={faKey} />
+          </button>
+          <button className="btn-icon" title={p.is_active ? 'Bloklash' : 'Faollashtirish'}
+            aria-label={p.is_active ? 'Bloklash' : 'Faollashtirish'} onClick={() => handleToggle(p)}>
+            <FontAwesomeIcon icon={p.is_active ? faToggleOn : faToggleOff} />
+          </button>
+        </RowActions>
+      ),
+    }] : []),
+  ]
+
   return (
     <div className="page">
+      {confirmUI}
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faPeopleRoof} className="page-icon" /> Ota-onalar</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faPeopleRoof} className="page-icon" /> Ota-onalar</h1>
+          <p className="page-subtitle">
+            <FontAwesomeIcon icon={faMobileScreen} /> Mobil ilova akkauntlari — davomat, baho va to'lovlar.
+            Parol faqat yaratilganda bir marta ko'rsatiladi.
+          </p>
+        </div>
+        <div className="header-actions">
           {isAdmin && (
             <button className="button secondary" onClick={() => { setBroadcastText(''); setBroadcastModal(true) }}>
               <FontAwesomeIcon icon={faPaperPlane} /> Telegram orqali xabar
             </button>
           )}
           {canManage && (
-            <button className="button primary" onClick={() => { setForm(EMPTY); setModal(true) }}>
+            <button className="button" onClick={() => { setForm(EMPTY); setModal(true) }}>
               <FontAwesomeIcon icon={faPlus} /> Akkaunt ochish
             </button>
           )}
         </div>
       </div>
 
-      <p className="text-muted" style={{ fontSize: 13, marginTop: -8 }}>
-        <FontAwesomeIcon icon={faMobileScreen} /> Bu akkauntlar bilan ota-onalar mobil ilovaga kiradi —
-        farzandining davomati, baholari va to'lovlarini ko'radi. Parol faqat yaratilganda bir marta ko'rsatiladi.
-      </p>
-
-      <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8, margin: '12px 0' }}>
-        <input
-          className="field" style={{ maxWidth: 320 }}
-          placeholder="Ism, telefon yoki login bo'yicha qidirish"
-          value={search} onChange={e => setSearch(e.target.value)}
-        />
-        <button className="button secondary" type="submit">
-          <FontAwesomeIcon icon={faSearch} /> Qidirish
-        </button>
-      </form>
-
-      {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Ota-ona</th>
-                <th>Telefon</th>
-                <th>Login</th>
-                <th>Farzandlari</th>
-                <th>Holat</th>
-                {canManage && <th></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((p, i) => (
-                <tr key={p.id} className={!p.is_active ? 'row-inactive' : ''}>
-                  <td className="text-muted">{i + 1}</td>
-                  <td><strong>{p.full_name}</strong></td>
-                  <td>{p.phone}</td>
-                  <td>
-                    <code>{p.username}</code>{' '}
-                    <button className="btn-icon" title="Loginni nusxalash" onClick={() => copy(p.username)}>
-                      <FontAwesomeIcon icon={faCopy} />
-                    </button>
-                  </td>
-                  <td>
-                    {p.children.length === 0 && <span className="text-muted">—</span>}
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {p.children.map(c => (
-                        <span key={c.student_id} className="badge" style={{ background: '#dbeafe', color: '#1d4ed8' }}>
-                          {c.student_name}
-                          {canManage && (
-                            <button
-                              className="btn-icon" title="Uzish"
-                              style={{ padding: '0 2px', marginLeft: 2 }}
-                              onClick={() => handleUnlink(p, c)}
-                            >
-                              <FontAwesomeIcon icon={faXmark} />
-                            </button>
-                          )}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`status-badge ${p.is_active ? 'active' : 'inactive'}`}>
-                      {p.is_active ? 'Faol' : 'Bloklangan'}
-                    </span>
-                  </td>
-                  {canManage && (
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn-icon" title="Farzand biriktirish" onClick={() => setLinkFor(p)}>
-                        <FontAwesomeIcon icon={faUserPlus} />
-                      </button>
-                      <button className="btn-icon" title="Parolni yangilash" onClick={() => handleReset(p)}>
-                        <FontAwesomeIcon icon={faKey} />
-                      </button>
-                      <button
-                        className="btn-icon" title={p.is_active ? 'Bloklash' : 'Faollashtirish'}
-                        onClick={() => handleToggle(p)}
-                      >
-                        <FontAwesomeIcon icon={p.is_active ? faToggleOn : faToggleOff} />
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-              {items.length === 0 && (
-                <tr><td colSpan={canManage ? 7 : 6} className="muted center py-4">Ota-ona akkauntlari yo'q</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        rows={items}
+        loading={loading}
+        rowClassName={p => (!p.is_active ? 'row-inactive' : undefined)}
+        clientPageSize={25}
+        densityToggle densityKey="parents"
+        toolbar={
+          <form onSubmit={handleSearch} className="search-wrap">
+            <FontAwesomeIcon icon={faSearch} className="search-icon" />
+            <input
+              className="search-input"
+              placeholder="Ism, telefon yoki login..."
+              value={search} onChange={e => setSearch(e.target.value)}
+            />
+          </form>
+        }
+        empty={{
+          icon: faPeopleRoof,
+          title: search ? 'Hech narsa topilmadi' : "Ota-ona akkauntlari yo'q",
+          description: search
+            ? "Qidiruv so'zini o'zgartirib ko'ring."
+            : 'Akkaunt ochilgach, ota-ona mobil ilovaga kira oladi.',
+        }}
+      />
 
       {/* Yangi akkaunt modali */}
       {modal && (
@@ -293,7 +308,7 @@ export default function Parents({ currentUser }) {
 
               <label>Farzandlari (talabalar) *</label>
               <div style={{
-                maxHeight: 180, overflowY: 'auto', border: '1px solid var(--border, #e2e8f0)',
+                maxHeight: 180, overflowY: 'auto', border: '1px solid var(--border, var(--border))',
                 borderRadius: 8, padding: '6px 10px',
               }}>
                 {students.map(s => (
@@ -311,7 +326,7 @@ export default function Parents({ currentUser }) {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setModal(false)}>Bekor</button>
-              <button className="button primary" onClick={handleCreate} disabled={saving}>
+              <button className="button" onClick={handleCreate} disabled={saving}>
                 {saving ? 'Yaratilmoqda...' : 'Yaratish'}
               </button>
             </div>
@@ -354,7 +369,7 @@ export default function Parents({ currentUser }) {
               </button>
             </div>
             <div className="modal-footer">
-              <button className="button primary" onClick={() => setCreds(null)}>Yopdim, saqlab oldim</button>
+              <button className="button" onClick={() => setCreds(null)}>Yopdim, saqlab oldim</button>
             </div>
           </div>
         </div>
@@ -410,7 +425,7 @@ export default function Parents({ currentUser }) {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setBroadcastModal(false)}>Bekor</button>
-              <button className="button primary" onClick={handleBroadcast} disabled={broadcasting}>
+              <button className="button" onClick={handleBroadcast} disabled={broadcasting}>
                 {broadcasting ? 'Yuborilmoqda...' : 'Yuborish'}
               </button>
             </div>

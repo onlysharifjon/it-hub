@@ -13,6 +13,10 @@ import {
   fetchEvents, createEvent, updateEvent, deleteEvent,
   fetchCoinSummary, giveCoins, deductCoins, fetchCoinTransactions, fetchCoinTotals, cancelCoinTransaction,
 } from '../api'
+import DataTable, { RowActions } from './ui/DataTable'
+import Badge from './ui/Badge'
+import useConfirm from './ui/useConfirm'
+import { isoToInput, inputToIso, fmtDateTime } from '../utils/datetime'
 
 const EXAM_TYPES = { exam: 'Imtihon', test: 'Test', quiz: 'Quiz', project: 'Loyiha' }
 
@@ -27,10 +31,19 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+const EMPTY_BY_TAB = {
+  grades: "Baholar yo'q",
+  coins: 'Hali coin berilmagan',
+  feedback: "Izohlar yo'q",
+  certificates: "Sertifikatlar yo'q",
+  events: "Tadbirlar yo'q",
+}
+
 export default function Academic({ currentUser }) {
+  const [confirmUI, ask] = useConfirm()
   const isTeacher = currentUser?.role === 'teacher'
   const isAdmin = currentUser?.role === 'admin'
-  const canCertificates = ['admin', 'metodist', 'hunter'].includes(currentUser?.role)
+  const canCertificates = ['admin', 'support_teacher', 'hunter'].includes(currentUser?.role)
 
   const [tab, setTab] = useState('grades')
   const [options, setOptions] = useState([])
@@ -107,11 +120,13 @@ export default function Academic({ currentUser }) {
     } else if (tab === 'certificates') {
       setForm({ group_id: '', student_id: item.student_id, title: item.title, file_url: item.file_url, issued_at: item.issued_at || '' })
     } else {
-      const dt = new Date(item.event_date)
+      // Toshkent devor-soati: `toISOString()` UTC beradi va kechki tadbir
+      // tahrirlashda BIR KUN OLDINGI sanaga tushib qolardi.
+      const dtLocal = isoToInput(item.event_date)
       setForm({
         title: item.title, description: item.description || '',
-        event_date: dt.toISOString().slice(0, 10),
-        event_time: dt.toTimeString().slice(0, 5),
+        event_date: dtLocal.slice(0, 10),
+        event_time: dtLocal.slice(11, 16),
         location: item.location || '',
       })
     }
@@ -169,7 +184,7 @@ export default function Academic({ currentUser }) {
         if (!form.event_date) throw new Error('Sanani tanlang')
         const p = {
           title: form.title.trim(), description: form.description || null,
-          event_date: `${form.event_date}T${form.event_time || '10:00'}:00`,
+          event_date: inputToIso(`${form.event_date}T${form.event_time || '10:00'}`),
           location: form.location || null,
         }
         if (editing) await updateEvent(editing, p)
@@ -184,7 +199,12 @@ export default function Academic({ currentUser }) {
 
   async function handleDelete(item) {
     const label = tab === 'grades' ? 'Baho' : tab === 'feedback' ? 'Izoh' : tab === 'certificates' ? 'Sertifikat' : 'Tadbir'
-    if (!confirm(`${label} o'chiriladi. Tasdiqlaysizmi?`)) return
+    const ok = await ask({
+      title: "O'chirish",
+      message: `${label} o'chirilsinmi?`,
+      confirmLabel: "Ha, o'chirish",
+    })
+    if (!ok) return
     try {
       if (tab === 'grades') await deleteGrade(item.id)
       else if (tab === 'feedback') await deleteFeedback(item.id)
@@ -196,7 +216,13 @@ export default function Academic({ currentUser }) {
   }
 
   async function handleCancelCoin(t) {
-    if (!confirm(`${Math.abs(t.amount)} coinlik yozuv bekor qilinadi. Tasdiqlaysizmi?`)) return
+    const ok = await ask({
+      title: 'Coin yozuvini bekor qilish',
+      message: `${Math.abs(t.amount)} coinlik yozuv bekor qilinsinmi?`,
+      detail: "Talabaning coin balansi shu miqdorga qaytariladi.",
+      confirmLabel: 'Ha, bekor qilish',
+    })
+    if (!ok) return
     try {
       await cancelCoinTransaction(t.id)
       toast.success('Bekor qilindi')
@@ -236,18 +262,159 @@ export default function Academic({ currentUser }) {
     { key: 'events', label: 'Tadbirlar', icon: faCalendarDays },
   ]
 
+  // ── Har bir tab uchun ustunlar ────────────────────────────────────────
+  const gradeTone = g => {
+    const r = g.max_score ? g.score / g.max_score : 0
+    return r >= 0.8 ? 'success' : r >= 0.6 ? 'warning' : 'danger'
+  }
+  const editDeleteCol = {
+    key: 'actions', header: '', align: 'right', className: 'actions',
+    render: r => (
+      <RowActions>
+        <button className="btn-icon" title="Tahrirlash" aria-label="Tahrirlash" onClick={() => openEdit(r)}>
+          <FontAwesomeIcon icon={faPen} />
+        </button>
+        <button className="btn-icon danger" title="O'chirish" aria-label="O'chirish" onClick={() => handleDelete(r)}>
+          <FontAwesomeIcon icon={faTrash} />
+        </button>
+      </RowActions>
+    ),
+  }
+
+  const COLUMNS_BY_TAB = {
+    grades: [
+      { key: 'student_name', header: 'Talaba', sortable: true, render: g => <strong>{g.student_name}</strong> },
+      { key: 'group_name', header: 'Guruh', sortable: true, render: g => g.group_name || '—' },
+      {
+        key: 'subject', header: 'Fan / Mavzu', sortable: true,
+        render: g => (
+          <>
+            {g.subject}
+            {g.comment && <div className="muted-sm">{g.comment}</div>}
+          </>
+        ),
+      },
+      { key: 'exam_type', header: 'Turi', sortable: true, render: g => EXAM_TYPES[g.exam_type] || g.exam_type },
+      {
+        key: 'score', header: 'Ball', align: 'right', sortable: true,
+        sortValue: g => (g.max_score ? g.score / g.max_score : 0),
+        render: g => <Badge variant={gradeTone(g)} size="sm">{g.score}/{g.max_score}</Badge>,
+      },
+      { key: 'exam_date', header: 'Sana', sortable: true, render: g => <span className="muted-sm">{fmtDate(g.exam_date)}</span> },
+      { key: 'created_by_name', header: "Kim qo'ydi", sortable: true, render: g => <span className="text-muted">{g.created_by_name || '—'}</span> },
+      editDeleteCol,
+    ],
+    coins: [
+      { key: 'student_name', header: 'Talaba', sortable: true, render: t => <strong>{t.student_name}</strong> },
+      { key: 'group_name', header: 'Guruh', sortable: true, render: t => t.group_name || '—' },
+      {
+        key: 'amount', header: 'Coin', align: 'right', sortable: true,
+        sortValue: t => Number(t.amount),
+        render: t => (
+          <Badge variant={t.amount < 0 ? 'danger' : 'warning'} size="sm">
+            <FontAwesomeIcon icon={faCoins} /> {t.amount < 0 ? t.amount : `+${t.amount}`}
+          </Badge>
+        ),
+      },
+      { key: 'reason', header: 'Sabab', render: t => t.reason || <span className="text-muted">—</span> },
+      { key: 'teacher_name', header: 'Kim berdi', sortable: true, render: t => <span className="text-muted">{t.teacher_name || '—'}</span> },
+      { key: 'created_at', header: 'Sana', sortable: true, render: t => <span className="muted-sm">{fmtDate(t.created_at)}</span> },
+      {
+        key: 'actions', header: '', align: 'right', className: 'actions',
+        render: t => (isAdmin || t.teacher_id === currentUser?.id) ? (
+          <RowActions>
+            <button className="btn-icon danger" title="Bekor qilish" aria-label="Bekor qilish" onClick={() => handleCancelCoin(t)}>
+              <FontAwesomeIcon icon={faTrash} />
+            </button>
+          </RowActions>
+        ) : null,
+      },
+    ],
+    feedback: [
+      { key: 'student_name', header: 'Talaba', sortable: true, render: f => <strong>{f.student_name}</strong> },
+      { key: 'group_name', header: 'Guruh', sortable: true, render: f => f.group_name || '—' },
+      { key: 'comment', header: 'Izoh', render: f => <span className="cell-clamp">{f.comment}</span> },
+      { key: 'teacher_name', header: "O'qituvchi", sortable: true, render: f => <span className="text-muted">{f.teacher_name || '—'}</span> },
+      { key: 'created_at', header: 'Sana', sortable: true, render: f => <span className="muted-sm">{fmtDate(f.created_at)}</span> },
+      editDeleteCol,
+    ],
+    certificates: [
+      { key: 'student_name', header: 'Talaba', sortable: true, render: c => <strong>{c.student_name}</strong> },
+      { key: 'title', header: 'Sertifikat', sortable: true },
+      {
+        key: 'file_url', header: 'PDF',
+        render: c => (
+          <a href={c.file_url} target="_blank" rel="noreferrer" className="btn-sm">
+            <FontAwesomeIcon icon={faFilePdf} /> Ochish
+          </a>
+        ),
+      },
+      { key: 'issued_at', header: 'Berilgan sana', sortable: true, render: c => <span className="muted-sm">{fmtDate(c.issued_at)}</span> },
+      { key: 'created_by_name', header: 'Kim berdi', sortable: true, render: c => <span className="text-muted">{c.created_by_name || '—'}</span> },
+      editDeleteCol,
+    ],
+    events: [
+      {
+        key: 'title', header: 'Tadbir', sortable: true,
+        render: ev => (
+          <>
+            <strong>{ev.title}</strong>
+            {ev.description && <div className="muted-sm">{ev.description}</div>}
+          </>
+        ),
+      },
+      {
+        key: 'event_date', header: 'Sana', sortable: true,
+        render: ev => fmtDateTime(ev.event_date),
+      },
+      { key: 'location', header: 'Joy', sortable: true, render: ev => ev.location || '—' },
+      {
+        key: 'is_active', header: 'Holat', sortable: true,
+        render: ev => (
+          <span className={`status-badge ${ev.is_active ? 'active' : 'inactive'}`}>
+            {ev.is_active ? 'Faol' : 'Yashirilgan'}
+          </span>
+        ),
+      },
+      { key: 'created_by_name', header: 'Kim yaratdi', sortable: true, render: ev => <span className="text-muted">{ev.created_by_name || '—'}</span> },
+      ...(isAdmin ? [{
+        key: 'actions', header: '', align: 'right', className: 'actions',
+        render: ev => (
+          <RowActions>
+            <button className="btn-icon" title={ev.is_active ? 'Yashirish' : 'Faollashtirish'}
+              aria-label={ev.is_active ? 'Yashirish' : 'Faollashtirish'} onClick={() => handleEventToggle(ev)}>
+              <FontAwesomeIcon icon={ev.is_active ? faToggleOn : faToggleOff} />
+            </button>
+            <button className="btn-icon" title="Tahrirlash" aria-label="Tahrirlash" onClick={() => openEdit(ev)}>
+              <FontAwesomeIcon icon={faPen} />
+            </button>
+            <button className="btn-icon danger" title="O'chirish" aria-label="O'chirish" onClick={() => handleDelete(ev)}>
+              <FontAwesomeIcon icon={faTrash} />
+            </button>
+          </RowActions>
+        ),
+      }] : []),
+    ],
+  }
+
   return (
     <div className="page">
+      {confirmUI}
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faGraduationCap} className="page-icon" /> Akademik</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faGraduationCap} className="page-icon" /> Baholar va izohlar</h1>
+          <p className="page-subtitle">
+            Bu yerdagi baholar, izohlar va sertifikatlar ota-onalar mobil ilovasida ko'rinadi.
+          </p>
+        </div>
+        <div className="header-actions">
           {tab === 'coins' && isAdmin && (
-            <button className="button secondary" onClick={openDeduct} style={{ color: '#dc2626' }}>
+            <button className="button secondary" onClick={openDeduct} style={{ color: 'var(--danger-text)' }}>
               <FontAwesomeIcon icon={faCoins} /> Coin yechish
             </button>
           )}
           {canWrite && (
-            <button className="button primary" onClick={openCreate}
+            <button className="button" onClick={openCreate}
               disabled={tab === 'coins' && coinSummary?.remaining === 0}>
               <FontAwesomeIcon icon={tab === 'coins' ? faCoins : faPlus} />
               {' '}{tab === 'grades' ? "Baho qo'shish" : tab === 'coins' ? 'Coin berish'
@@ -256,10 +423,6 @@ export default function Academic({ currentUser }) {
           )}
         </div>
       </div>
-
-      <p className="text-muted" style={{ fontSize: 13, marginTop: -8 }}>
-        Bu yerdagi baholar, izohlar va sertifikatlar ota-onalar mobil ilovasida ko'rinadi.
-      </p>
 
       <div className="tab-bar">
         {TABS.map(t => (
@@ -275,7 +438,7 @@ export default function Academic({ currentUser }) {
           display: 'flex', alignItems: 'center', gap: 12, margin: '12px 0',
           padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)',
         }}>
-          <FontAwesomeIcon icon={faCoins} style={{ color: '#ca8a04', fontSize: 22 }} />
+          <FontAwesomeIcon icon={faCoins} style={{ color: 'var(--warning-text)', fontSize: 22 }} />
           {coinSummary.budget === null ? (
             <span>Bu oy berilgani: <strong>{coinSummary.spent}</strong> coin (siz uchun limit yo'q)</span>
           ) : (
@@ -284,7 +447,7 @@ export default function Academic({ currentUser }) {
               <div style={{ flex: 1, maxWidth: 220, height: 8, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
                 <div style={{
                   width: `${coinSummary.budget ? Math.round((coinSummary.remaining / coinSummary.budget) * 100) : 0}%`,
-                  height: '100%', background: '#ca8a04', transition: 'width .3s',
+                  height: '100%', background: 'var(--warning-text)', transition: 'width .3s',
                 }} />
               </div>
               <span className="text-muted" style={{ fontSize: 12 }}>
@@ -305,194 +468,51 @@ export default function Academic({ currentUser }) {
         </div>
       )}
 
-      {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            {tab === 'grades' && (
-              <>
-                <thead>
-                  <tr><th>#</th><th>Talaba</th><th>Guruh</th><th>Fan/Mavzu</th><th>Turi</th><th>Ball</th><th>Sana</th><th>Kim qo'ydi</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {items.map((g, i) => (
-                    <tr key={g.id}>
-                      <td className="text-muted">{i + 1}</td>
-                      <td><strong>{g.student_name}</strong></td>
-                      <td>{g.group_name || '—'}</td>
-                      <td>{g.subject}{g.comment && <div className="text-muted" style={{ fontSize: 12 }}>{g.comment}</div>}</td>
-                      <td>{EXAM_TYPES[g.exam_type] || g.exam_type}</td>
-                      <td>
-                        <span className="badge" style={{
-                          background: g.score / g.max_score >= 0.8 ? '#dcfce7' : g.score / g.max_score >= 0.6 ? '#fef9c3' : '#fee2e2',
-                          color: g.score / g.max_score >= 0.8 ? '#16a34a' : g.score / g.max_score >= 0.6 ? '#ca8a04' : '#dc2626',
-                        }}>{g.score}/{g.max_score}</span>
-                      </td>
-                      <td>{fmtDate(g.exam_date)}</td>
-                      <td className="text-muted">{g.created_by_name || '—'}</td>
-                      <td>
-                        <button className="btn-icon" title="Tahrirlash" onClick={() => openEdit(g)}><FontAwesomeIcon icon={faPen} /></button>
-                        <button className="btn-icon danger" title="O'chirish" onClick={() => handleDelete(g)}><FontAwesomeIcon icon={faTrash} /></button>
-                      </td>
-                    </tr>
-                  ))}
-                  {items.length === 0 && <tr><td colSpan={9} className="muted center py-4">Baholar yo'q</td></tr>}
-                </tbody>
-              </>
-            )}
-
-            {tab === 'coins' && (
-              <>
-                <thead>
-                  <tr><th>#</th><th>Talaba</th><th>Guruh</th><th>Coin</th><th>Sabab</th><th>Kim berdi</th><th>Sana</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {items.map((t, i) => (
-                    <tr key={t.id}>
-                      <td className="text-muted">{i + 1}</td>
-                      <td><strong>{t.student_name}</strong></td>
-                      <td>{t.group_name || '—'}</td>
-                      <td>
-                        <span className="badge" style={t.amount < 0
-                          ? { background: '#fee2e2', color: '#dc2626' }
-                          : { background: '#fef9c3', color: '#ca8a04' }}>
-                          <FontAwesomeIcon icon={faCoins} /> {t.amount < 0 ? t.amount : `+${t.amount}`}
-                        </span>
-                      </td>
-                      <td>{t.reason || <span className="text-muted">—</span>}</td>
-                      <td className="text-muted">{t.teacher_name || '—'}</td>
-                      <td>{fmtDate(t.created_at)}</td>
-                      <td>
-                        {(isAdmin || t.teacher_id === currentUser?.id) && (
-                          <button className="btn-icon danger" title="Bekor qilish" onClick={() => handleCancelCoin(t)}>
-                            <FontAwesomeIcon icon={faTrash} />
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {items.length === 0 && <tr><td colSpan={8} className="muted center py-4">Hali coin berilmagan</td></tr>}
-                </tbody>
-              </>
-            )}
-
-            {tab === 'feedback' && (
-              <>
-                <thead>
-                  <tr><th>#</th><th>Talaba</th><th>Guruh</th><th>Izoh</th><th>O'qituvchi</th><th>Sana</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {items.map((f, i) => (
-                    <tr key={f.id}>
-                      <td className="text-muted">{i + 1}</td>
-                      <td><strong>{f.student_name}</strong></td>
-                      <td>{f.group_name || '—'}</td>
-                      <td style={{ maxWidth: 420 }}>{f.comment}</td>
-                      <td className="text-muted">{f.teacher_name || '—'}</td>
-                      <td>{fmtDate(f.created_at)}</td>
-                      <td>
-                        <button className="btn-icon" title="Tahrirlash" onClick={() => openEdit(f)}><FontAwesomeIcon icon={faPen} /></button>
-                        <button className="btn-icon danger" title="O'chirish" onClick={() => handleDelete(f)}><FontAwesomeIcon icon={faTrash} /></button>
-                      </td>
-                    </tr>
-                  ))}
-                  {items.length === 0 && <tr><td colSpan={7} className="muted center py-4">Izohlar yo'q</td></tr>}
-                </tbody>
-              </>
-            )}
-
-            {tab === 'certificates' && (
-              <>
-                <thead>
-                  <tr><th>#</th><th>Talaba</th><th>Sertifikat</th><th>PDF</th><th>Berilgan sana</th><th>Kim berdi</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {items.map((c, i) => (
-                    <tr key={c.id}>
-                      <td className="text-muted">{i + 1}</td>
-                      <td><strong>{c.student_name}</strong></td>
-                      <td>{c.title}</td>
-                      <td>
-                        <a href={c.file_url} target="_blank" rel="noreferrer" className="button secondary" style={{ padding: '4px 10px', fontSize: 12 }}>
-                          <FontAwesomeIcon icon={faFilePdf} /> Ochish
-                        </a>
-                      </td>
-                      <td>{fmtDate(c.issued_at)}</td>
-                      <td className="text-muted">{c.created_by_name || '—'}</td>
-                      <td>
-                        <button className="btn-icon" title="Tahrirlash" onClick={() => openEdit(c)}><FontAwesomeIcon icon={faPen} /></button>
-                        <button className="btn-icon danger" title="O'chirish" onClick={() => handleDelete(c)}><FontAwesomeIcon icon={faTrash} /></button>
-                      </td>
-                    </tr>
-                  ))}
-                  {items.length === 0 && <tr><td colSpan={7} className="muted center py-4">Sertifikatlar yo'q</td></tr>}
-                </tbody>
-              </>
-            )}
-
-            {tab === 'events' && (
-              <>
-                <thead>
-                  <tr><th>#</th><th>Tadbir</th><th>Sana</th><th>Joy</th><th>Holat</th><th>Kim yaratdi</th>{isAdmin && <th></th>}</tr>
-                </thead>
-                <tbody>
-                  {items.map((ev, i) => (
-                    <tr key={ev.id} className={!ev.is_active ? 'row-inactive' : ''}>
-                      <td className="text-muted">{i + 1}</td>
-                      <td>
-                        <strong>{ev.title}</strong>
-                        {ev.description && <div className="text-muted" style={{ fontSize: 12 }}>{ev.description}</div>}
-                      </td>
-                      <td>{new Date(ev.event_date).toLocaleString('uz-UZ', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
-                      <td>{ev.location || '—'}</td>
-                      <td>
-                        <span className={`status-badge ${ev.is_active ? 'active' : 'inactive'}`}>
-                          {ev.is_active ? 'Faol' : 'Yashirilgan'}
-                        </span>
-                      </td>
-                      <td className="text-muted">{ev.created_by_name || '—'}</td>
-                      {isAdmin && (
-                        <td>
-                          <button className="btn-icon" title={ev.is_active ? 'Yashirish' : 'Faollashtirish'} onClick={() => handleEventToggle(ev)}>
-                            <FontAwesomeIcon icon={ev.is_active ? faToggleOn : faToggleOff} />
-                          </button>
-                          <button className="btn-icon" title="Tahrirlash" onClick={() => openEdit(ev)}><FontAwesomeIcon icon={faPen} /></button>
-                          <button className="btn-icon danger" title="O'chirish" onClick={() => handleDelete(ev)}><FontAwesomeIcon icon={faTrash} /></button>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                  {items.length === 0 && <tr><td colSpan={isAdmin ? 7 : 6} className="muted center py-4">Tadbirlar yo'q</td></tr>}
-                </tbody>
-              </>
-            )}
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={COLUMNS_BY_TAB[tab]}
+        rows={items}
+        loading={loading}
+        clientPageSize={25}
+        rowClassName={r => (tab === 'events' && !r.is_active ? 'row-inactive' : undefined)}
+        densityToggle densityKey={`academic-${tab}`}
+        toolbar={tab !== 'events' && (
+          <select className="field-sm" value={filterStudent} aria-label="Talaba bo'yicha filtr"
+            onChange={e => setFilterStudent(e.target.value)}>
+            <option value="">Barcha talabalar</option>
+            {allStudents.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
+          </select>
+        )}
+        empty={{
+          icon: TABS.find(t => t.key === tab)?.icon,
+          title: EMPTY_BY_TAB[tab],
+          description: filterStudent ? "Boshqa talabani tanlab ko'ring." : undefined,
+        }}
+      />
 
       {tab === 'coins' && !loading && coinTotals.length > 0 && (
-        <>
-          <h3 style={{ margin: '20px 0 8px' }}><FontAwesomeIcon icon={faAward} /> Coin reytingi</h3>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead><tr><th>O'rin</th><th>Talaba</th><th>Jami coin</th></tr></thead>
-              <tbody>
-                {coinTotals.slice(0, 10).map((t, i) => (
-                  <tr key={t.student_id}>
-                    <td>{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : <span className="text-muted">{i + 1}</span>}</td>
-                    <td><strong>{t.student_name}</strong></td>
-                    <td>
-                      <span className="badge" style={{ background: '#fef9c3', color: '#ca8a04' }}>
-                        <FontAwesomeIcon icon={faCoins} /> {t.total}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <section>
+          <div className="ui-section-head">
+            <div className="ui-section-head-text">
+              <h2><FontAwesomeIcon icon={faAward} /> Coin reytingi</h2>
+              <p>Eng ko'p coin to'plagan 10 ta talaba</p>
+            </div>
           </div>
-        </>
+          <DataTable
+            columns={[
+              {
+                key: 'rank', header: "O'rin", width: 70,
+                render: (t, i) => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : <span className="text-muted">{i + 1}</span>,
+              },
+              { key: 'student_name', header: 'Talaba', render: t => <strong>{t.student_name}</strong> },
+              {
+                key: 'total', header: 'Jami coin', align: 'right',
+                render: t => <Badge variant="warning" size="sm"><FontAwesomeIcon icon={faCoins} /> {t.total}</Badge>,
+              },
+            ]}
+            rows={coinTotals.slice(0, 10)}
+            rowKey={t => t.student_id}
+          />
+        </section>
       )}
 
       {modal && (
@@ -579,7 +599,7 @@ export default function Academic({ currentUser }) {
                     onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
                     placeholder={coinMode === 'give' && coinSummary?.remaining != null ? `Maks. ${coinSummary.remaining}` : '50'} />
                   {coinMode === 'deduct' ? (
-                    <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 8px', color: '#dc2626' }}>
+                    <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 8px', color: 'var(--danger-text)' }}>
                       Talabaning balansidan yechiladi — balans manfiy bo'lolmaydi. Ota-onaga bildirishnoma boradi.
                     </p>
                   ) : coinSummary?.remaining != null && (
@@ -664,7 +684,7 @@ export default function Academic({ currentUser }) {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setModal(false)}>Bekor</button>
-              <button className="button primary" onClick={handleSave} disabled={saving || uploading}>
+              <button className="button" onClick={handleSave} disabled={saving || uploading}>
                 {saving ? 'Saqlanmoqda...' : 'Saqlash'}
               </button>
             </div>

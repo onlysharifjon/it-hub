@@ -7,12 +7,14 @@ import {
   resendStaffWarning, cancelStaffWarning,
 } from '../api'
 import StaffWarningModal from './StaffWarningModal'
+import DataTable, { RowActions } from './ui/DataTable'
+import ConfirmDialog from './ui/ConfirmDialog'
+import Badge from './ui/Badge'
 
-const SEVERITY_LABEL = { gray: 'Kulrang', yellow: 'Sariq', red: 'Qizil' }
-const SEVERITY_STYLE = {
-  gray:   { background: '#e5e7eb', color: '#374151' },
-  yellow: { background: '#fef9c3', color: '#a16207' },
-  red:    { background: '#fee2e2', color: '#dc2626' },
+const SEVERITY = {
+  gray:   { label: 'Kulrang', variant: 'neutral', rank: 1 },
+  yellow: { label: 'Sariq',   variant: 'warning', rank: 2 },
+  red:    { label: 'Qizil',   variant: 'danger',  rank: 3 },
 }
 
 export default function AuditWarnings({ currentUser }) {
@@ -26,6 +28,7 @@ export default function AuditWarnings({ currentUser }) {
   const [modal, setModal] = useState(false)
   const [staffFilter, setStaffFilter] = useState('')
   const [busyId, setBusyId] = useState(null)
+  const [cancelTarget, setCancelTarget] = useState(null)
 
   useEffect(() => {
     if (!isAudit) return
@@ -56,12 +59,13 @@ export default function AuditWarnings({ currentUser }) {
     finally { setBusyId(null) }
   }
 
-  async function handleCancel(w) {
-    if (!confirm(`${w.staff_name} uchun bu ogohlantirish bekor qilinsinmi?`)) return
+  async function handleCancel() {
+    const w = cancelTarget
     setBusyId(w.id)
     try {
       await cancelStaffWarning(w.id)
       toast.success('Bekor qilindi')
+      setCancelTarget(null)
       load(staffFilter || undefined)
     } catch (e) { toast.error(e.message) }
     finally { setBusyId(null) }
@@ -71,81 +75,99 @@ export default function AuditWarnings({ currentUser }) {
     return <div className="page"><p className="muted center py-8">Ruxsat yo'q</p></div>
   }
 
+  const columns = [
+    { key: 'staff_name', header: 'Xodim', sortable: true, render: w => <strong>{w.staff_name}</strong> },
+    {
+      key: 'severity', header: 'Daraja', sortable: true,
+      sortValue: w => SEVERITY[w.severity]?.rank ?? 0,
+      render: w => {
+        const sev = SEVERITY[w.severity] || SEVERITY.gray
+        return <Badge variant={sev.variant} size="sm">{w.code ? `${w.code} — ${sev.label}` : sev.label}</Badge>
+      },
+    },
+    { key: 'reason', header: 'Sabab', render: w => <span className="cell-clamp">{w.reason}</span> },
+    { key: 'issued_by_name', header: 'Kim berdi', sortable: true, render: w => <span className="text-muted">{w.issued_by_name || '—'}</span> },
+    {
+      key: 'created_at', header: 'Sana', sortable: true,
+      render: w => <span className="muted-sm">{new Date(w.created_at).toLocaleString('uz-UZ')}</span>,
+    },
+    {
+      key: 'delivery', header: 'Yetkazish', sortable: true,
+      sortValue: w => (w.cancelled_at ? 2 : w.notified_at ? 0 : 1),
+      render: w => w.cancelled_at
+        ? <span className="status-badge inactive">Bekor qilingan</span>
+        : w.notified_at
+          ? <span className="status-badge active">Yetkazildi</span>
+          : <span className="status-badge pending" title={w.notify_error || ''}>Yetkazilmadi</span>,
+    },
+    {
+      key: 'actions', header: '', align: 'right', className: 'actions',
+      render: w => (
+        <RowActions>
+          {!w.cancelled_at && !w.notified_at && (
+            <button className="btn-icon" title="Qayta yuborish" aria-label="Qayta yuborish"
+              disabled={busyId === w.id} onClick={() => handleResend(w)}>
+              <FontAwesomeIcon icon={faPaperPlane} />
+            </button>
+          )}
+          {!w.cancelled_at && isAdmin && (
+            <button className="btn-icon danger" title="Bekor qilish" aria-label="Bekor qilish"
+              disabled={busyId === w.id} onClick={() => setCancelTarget(w)}>
+              <FontAwesomeIcon icon={faBan} />
+            </button>
+          )}
+        </RowActions>
+      ),
+    },
+  ]
+
+  const activeCount = items.filter(w => !w.cancelled_at).length
+
   return (
     <div className="page">
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faTriangleExclamation} className="page-icon" /> Ogohlantirishlar</h1>
-        <button className="button primary" onClick={() => setModal(true)}>
-          <FontAwesomeIcon icon={faPlus} /> Ogohlantirish berish
-        </button>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faTriangleExclamation} className="page-icon" /> Ogohlantirishlar</h1>
+          <p className="page-subtitle">{items.length} yozuv · {activeCount} tasi faol</p>
+        </div>
+        <div className="header-actions">
+          <button className="button" onClick={() => setModal(true)}>
+            <FontAwesomeIcon icon={faPlus} /> Ogohlantirish berish
+          </button>
+        </div>
       </div>
 
-      <select className="field" style={{ maxWidth: 320, marginBottom: 12 }}
-        value={staffFilter} onChange={e => applyFilter(e.target.value)}>
-        <option value="">Barcha xodimlar</option>
-        {staffList.map(s => <option key={s.id} value={s.id}>{s.full_name || s.username}</option>)}
-      </select>
+      <DataTable
+        columns={columns}
+        rows={items}
+        loading={loading}
+        rowClassName={w => (w.cancelled_at ? 'row-inactive' : undefined)}
+        clientPageSize={25}
+        densityToggle densityKey="warnings"
+        toolbar={
+          <select className="field-sm" value={staffFilter} onChange={e => applyFilter(e.target.value)}
+            aria-label="Xodim bo'yicha filtr">
+            <option value="">Barcha xodimlar</option>
+            {staffList.map(s => <option key={s.id} value={s.id}>{s.full_name || s.username}</option>)}
+          </select>
+        }
+        empty={{
+          icon: faTriangleExclamation,
+          title: "Ogohlantirishlar yo'q",
+          description: staffFilter ? 'Bu xodimga ogohlantirish berilmagan.' : 'Intizomiy yozuvlar shu yerda ko\'rinadi.',
+        }}
+      />
 
-      {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Xodim</th>
-                <th>Daraja</th>
-                <th>Sabab</th>
-                <th>Kim berdi</th>
-                <th>Sana</th>
-                <th>Yetkazish</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((w, i) => (
-                <tr key={w.id} className={w.cancelled_at ? 'row-inactive' : ''}>
-                  <td className="text-muted">{i + 1}</td>
-                  <td><strong>{w.staff_name}</strong></td>
-                  <td>
-                    <span className="badge" style={SEVERITY_STYLE[w.severity]}>
-                      {w.code ? `${w.code} — ${SEVERITY_LABEL[w.severity]}` : SEVERITY_LABEL[w.severity]}
-                    </span>
-                  </td>
-                  <td style={{ maxWidth: 320 }}>{w.reason}</td>
-                  <td className="text-muted">{w.issued_by_name || '—'}</td>
-                  <td className="text-muted">{new Date(w.created_at).toLocaleString('uz-UZ')}</td>
-                  <td>
-                    {w.cancelled_at ? (
-                      <span className="status-badge inactive">Bekor qilingan</span>
-                    ) : w.notified_at ? (
-                      <span className="status-badge active">Yetkazildi</span>
-                    ) : (
-                      <span className="status-badge inactive" title={w.notify_error || ''}>Yetkazilmadi</span>
-                    )}
-                  </td>
-                  <td>
-                    {!w.cancelled_at && !w.notified_at && (
-                      <button className="btn-icon" title="Qayta yuborish" disabled={busyId === w.id} onClick={() => handleResend(w)}>
-                        <FontAwesomeIcon icon={faPaperPlane} />
-                      </button>
-                    )}
-                    {!w.cancelled_at && isAdmin && (
-                      <button className="btn-icon danger" title="Bekor qilish" disabled={busyId === w.id} onClick={() => handleCancel(w)}>
-                        <FontAwesomeIcon icon={faBan} />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {items.length === 0 && (
-                <tr><td colSpan={8} className="muted center py-4">Ogohlantirishlar yo'q</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <ConfirmDialog
+        open={!!cancelTarget}
+        danger
+        title="Ogohlantirishni bekor qilish"
+        message={cancelTarget ? `${cancelTarget.staff_name} uchun bu ogohlantirish bekor qilinsinmi?` : ''}
+        detail="Bekor qilingan ogohlantirish tarixda qoladi, lekin faol hisoblanmaydi."
+        confirmLabel="Ha, bekor qilish"
+        onConfirm={handleCancel}
+        onClose={() => setCancelTarget(null)}
+      />
 
       {modal && (
         <StaffWarningModal

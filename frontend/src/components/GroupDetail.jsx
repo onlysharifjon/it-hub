@@ -5,19 +5,17 @@ import {
   faArrowLeft, faChalkboardTeacher, faCalendarDay,
   faPlus, faTrash, faCheck, faXmark, faMinus,
   faUserGraduate, faChartBar, faTag, faBookOpen, faPaperPlane,
-  faVideo, faArrowRightToBracket, faArrowRightFromBracket,
+  faVideo, faArrowRightToBracket, faArrowRightFromBracket, faAward,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework, fetchGroupCameraAttendance, tashkentToday } from '../api'
+import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework, fetchGroupCameraAttendance, tashkentToday, generateGroupCertificates, fetchGroupCertificates } from '../api'
+import useConfirm from './ui/useConfirm'
+import GroupCertificates from './GroupCertificates'
+import { STAGE_COLORS, STAGE_LABELS } from '../constants/domain'
+import { tashkentNow } from '../utils/datetime'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
-const NOW = new Date()
+const NOW = tashkentNow()
 
-const STAGE_COLORS = {
-  foundation: { bg: '#eff6ff', color: '#1d4ed8', bar: '#3b82f6' },
-  frontend:   { bg: '#f0fdf4', color: '#15803d', bar: '#22c55e' },
-  backend:    { bg: '#faf5ff', color: '#7e22ce', bar: '#a855f7' },
-}
-const STAGE_LABELS = { foundation: 'Foundation', frontend: 'Frontend', backend: 'Backend' }
 
 // JS getDay(): Yak=0, Du=1, Se=2, Chor=3, Pay=4, Ju=5, Shan=6
 const DOW_SHORT = ['Ya', 'Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh']
@@ -48,10 +46,13 @@ function scheduledWeekdays(schedule) {
 }
 
 export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
-  const isAdmin   = currentUser?.role === 'admin' || currentUser?.role === 'metodist'
+  const [confirmUI, ask] = useConfirm()
+  const isAdmin   = currentUser?.role === 'admin' || currentUser?.role === 'support_teacher'
   const isHunter  = currentUser?.role === 'hunter' || currentUser?.role === 'admin'
   // Yo'qlama qilish (sana qo'shish/o'chirish): admin, metodist, hunter, teacher
   const canEditAttendance = isAdmin || currentUser?.role === 'hunter' || currentUser?.role === 'teacher'
+  // Sertifikat bo'limi: hunter, admin va shu guruhning o'qituvchisi
+  const canCertificates = isHunter || currentUser?.role === 'teacher'
   const [month, setMonth] = useState(NOW.getMonth() + 1)
   const [year, setYear] = useState(NOW.getFullYear())
   const [group, setGroup] = useState(groupProp)
@@ -74,11 +75,25 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   const [camDays, setCamDays] = useState(7)
   const [camLoading, setCamLoading] = useState(false)
 
+  // Sertifikat generatsiyasi (hunter/admin/o'qituvchi)
+  const [certModal, setCertModal] = useState(false)
+  const [certCourse, setCertCourse] = useState('')
+  const [certDate, setCertDate] = useState('')
+  const [certSigner, setCertSigner] = useState("Sharifjon Mo'minov")
+  const [certGenerating, setCertGenerating] = useState(false)
+  const [certRecords, setCertRecords] = useState(null)     // ko'rsatilayotgan sertifikatlar | null
+  const [existingCerts, setExistingCerts] = useState(null) // avval tayyorlangan sertifikatlar (bo'lsa) — tugma matni/xatti-harakati uchun
+
   useEffect(() => { load() }, [month, year, groupProp.id])
   useEffect(() => {
     if (!canEditAttendance) return
     fetchNextLesson(groupProp.id).then(setNextLesson).catch(() => {})
     fetchHomeworks(groupProp.id).then(setHomeworks).catch(() => {})
+  }, [groupProp.id])
+  useEffect(() => {
+    if (!canCertificates) return
+    fetchGroupCertificates(groupProp.id).then(setExistingCerts)
+      .catch(e => console.error('Sertifikatlar holatini tekshirib bo\'lmadi:', e.message))
   }, [groupProp.id])
 
   async function loadCam(days = camDays) {
@@ -97,6 +112,38 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   function openHwModal() {
     setHwText(nextLesson?.homework || '')
     setHwModal(true)
+  }
+
+  function openCertModal() {
+    // Sertifikatlar avval tayyorlangan bo'lsa — to'g'ridan-to'g'ri ko'rsatiladi,
+    // qayta sozlash/generatsiya modalisiz.
+    if (existingCerts && existingCerts.length > 0) {
+      setCertRecords(existingCerts)
+      return
+    }
+    setCertCourse(STAGE_LABELS[group.stage] || '')
+    setCertDate(tashkentNow().toLocaleDateString('uz-UZ'))
+    setCertSigner("Sharifjon Mo'minov")
+    setCertModal(true)
+  }
+
+  async function handleGenerateCerts() {
+    setCertGenerating(true)
+    try {
+      const records = await generateGroupCertificates(group.id, {
+        course_label: certCourse,
+        issue_date: certDate,
+        signer_name: certSigner,
+        signer_title: 'CEO',
+      })
+      setCertRecords(records)
+      setExistingCerts(records)
+      setCertModal(false)
+    } catch (e) {
+      toast.error(e.message || "Sertifikatlarni generatsiya qilib bo'lmadi")
+    } finally {
+      setCertGenerating(false)
+    }
   }
 
   async function handleSendHomework() {
@@ -175,7 +222,13 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   }
 
   async function handleDeleteDate(d) {
-    if (!confirm(`${d} sanasidagi barcha yozuvlarni o'chirishni tasdiqlaysizmi?`)) return
+    const ok = await ask({
+      title: 'Dars kunini o\'chirish',
+      message: `${d} sanasidagi barcha davomat yozuvlari o'chirilsinmi?`,
+      detail: "Bu kun o'qituvchi maoshi va to'lov hisobiga ta'sir qiladi.",
+      confirmLabel: "Ha, o'chirish",
+    })
+    if (!ok) return
     try {
       await deleteAttendanceDate(group.id, d)
       toast.success("O'chirildi")
@@ -215,13 +268,14 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
 
   return (
     <div className="page">
+      {confirmUI}
       {/* Header */}
       <div className="page-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <button className="btn-sm" onClick={onBack}>
+        <div className="detail-title">
+          <button className="btn-sm" onClick={onBack} aria-label="Orqaga">
             <FontAwesomeIcon icon={faArrowLeft} /> Orqaga
           </button>
-          <h1 style={{ margin: 0 }}>
+          <h1>
             <FontAwesomeIcon icon={faUserGraduate} className="page-icon" />
             {group.name}
           </h1>
@@ -229,6 +283,12 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
             {group.is_active ? 'Faol' : 'Yopiq'}
           </span>
         </div>
+        {canCertificates && (
+          <button className="button small" onClick={openCertModal}>
+            <FontAwesomeIcon icon={faAward} />
+            {existingCerts && existingCerts.length > 0 ? 'Sertifikatlarni ko\'rish' : 'Sertifikat tayyorlash'}
+          </button>
+        )}
       </div>
 
       <div className="group-detail-layout">
@@ -279,7 +339,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
               </div>
               <div className="stat-row">
                 <span>Qoldi</span>
-                <strong style={{ color: monthRemaining <= 1 ? '#ef4444' : '#0a0a0a' }}>
+                <strong style={{ color: monthRemaining <= 1 ? 'var(--danger)' : 'var(--text)' }}>
                   {monthRemaining} dars
                   {monthRemaining <= 1 && monthScheduledTotal > 0 && ' ⚠'}
                 </strong>
@@ -309,7 +369,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                   📝 {nextLesson.homework}
                 </div>
               )}
-              <button className="button primary small" style={{ width: '100%', marginTop: 10 }} onClick={openHwModal}>
+              <button className="button small" style={{ width: '100%', marginTop: 10 }} onClick={openHwModal}>
                 <FontAwesomeIcon icon={faPaperPlane} /> Uy vazifasi yuborish
               </button>
               {homeworks.length > 0 && (
@@ -336,7 +396,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
             <div className="stat-row"><span>O'quvchilar</span><strong>{students.length}</strong></div>
             <div className="stat-row">
               <span>O'rtacha davomat</span>
-              <strong style={{ color: avgAttendance >= 80 ? '#22c55e' : avgAttendance >= 60 ? '#f59e0b' : '#ef4444' }}>
+              <strong style={{ color: avgAttendance >= 80 ? 'var(--success)' : avgAttendance >= 60 ? 'var(--warning)' : 'var(--danger)' }}>
                 {avgAttendance}%
               </strong>
             </div>
@@ -352,9 +412,9 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                   <div key={s.student_id} className="student-summary-row">
                     <span className="student-summary-name">{s.student_name}</span>
                     <span className="student-summary-stats">
-                      <span style={{ color: '#22c55e' }}>{s.present_count}</span>
+                      <span style={{ color: 'var(--success)' }}>{s.present_count}</span>
                       /
-                      <span style={{ color: '#ef4444' }}>{s.absent_count}</span>
+                      <span style={{ color: 'var(--danger)' }}>{s.absent_count}</span>
                       {totalLessons > 0 && <span className="text-muted"> ({pct}%)</span>}
                     </span>
                   </div>
@@ -456,8 +516,8 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                               <span style={{
                                 display: 'inline-flex', alignItems: 'center', gap: 5,
                                 padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-                                background: isKeldi ? '#dcfce7' : '#fee2e2',
-                                color:      isKeldi ? '#16a34a' : '#dc2626',
+                                background: isKeldi ? 'var(--success-bg)' : 'var(--danger-bg)',
+                                color:      isKeldi ? 'var(--success-text)' : 'var(--danger-text)',
                               }}>
                                 <FontAwesomeIcon icon={isKeldi ? faArrowRightToBracket : faArrowRightFromBracket} />
                                 {isKeldi ? 'Keldi' : 'Ketdi'}
@@ -494,7 +554,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                   style={{ width: 150 }}
                 />
                 <button
-                  className="button primary small"
+                  className="button small"
                   onClick={handleAddDate}
                   disabled={saving || !newDate || (schedSet && newDate && !schedSet.has(new Date(`${newDate}T00:00:00`).getDay()))}
                 >
@@ -508,7 +568,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
                 )}
               </>
             ) : (
-              <button className="button primary small" onClick={() => setAddingDate(true)}>
+              <button className="button small" onClick={() => setAddingDate(true)}>
                 <FontAwesomeIcon icon={faPlus} /> Dars qo'shish
               </button>
             )}
@@ -627,7 +687,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
             </div>
             <div className="modal-body">
               {nextLesson && (
-                <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--bg-secondary, #f5f5f5)', borderRadius: 8, fontSize: 13 }}>
+                <div style={{ marginBottom: 12, padding: '8px 12px', background: 'var(--bg-secondary, var(--surface-2))', borderRadius: 8, fontSize: 13 }}>
                   <div><strong>#{nextLesson.lesson_number}-dars</strong> (metodika bo'yicha)</div>
                   {nextLesson.lesson_title && <div>{nextLesson.lesson_title}</div>}
                 </div>
@@ -649,12 +709,50 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setHwModal(false)}>Bekor</button>
-              <button className="button primary" onClick={handleSendHomework} disabled={hwSending}>
+              <button className="button" onClick={handleSendHomework} disabled={hwSending}>
                 <FontAwesomeIcon icon={faPaperPlane} /> {hwSending ? 'Yuborilmoqda...' : 'Saqlash va yuborish'}
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Sertifikat sozlamalari modal */}
+      {certModal && (
+        <div className="modal-overlay" onClick={() => setCertModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3><FontAwesomeIcon icon={faAward} /> Sertifikat — {group.name}</h3>
+              <button className="modal-close" onClick={() => setCertModal(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="text-muted" style={{ fontSize: 13, marginBottom: 12 }}>
+                Guruhdagi barcha {(group.members || []).length} o'quvchi uchun sertifikat tayyorlanadi.
+                Har bir sertifikatda ism, sana, imzo va raqamni alohida ham tahrirlab, "Saqlash" bilan yozib qo'yish mumkin.
+              </div>
+              <label>Kurs nomi</label>
+              <input className="field" value={certCourse} onChange={e => setCertCourse(e.target.value)} placeholder="Masalan: Frontend" maxLength={40} />
+              <label style={{ marginTop: 10, display: 'block' }}>Berilgan sana</label>
+              <input className="field" value={certDate} onChange={e => setCertDate(e.target.value)} placeholder="03.09.2026" maxLength={20} />
+              <label style={{ marginTop: 10, display: 'block' }}>Imzo (CEO)</label>
+              <input className="field" value={certSigner} onChange={e => setCertSigner(e.target.value)} placeholder="F.I.O." maxLength={60} />
+            </div>
+            <div className="modal-footer">
+              <button className="button secondary" onClick={() => setCertModal(false)}>Bekor</button>
+              <button className="button" disabled={certGenerating} onClick={handleGenerateCerts}>
+                <FontAwesomeIcon icon={faAward} /> {certGenerating ? 'Generatsiya qilinmoqda...' : 'Generatsiya qilish'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {certRecords && (
+        <GroupCertificates
+          group={group}
+          records={certRecords}
+          onClose={() => setCertRecords(null)}
+        />
       )}
     </div>
   )

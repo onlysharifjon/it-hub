@@ -14,7 +14,11 @@ import {
   fetchStudentVacations, createStudentVacation, deleteStudentVacation,
   fetchGroups, addStudentToGroup, checkStudentTelegram, tashkentToday,
 } from '../api'
-import Pagination from './Pagination'
+import useConfirm from './ui/useConfirm'
+import DataTable from './ui/DataTable'
+import Badge from './ui/Badge'
+import Modal from './ui/Modal'
+import { Input, Textarea } from './ui/Field'
 import DateFilter from './DateFilter'
 
 const EMPTY = {
@@ -25,6 +29,7 @@ const EMPTY = {
 }
 
 export default function Students({ currentUser, onOpenStudent } = {}) {
+  const [confirmUI, ask] = useConfirm()
   const isHunter = currentUser?.role === 'hunter' || currentUser?.role === 'admin'
   const [tab, setTab] = useState('active')          // 'active' | 'demo' | 'archived'
   const [data, setData] = useState({ items: [], meta: null })
@@ -100,7 +105,13 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
   }
 
   async function handleArchive(s) {
-    if (!confirm(`"${s.full_name}" ni arxivga o'tkazishni tasdiqlaysizmi?`)) return
+    const ok = await ask({
+      title: 'Arxivga o\'tkazish',
+      message: `"${s.full_name}" arxivga o'tkazilsinmi?`,
+      detail: 'Arxivdagi talaba ro\'yxatlarda, moliya va qarzdorlik hisobotlarida ko\'rinmaydi. Keyin qaytarish mumkin.',
+      confirmLabel: 'Ha, arxivlash',
+    })
+    if (!ok) return
     try {
       await archiveStudent(s.id)
       toast.success("Arxivga o'tkazildi")
@@ -117,7 +128,14 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
   }
 
   async function handleMarkDemo(s) {
-    if (!confirm(`"${s.full_name}" demo bo'limiga o'tkazilsinmi? U guruhga biriktirilmaguncha hali demo darsga kelmagan hisoblanadi.`)) return
+    const ok = await ask({
+      title: 'Demo bo\'limiga o\'tkazish',
+      message: `"${s.full_name}" demo bo'limiga o'tkazilsinmi?`,
+      detail: 'U guruhga biriktirilmaguncha hali demo darsga kelmagan hisoblanadi.',
+      confirmLabel: 'Ha, o\'tkazish',
+      danger: false,
+    })
+    if (!ok) return
     try {
       await updateStudent(s.id, { is_demo: true })
       toast.success("Demo bo'limiga o'tkazildi")
@@ -178,15 +196,105 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
   const students = data.items || []
   const meta = data.meta
 
+  const studentColumns = [
+    { key: 'index', header: '#', width: 52, className: 'text-muted',
+      render: (_s, i) => (page - 1) * 20 + i + 1 },
+    { key: 'full_name', header: 'Ism Familiya', sortable: true, width: 190,
+      render: s => <strong>{s.full_name}</strong> },
+    { key: 'phone1', header: <><FontAwesomeIcon icon={faPhone} /> Telefon</>, sortable: true,
+      sortValue: s => s.phone1,
+      render: s => <a href={`tel:${s.phone1}`} onClick={e => e.stopPropagation()}>{s.phone1}</a> },
+    { key: 'parents', header: 'Ota-ona',
+      render: s => (s.father_name || s.mother_name) ? (
+        <div className="cell-stack">
+          {s.father_name && <div>{s.father_name}{s.father_phone ? ` — ${s.father_phone}` : ''}</div>}
+          {s.mother_name && <div>{s.mother_name}{s.mother_phone ? ` — ${s.mother_phone}` : ''}</div>}
+        </div>
+      ) : <span className="text-muted">—</span> },
+    { key: 'telegram_user_id', header: 'Telegram',
+      render: s => s.telegram_user_id ? (
+        <div className="cell-inline">
+          <Badge size="sm" variant={tgVariant(tgCheck[s.id])}>ID: {s.telegram_user_id}</Badge>
+          <button
+            className="btn-icon" title="Yetkazishni sinab ko'rish (sinov xabari yuboradi)"
+            aria-label="Telegram yetkazishni tekshirish"
+            disabled={tgCheck[s.id] === 'checking'}
+            onClick={e => { e.stopPropagation(); handleTelegramCheck(s) }}
+          >
+            <FontAwesomeIcon icon={tgCheck[s.id] === 'checking' ? faSpinner : faPaperPlane}
+              spin={tgCheck[s.id] === 'checking'} style={{ fontSize: 11 }} />
+          </button>
+        </div>
+      ) : <span className="text-muted">—</span> },
+    { key: 'group_names', header: 'Guruhlar',
+      render: s => (s.group_names && s.group_names.length > 0)
+        ? <div className="cell-chips">{s.group_names.map((n, gi) => <Badge key={gi} size="sm">{n}</Badge>)}</div>
+        : <span className="text-muted">—</span> },
+    { key: 'payment', header: "To'lov",
+      render: s => isHunter
+        ? <div onClick={e => { e.stopPropagation(); setVacationModal(s) }} style={{ cursor: 'pointer' }}
+            title="Ta'til belgilash uchun bosing"><PayStatus s={s} /></div>
+        : <PayStatus s={s} /> },
+    { key: 'created_at', header: "Qo'shilgan", sortable: true,
+      render: s => <span className="text-muted cell-sm">{fmtDate(s.created_at)}</span> },
+    { key: 'updated_at', header: 'Yangilangan', sortable: true,
+      render: s => <span className="text-muted cell-sm">{fmtDate(s.updated_at)}</span> },
+    { key: 'is_active', header: 'Holat', sortable: true,
+      render: s => tab === 'demo'
+        ? <Badge variant="warning" size="sm">Demo darsga kelmagan</Badge>
+        : <Badge variant={s.is_active ? 'success' : 'danger'} size="sm">{s.is_active ? 'Faol' : 'Nofaol'}</Badge> },
+    { key: 'actions', header: 'Amallar', className: 'actions',
+      render: s => (
+        <span onClick={e => e.stopPropagation()}>
+          <button className="btn-icon" onClick={() => onOpenStudent?.(s)} title="To'liq ma'lumot / tahrirlash" aria-label="Ochish">
+            <FontAwesomeIcon icon={faEye} />
+          </button>
+          <button className="btn-icon" onClick={() => openAttendance(s)} title="Davomat tarixi" aria-label="Davomat tarixi">
+            <FontAwesomeIcon icon={faClockRotateLeft} />
+          </button>
+          {tab === 'active' && (
+            <>
+              <button className="btn-icon" onClick={() => handleMarkDemo(s)} title="Demo bo'limiga o'tkazish" aria-label="Demo bo'limiga o'tkazish">
+                <FontAwesomeIcon icon={faHourglassHalf} />
+              </button>
+              <button className="btn-icon" onClick={() => handleToggle(s)} aria-label={s.is_active ? 'Nofaollashtirish' : 'Faollashtirish'}
+                title={s.is_active ? 'Nofaollashtirish' : 'Faollashtirish'}>
+                <FontAwesomeIcon icon={s.is_active ? faToggleOn : faToggleOff} />
+              </button>
+              <button className="btn-icon danger" onClick={() => handleArchive(s)} title="Arxivga o'tkazish" aria-label="Arxivga o'tkazish">
+                <FontAwesomeIcon icon={faBoxArchive} />
+              </button>
+            </>
+          )}
+          {tab === 'demo' && (
+            <>
+              <button className="btn-icon" onClick={() => setAttachModal(s)} title="Guruhga biriktirish" aria-label="Guruhga biriktirish">
+                <FontAwesomeIcon icon={faLayerGroup} />
+              </button>
+              <button className="btn-icon" onClick={() => handleUnmarkDemo(s)} title="Demo holatidan chiqarish" aria-label="Demo holatidan chiqarish">
+                <FontAwesomeIcon icon={faRotateLeft} />
+              </button>
+            </>
+          )}
+          {tab === 'archived' && (
+            <button className="btn-icon" onClick={() => handleUnarchive(s)} title="Arxivdan chiqarish" aria-label="Arxivdan chiqarish">
+              <FontAwesomeIcon icon={faArrowUpFromBracket} />
+            </button>
+          )}
+        </span>
+      ) },
+  ]
+
   return (
     <div className="page">
+      {confirmUI}
       <div className="page-header">
-        <h1>
-          <FontAwesomeIcon icon={faUserGraduate} className="page-icon" />
-          Talabalar
-        </h1>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faUserGraduate} className="page-icon" /> Talabalar</h1>
+          <p className="page-subtitle">Demo · faol · arxiv — butun o'quvchi bazasi</p>
+        </div>
         {(tab === 'active' || tab === 'demo') && (
-          <button className="button primary" onClick={openAdd}>
+          <button className="button" onClick={openAdd}>
             <FontAwesomeIcon icon={faPlus} /> Talaba qo'shish
           </button>
         )}
@@ -229,143 +337,22 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
         {meta && <span className="toolbar-count">Jami: <strong>{meta.total}</strong> ta talaba</span>}
       </div>
 
-      {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
-      ) : (
-        <>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Ism Familiya</th>
-                  <th><FontAwesomeIcon icon={faPhone} /> Telefon</th>
-                  <th>Ota-ona</th>
-                  <th>Telegram</th>
-                  <th>Guruhlar</th>
-                  <th>To'lov</th>
-                  <th>Qo'shilgan</th>
-                  <th>Yangilangan</th>
-                  <th>Holat</th>
-                  <th>Amallar</th>
-                </tr>
-              </thead>
-              <tbody>
-                {students.map((s, i) => (
-                  <tr key={s.id} className={!s.is_active ? 'row-inactive' : ''}>
-                    <td className="text-muted">{(page - 1) * 20 + i + 1}</td>
-                    <td><strong>{s.full_name}</strong></td>
-                    <td>
-                      <div>{s.phone1}</div>
-                    </td>
-                    <td>
-                      {(s.father_name || s.mother_name) ? (
-                        <div style={{ fontSize: 12 }}>
-                          {s.father_name && <div>{s.father_name}{s.father_phone ? ` — ${s.father_phone}` : ''}</div>}
-                          {s.mother_name && <div>{s.mother_name}{s.mother_phone ? ` — ${s.mother_phone}` : ''}</div>}
-                        </div>
-                      ) : <span className="text-muted">—</span>}
-                    </td>
-                    <td>
-                      {s.telegram_user_id ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span className="badge" style={tgBadgeStyle(tgCheck[s.id])}>ID: {s.telegram_user_id}</span>
-                          <button
-                            className="btn-icon"
-                            title="Yetkazishni sinab ko'rish (sinov xabari yuboradi)"
-                            style={{ padding: 4 }}
-                            disabled={tgCheck[s.id] === 'checking'}
-                            onClick={() => handleTelegramCheck(s)}
-                          >
-                            <FontAwesomeIcon icon={tgCheck[s.id] === 'checking' ? faSpinner : faPaperPlane} spin={tgCheck[s.id] === 'checking'} style={{ fontSize: 11 }} />
-                          </button>
-                        </div>
-                      ) : <span className="text-muted">—</span>}
-                    </td>
-                    <td>
-                      {(s.group_names && s.group_names.length > 0)
-                        ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 180 }}>
-                            {s.group_names.map((n, gi) => <span key={gi} className="badge">{n}</span>)}
-                          </div>
-                        : <span className="text-muted">—</span>}
-                    </td>
-                    <td>
-                      {isHunter ? (
-                        <div
-                          onClick={() => setVacationModal(s)}
-                          style={{ cursor: 'pointer' }}
-                          title="Ta'til belgilash uchun bosing"
-                        >
-                          <PayStatus s={s} />
-                        </div>
-                      ) : <PayStatus s={s} />}
-                    </td>
-                    <td className="text-muted" style={{ fontSize: 12 }}>{fmtDate(s.created_at)}</td>
-                    <td className="text-muted" style={{ fontSize: 12 }}>{fmtDate(s.updated_at)}</td>
-                    <td>
-                      {tab === 'demo' ? (
-                        <span className="status-badge inactive" style={{ background: '#fef3c7', color: '#b45309' }}>
-                          Demo darsga kelmagan
-                        </span>
-                      ) : (
-                        <span className={`status-badge ${s.is_active ? 'active' : 'inactive'}`}>
-                          {s.is_active ? 'Faol' : 'Nofaol'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="actions">
-                      <button className="btn-icon" onClick={() => onOpenStudent?.(s)} title="To'liq ma'lumot / tahrirlash" style={{ color: '#2563eb' }}>
-                        <FontAwesomeIcon icon={faEye} />
-                      </button>
-                      <button className="btn-icon" onClick={() => openAttendance(s)} title="Davomat tarixi" style={{ color: '#7c3aed' }}>
-                        <FontAwesomeIcon icon={faClockRotateLeft} />
-                      </button>
-                      {tab === 'active' && (
-                        <>
-                          <button className="btn-icon" onClick={() => handleMarkDemo(s)} title="Demo bo'limiga o'tkazish" style={{ color: '#b45309' }}>
-                            <FontAwesomeIcon icon={faHourglassHalf} />
-                          </button>
-                          <button className="btn-icon" onClick={() => handleToggle(s)} title={s.is_active ? "Nofaollashtirish" : "Faollashtirish"}>
-                            <FontAwesomeIcon icon={s.is_active ? faToggleOn : faToggleOff} style={{ color: s.is_active ? '#22c55e' : '#ef4444' }} />
-                          </button>
-                          <button className="btn-icon danger" onClick={() => handleArchive(s)} title="Arxivga o'tkazish">
-                            <FontAwesomeIcon icon={faBoxArchive} />
-                          </button>
-                        </>
-                      )}
-                      {tab === 'demo' && (
-                        <>
-                          <button className="btn-icon" onClick={() => setAttachModal(s)} title="Guruhga biriktirish (haqiqiy talabaga o'tkazish)" style={{ color: '#2563eb' }}>
-                            <FontAwesomeIcon icon={faLayerGroup} />
-                          </button>
-                          <button className="btn-icon" onClick={() => handleUnmarkDemo(s)} title="Demo holatidan chiqarish">
-                            <FontAwesomeIcon icon={faRotateLeft} />
-                          </button>
-                        </>
-                      )}
-                      {tab === 'archived' && (
-                        <button className="btn-icon" onClick={() => handleUnarchive(s)} title="Arxivdan chiqarish" style={{ color: '#2563eb' }}>
-                          <FontAwesomeIcon icon={faArrowUpFromBracket} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {students.length === 0 && (
-                  <tr>
-                    <td colSpan={11} className="muted center py-4">
-                      {tab === 'archived' ? 'Arxivlangan talabalar yo\'q'
-                        : tab === 'demo' ? 'Demo bo\'limida talaba yo\'q'
-                        : 'Talabalar topilmadi'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <Pagination meta={meta} onPageChange={handlePageChange} />
-        </>
-      )}
+      <DataTable
+        columns={studentColumns}
+        rows={students}
+        loading={loading}
+        meta={meta}
+        onPageChange={handlePageChange}
+        densityToggle densityKey="students"
+        rowClassName={s => (!s.is_active ? 'row-inactive' : undefined)}
+        empty={{
+          icon: faUserGraduate,
+          title: tab === 'archived' ? "Arxivlangan talabalar yo'q"
+            : tab === 'demo' ? "Demo bo'limida talaba yo'q"
+            : 'Talabalar topilmadi',
+          description: tab === 'active' ? "Qidiruv yoki sana filtrini o'zgartirib ko'ring." : undefined,
+        }}
+      />
 
       {/* ── Davomat modali ── */}
       {attendanceModal && (
@@ -373,7 +360,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
           <div className="modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>
-                <FontAwesomeIcon icon={faClockRotateLeft} style={{ marginRight: 8, color: '#7c3aed' }} />
+                <FontAwesomeIcon icon={faClockRotateLeft} style={{ marginRight: 8, color: 'var(--accent)' }} />
                 {attendanceModal.full_name} — Kamera davomati
               </h3>
               <button className="modal-close" onClick={() => setAttendanceModal(null)}>✕</button>
@@ -426,8 +413,8 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
                               <span style={{
                                 display: 'inline-flex', alignItems: 'center', gap: 5,
                                 padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-                                background: isKeldi ? '#dcfce7' : '#fee2e2',
-                                color:      isKeldi ? '#16a34a' : '#dc2626',
+                                background: isKeldi ? 'var(--success-bg)' : 'var(--danger-bg)',
+                                color:      isKeldi ? 'var(--success-text)' : 'var(--danger-text)',
                               }}>
                                 <FontAwesomeIcon icon={isKeldi ? faArrowRightToBracket : faArrowRightFromBracket} />
                                 {isKeldi ? 'Keldi' : 'Ketdi'}
@@ -445,57 +432,44 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
         </div>
       )}
 
-      {modal && (
-        <div className="modal-overlay" onClick={() => setModal(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{tab === 'demo' ? "Yangi demo talaba" : "Yangi talaba"}</h3>
-              <button className="modal-close" onClick={() => setModal(null)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <label>Ism Familiya *</label>
-              <input className="field" value={form.full_name} onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))} placeholder="To'liq ism" />
-              <label><FontAwesomeIcon icon={faPhone} /> Telefon *</label>
-              <input className="field" value={form.phone1} onChange={e => setForm(p => ({ ...p, phone1: e.target.value }))} placeholder="+998901234567" />
-              <div className="row-2">
-                <div>
-                  <label>Otasining ismi</label>
-                  <input className="field" value={form.father_name} onChange={e => setForm(p => ({ ...p, father_name: e.target.value }))} placeholder="Ixtiyoriy" />
-                </div>
-                <div>
-                  <label>Otasining telefoni</label>
-                  <input className="field" value={form.father_phone} onChange={e => setForm(p => ({ ...p, father_phone: e.target.value }))} placeholder="+998..." />
-                </div>
-              </div>
-              <div className="row-2">
-                <div>
-                  <label>Onasining ismi</label>
-                  <input className="field" value={form.mother_name} onChange={e => setForm(p => ({ ...p, mother_name: e.target.value }))} placeholder="Ixtiyoriy" />
-                </div>
-                <div>
-                  <label>Onasining telefoni</label>
-                  <input className="field" value={form.mother_phone} onChange={e => setForm(p => ({ ...p, mother_phone: e.target.value }))} placeholder="+998..." />
-                </div>
-              </div>
-              <label>Telegram ID (bot xabar yuborishi uchun) *muhim*</label>
-              <input className="field" type="text" value={form.telegram_user_id}
-                onChange={e => setForm(p => ({ ...p, telegram_user_id: e.target.value }))}
-                placeholder="123456789" />
-              <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
-                Davomat/uy vazifasi/ota-onalarga xabar shu raqamli ID'ga yuboriladi — @userinfobot orqali olinadi.
-              </p>
-              <label>Izoh</label>
-              <textarea className="field" rows={2} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Qo'shimcha ma'lumot..." />
-            </div>
-            <div className="modal-footer">
-              <button className="button secondary" onClick={() => setModal(null)}>Bekor</button>
-              <button className="button primary" onClick={handleSave} disabled={saving}>
-                {saving ? 'Saqlanmoqda...' : 'Saqlash'}
-              </button>
-            </div>
-          </div>
+      <Modal
+        open={!!modal}
+        title={tab === 'demo' ? 'Yangi demo talaba' : 'Yangi talaba'}
+        onClose={() => setModal(null)}
+        footer={
+          <>
+            <button className="button secondary" onClick={() => setModal(null)}>Bekor</button>
+            <button className="button" onClick={handleSave} disabled={saving}>
+              {saving ? 'Saqlanmoqda...' : 'Saqlash'}
+            </button>
+          </>
+        }
+      >
+        <Input label="Ism Familiya" required value={form.full_name}
+          onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))} placeholder="To'liq ism" />
+        <Input label="Telefon" required value={form.phone1}
+          onChange={e => setForm(p => ({ ...p, phone1: e.target.value }))} placeholder="+998901234567" />
+        <div className="field-row">
+          <Input label="Otasining ismi" value={form.father_name}
+            onChange={e => setForm(p => ({ ...p, father_name: e.target.value }))} placeholder="Ixtiyoriy" />
+          <Input label="Otasining telefoni" value={form.father_phone}
+            onChange={e => setForm(p => ({ ...p, father_phone: e.target.value }))} placeholder="+998..." />
         </div>
-      )}
+        <div className="field-row">
+          <Input label="Onasining ismi" value={form.mother_name}
+            onChange={e => setForm(p => ({ ...p, mother_name: e.target.value }))} placeholder="Ixtiyoriy" />
+          <Input label="Onasining telefoni" value={form.mother_phone}
+            onChange={e => setForm(p => ({ ...p, mother_phone: e.target.value }))} placeholder="+998..." />
+        </div>
+        <Input
+          label="Telegram ID (bot xabar yuborishi uchun)" value={form.telegram_user_id}
+          onChange={e => setForm(p => ({ ...p, telegram_user_id: e.target.value }))}
+          placeholder="123456789"
+          hint="Davomat/uy vazifasi/ota-onalarga xabar shu raqamli ID'ga yuboriladi — @userinfobot orqali olinadi."
+        />
+        <Textarea label="Izoh" rows={2} value={form.notes}
+          onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Qo'shimcha ma'lumot..." />
+      </Modal>
 
       {vacationModal && (
         <VacationModal student={vacationModal} onClose={() => setVacationModal(null)} />
@@ -513,9 +487,10 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
 }
 
 // ── Telegram ID badge rangi (yuborish tekshiruvi natijasiga qarab) ─────────
-function tgBadgeStyle(status) {
-  if (status === 'fail') return { background: '#fef3c7', color: '#b45309' }
-  return { background: '#dbeafe', color: '#1d4ed8' }   // default / 'ok' — ko'k
+function tgVariant(status) {
+  if (status === 'ok') return 'success'
+  if (status === 'fail') return 'danger'
+  return 'neutral'
 }
 
 // ── To'lov holati belgisi ───────────────────────────────────────────────────
@@ -530,133 +505,20 @@ function PayStatus({ s }) {
   const st = s.payment_status
   if (!st || st === 'none') return <span className="text-muted">—</span>
   const meta = {
-    paid:    { label: "To'langan", bg: '#dcfce7', color: '#15803d' },
-    partial: { label: 'Qisman',    bg: '#fef3c7', color: '#b45309' },
-    debtor:  { label: 'Qarzdor',   bg: '#fee2e2', color: '#b91c1c' },
+    paid:    { label: "To'langan", variant: 'success' },
+    partial: { label: 'Qisman',    variant: 'warning' },
+    debtor:  { label: 'Qarzdor',   variant: 'danger' },
   }[st]
   if (!meta) return <span className="text-muted">—</span>
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <span className="lead-status-badge" style={{ background: meta.bg, color: meta.color, alignSelf: 'flex-start' }}>
-        {meta.label}
-      </span>
+    <div className="pay-status">
+      <Badge variant={meta.variant} size="sm">{meta.label}</Badge>
       {Number(s.debt) > 0 && (
-        <span style={{ fontSize: 11.5, color: 'var(--danger)', fontWeight: 600 }}>
-          −{fmtSum(s.debt)} so'm
-        </span>
+        <span className="pay-status-debt">−{fmtSum(s.debt)} so'm</span>
       )}
       {Number(s.advance_applied) > 0 && (
-        <span style={{ fontSize: 11, color: 'var(--success)' }}>avans −{fmtSum(s.advance_applied)}</span>
+        <span className="pay-status-adv">avans −{fmtSum(s.advance_applied)}</span>
       )}
-    </div>
-  )
-}
-
-// ── To'lov qabul qilish oynasi (hunter/admin) ───────────────────────────────
-function RecordPaymentModal({ student, onClose, onSaved }) {
-  const [sum, setSum] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [groupId, setGroupId] = useState('')
-  const [amount, setAmount] = useState('')
-  const [notes, setNotes] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => { loadSummary() }, [student.id])
-  async function loadSummary() {
-    setLoading(true)
-    try {
-      const s = await fetchStudentPaymentSummary(student.id)
-      setSum(s)
-      const firstDebt = s.groups.find(g => Number(g.remaining) > 0) || s.groups[0]
-      if (firstDebt) {
-        setGroupId(String(firstDebt.group_id))
-        if (Number(firstDebt.remaining) > 0) setAmount(String(Math.round(firstDebt.remaining)))
-      }
-    } catch { toast.error("Yuklab bo'lmadi") } finally { setLoading(false) }
-  }
-
-  async function handleSave() {
-    if (!groupId) return toast.error('Guruhni tanlang')
-    const amt = Number(amount)
-    if (!amt || amt <= 0) return toast.error("To'g'ri summa kiriting")
-    setSaving(true)
-    try {
-      await createPayment({
-        student_id: student.id,
-        group_id: Number(groupId),
-        amount: amt,
-        month: sum.month, year: sum.year,
-        notes: notes.trim() || null,
-      })
-      toast.success("To'lov qabul qilindi")
-      onSaved()
-    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
-  }
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
-        <div className="modal-header">
-          <h3><FontAwesomeIcon icon={faWallet} /> To'lov — {student.full_name}</h3>
-          <button className="modal-close" onClick={onClose}><FontAwesomeIcon icon={faXmark} /></button>
-        </div>
-        <div className="modal-body">
-          {loading ? <div className="muted center py-4">Yuklanmoqda...</div> : sum && (
-            <>
-              <div className="rp-summary">
-                <div><span className="muted">Oy</span><strong>{sum.month}/{sum.year}</strong></div>
-                <div><span className="muted">Oylik summa</span><strong>{fmtSum(sum.total_owed)}</strong></div>
-                <div><span className="muted">To'langan</span><strong>{fmtSum(sum.total_paid)}</strong></div>
-                {Number(sum.advance_balance) > 0 && <div><span className="muted">Avans</span><strong style={{ color: 'var(--success)' }}>{fmtSum(sum.advance_balance)}</strong></div>}
-                <div><span className="muted">Qarz</span><strong style={{ color: Number(sum.debt) > 0 ? 'var(--danger)' : 'var(--success)' }}>{fmtSum(sum.debt)}</strong></div>
-              </div>
-
-              {sum.groups.length === 0 ? (
-                <div className="muted center py-4" style={{ fontSize: 13 }}>Talaba narxli faol guruhda emas — avval guruhga biriktiring.</div>
-              ) : (
-                <>
-                  <label>Guruh</label>
-                  <select className="field" value={groupId} onChange={e => setGroupId(e.target.value)}>
-                    {sum.groups.map(g => (
-                      <option key={g.group_id} value={g.group_id}>
-                        {g.group_name} — qoldi: {fmtSum(g.remaining)}
-                      </option>
-                    ))}
-                  </select>
-                  <label>Summa (so'm)</label>
-                  <input className="field" type="number" inputMode="numeric" value={amount}
-                    onChange={e => setAmount(e.target.value)} placeholder="0" />
-                  <label>Izoh</label>
-                  <textarea className="field" rows={2} value={notes}
-                    onChange={e => setNotes(e.target.value)} placeholder="Masalan: naqd, qolgani keyingi hafta..." />
-                </>
-              )}
-
-              {sum.recent_payments.length > 0 && (
-                <div className="rp-history">
-                  <div className="rp-history-title">So'nggi to'lovlar</div>
-                  {sum.recent_payments.slice(0, 5).map(p => (
-                    <div key={p.id} className="rp-history-item">
-                      <div>
-                        <strong>{fmtSum(p.amount)} so'm</strong>
-                        <span className="muted"> · {p.month}/{p.year} · {p.group_name}</span>
-                        {p.notes && <div className="muted" style={{ fontSize: 12 }}>“{p.notes}”</div>}
-                      </div>
-                      {p.recorded_by_name && <span className="rp-by">{p.recorded_by_name}</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-        <div className="modal-footer">
-          <button className="button secondary" onClick={onClose}>Bekor</button>
-          <button className="button primary" onClick={handleSave} disabled={saving || loading || !sum?.groups.length}>
-            <FontAwesomeIcon icon={faCircleCheck} /> {saving ? 'Saqlanmoqda...' : 'Qabul qilish'}
-          </button>
-        </div>
-      </div>
     </div>
   )
 }
@@ -665,6 +527,7 @@ function RecordPaymentModal({ student, onClose, onSaved }) {
 const VAC_TODAY = tashkentToday()
 
 function VacationModal({ student, onClose }) {
+  const [confirmUI, ask] = useConfirm()
   const [vacations, setVacations] = useState([])
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState({ start_date: VAC_TODAY, end_date: VAC_TODAY, reason: '' })
@@ -693,7 +556,13 @@ function VacationModal({ student, onClose }) {
   }
 
   async function handleDelete(id) {
-    if (!confirm("Bu ta'til yozuvini o'chirishni tasdiqlaysizmi?")) return
+    const ok = await ask({
+      title: 'Ta\'til yozuvini o\'chirish',
+      message: "Bu ta'til yozuvi o'chirilsinmi?",
+      detail: 'To\'lov hisobi shu talaba uchun qayta hisoblanadi.',
+      confirmLabel: 'Ha, o\'chirish',
+    })
+    if (!ok) return
     try {
       await deleteStudentVacation(student.id, id)
       toast.success("O'chirildi")
@@ -703,6 +572,7 @@ function VacationModal({ student, onClose }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
+      {confirmUI}
       <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
         <div className="modal-header">
           <h3><FontAwesomeIcon icon={faUmbrellaBeach} /> Ta'til — {student.full_name}</h3>
@@ -727,7 +597,7 @@ function VacationModal({ student, onClose }) {
           <label>Sababi (ixtiyoriy)</label>
           <input className="field" value={form.reason} placeholder="Masalan: shifokor tavsiyasi"
             onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} />
-          <button className="button primary" style={{ marginTop: 10 }} onClick={handleSave} disabled={saving}>
+          <button className="button" style={{ marginTop: 10 }} onClick={handleSave} disabled={saving}>
             <FontAwesomeIcon icon={faPlus} /> {saving ? 'Saqlanmoqda...' : "Qo'shish"}
           </button>
 
@@ -737,7 +607,7 @@ function VacationModal({ student, onClose }) {
             <div style={{ marginTop: 16 }}>
               <label>Belgilangan ta'til kunlari</label>
               {vacations.map(v => (
-                <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 8, background: 'var(--bg-secondary, #f5f5f5)', marginBottom: 6 }}>
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 8, background: 'var(--bg-secondary, var(--surface-2))', marginBottom: 6 }}>
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 13 }}>
                       {new Date(v.start_date + 'T00:00:00').toLocaleDateString('uz-UZ')} — {new Date(v.end_date + 'T00:00:00').toLocaleDateString('uz-UZ')}
@@ -811,7 +681,7 @@ function AttachGroupModal({ student, onClose, onAttached }) {
         </div>
         <div className="modal-footer">
           <button className="button secondary" onClick={onClose}>Bekor</button>
-          <button className="button primary" onClick={handleSave} disabled={saving || loading}>
+          <button className="button" onClick={handleSave} disabled={saving || loading}>
             {saving ? 'Saqlanmoqda...' : 'Biriktirish'}
           </button>
         </div>

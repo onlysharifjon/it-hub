@@ -1,6 +1,7 @@
 """Servis modullari o'rtasida umumiy holat (thread-safe)."""
 import threading
-from datetime import datetime
+
+import config
 
 _lock   = threading.Lock()
 _events = []          # [{name, event_type, time}]
@@ -11,7 +12,7 @@ def record(name: str, event_type: str) -> None:
         _events.append({
             "name":       name,
             "event_type": event_type,
-            "time":       datetime.now().strftime("%H:%M"),
+            "time":       config.now().strftime("%H:%M"),
         })
         if len(_events) > 200:
             del _events[0]

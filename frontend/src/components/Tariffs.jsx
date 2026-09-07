@@ -3,34 +3,54 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faPen, faTrash, faTag, faToggleOn, faToggleOff } from '@fortawesome/free-solid-svg-icons'
 import { fetchTariffs, createTariff, updateTariff, deleteTariff } from '../api'
+import DataTable from './ui/DataTable'
+import Modal from './ui/Modal'
+import ConfirmDialog from './ui/ConfirmDialog'
+import Badge from './ui/Badge'
+import { Input, Textarea } from './ui/Field'
 
 const EMPTY = { name: '', price: '100000', description: '' }
 
 export default function Tariffs() {
   const [tariffs, setTariffs] = useState([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(EMPTY)
+  const [errors, setErrors] = useState({})
   const [saving, setSaving] = useState(false)
+  const [confirmTarget, setConfirmTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => { load() }, [])
 
   async function load() {
     setLoading(true)
+    setError(null)
     try { setTariffs(await fetchTariffs()) }
-    catch { toast.error("Yuklab bo'lmadi") }
+    catch (e) { setError(e) }
     finally { setLoading(false) }
   }
 
-  function openAdd() { setForm(EMPTY); setModal('add') }
+  function openAdd() { setForm(EMPTY); setErrors({}); setModal('add') }
   function openEdit(t) {
     setForm({ name: t.name, price: String(t.price), description: t.description || '' })
+    setErrors({})
     setModal(t)
+  }
+  function closeModal() { setModal(null); setErrors({}) }
+
+  function validate() {
+    const next = {}
+    if (!form.name.trim()) next.name = 'Tarif nomini kiriting'
+    if (!form.price) next.price = 'Narxni kiriting'
+    else if (parseFloat(form.price) <= 0) next.price = "Narx musbat bo'lishi kerak"
+    setErrors(next)
+    return Object.keys(next).length === 0
   }
 
   async function handleSave() {
-    if (!form.name.trim() || !form.price) return toast.error("Ism va narx majburiy")
-    if (parseFloat(form.price) <= 0) return toast.error("Narx musbat bo'lishi kerak")
+    if (!validate()) return
     setSaving(true)
     try {
       const payload = { name: form.name, price: parseFloat(form.price), description: form.description || null }
@@ -41,19 +61,21 @@ export default function Tariffs() {
         await updateTariff(modal.id, payload)
         toast.success('Saqlandi')
       }
-      setModal(null)
+      closeModal()
       load()
     } catch (e) { toast.error(e.message) }
     finally { setSaving(false) }
   }
 
-  async function handleDelete(t) {
-    if (!confirm(`"${t.name}" tarifni o'chirishni tasdiqlaysizmi?`)) return
+  async function handleDelete() {
+    setDeleting(true)
     try {
-      await deleteTariff(t.id)
+      await deleteTariff(confirmTarget.id)
       toast.success("O'chirildi")
+      setConfirmTarget(null)
       load()
     } catch (e) { toast.error(e.message) }
+    finally { setDeleting(false) }
   }
 
   async function handleToggle(t) {
@@ -63,105 +85,132 @@ export default function Tariffs() {
     } catch { toast.error('Xatolik') }
   }
 
+  const columns = [
+    {
+      key: 'index', header: '#', width: 56, className: 'text-muted',
+      render: (_row, i) => i + 1,
+    },
+    {
+      key: 'name', header: 'Tarif nomi', sortable: true,
+      render: t => <strong>{t.name}</strong>,
+    },
+    {
+      key: 'price', header: "Narx (so'm/oy)", sortable: true, className: 'amount',
+      sortValue: t => Number(t.price),
+      render: t => `${Number(t.price).toLocaleString('uz-UZ')} so'm`,
+    },
+    {
+      key: 'description', header: 'Tavsif',
+      render: t => t.description || <span className="text-muted">—</span>,
+    },
+    {
+      key: 'is_active', header: 'Holat', sortable: true,
+      render: t => (
+        <Badge variant={t.is_active ? 'success' : 'neutral'}>
+          {t.is_active ? 'Faol' : 'Nofaol'}
+        </Badge>
+      ),
+    },
+    {
+      key: 'actions', header: 'Amallar', className: 'actions',
+      render: t => (
+        <>
+          <button
+            className="btn-icon" onClick={() => handleToggle(t)}
+            title={t.is_active ? 'Nofaol qilish' : 'Faol qilish'}
+            aria-label={t.is_active ? 'Nofaol qilish' : 'Faol qilish'}
+          >
+            <FontAwesomeIcon icon={t.is_active ? faToggleOn : faToggleOff} />
+          </button>
+          <button className="btn-icon" onClick={() => openEdit(t)} title="Tahrirlash" aria-label="Tahrirlash">
+            <FontAwesomeIcon icon={faPen} />
+          </button>
+          <button className="btn-icon danger" onClick={() => setConfirmTarget(t)} title="O'chirish" aria-label="O'chirish">
+            <FontAwesomeIcon icon={faTrash} />
+          </button>
+        </>
+      ),
+    },
+  ]
+
   return (
     <div className="page">
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faTag} className="page-icon" /> Tariflar</h1>
-        <button className="button primary" onClick={openAdd}>
-          <FontAwesomeIcon icon={faPlus} /> Tarif qo'shish
-        </button>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faTag} className="page-icon" /> Tariflar</h1>
+          <p className="page-subtitle">Guruhga biriktiriladigan oylik narxlar</p>
+        </div>
+        <div className="header-actions">
+          <button className="button" onClick={openAdd}>
+            <FontAwesomeIcon icon={faPlus} /> Tarif qo'shish
+          </button>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Tarif nomi</th>
-                <th>Narx (so'm/oy)</th>
-                <th>Tavsif</th>
-                <th>Holat</th>
-                <th>Amallar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tariffs.map((t, i) => (
-                <tr key={t.id} className={!t.is_active ? 'row-inactive' : ''}>
-                  <td className="text-muted">{i + 1}</td>
-                  <td><strong>{t.name}</strong></td>
-                  <td className="amount">{Number(t.price).toLocaleString()} so'm</td>
-                  <td>{t.description || <span className="text-muted">—</span>}</td>
-                  <td>
-                    <span className={`status-badge ${t.is_active ? 'active' : 'inactive'}`}>
-                      {t.is_active ? 'Faol' : 'Nofaol'}
-                    </span>
-                  </td>
-                  <td className="actions">
-                    <button className="btn-icon" onClick={() => handleToggle(t)} title={t.is_active ? 'Nofaol qilish' : 'Faol qilish'}>
-                      <FontAwesomeIcon icon={t.is_active ? faToggleOn : faToggleOff} />
-                    </button>
-                    <button className="btn-icon" onClick={() => openEdit(t)} title="Tahrirlash">
-                      <FontAwesomeIcon icon={faPen} />
-                    </button>
-                    <button className="btn-icon danger" onClick={() => handleDelete(t)} title="O'chirish">
-                      <FontAwesomeIcon icon={faTrash} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {tariffs.length === 0 && (
-                <tr><td colSpan={6} className="muted center py-4">Tariflar yo'q</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        rows={tariffs}
+        loading={loading}
+        error={error}
+        onRetry={load}
+        rowClassName={t => (!t.is_active ? 'row-inactive' : undefined)}
+        empty={{
+          icon: faTag,
+          title: "Tariflar yo'q",
+          description: "Guruhlarga narx biriktirish uchun birinchi tarifni qo'shing.",
+          action: (
+            <button className="button" onClick={openAdd}>
+              <FontAwesomeIcon icon={faPlus} /> Tarif qo'shish
+            </button>
+          ),
+        }}
+      />
 
-      {modal && (
-        <div className="modal-overlay" onClick={() => setModal(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{modal === 'add' ? 'Yangi tarif' : 'Tarifni tahrirlash'}</h3>
-              <button className="modal-close" onClick={() => setModal(null)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <label>Tarif nomi *</label>
-              <input
-                className="field"
-                value={form.name}
-                onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                placeholder="Masalan: Standart, Premium, 3 oylik..."
-              />
-              <label>Narx (so'm/oy) *</label>
-              <input
-                className="field"
-                type="number"
-                min="1"
-                value={form.price}
-                onChange={e => setForm(p => ({ ...p, price: e.target.value }))}
-                placeholder="100000"
-              />
-              <label>Tavsif</label>
-              <textarea
-                className="field"
-                rows={2}
-                value={form.description}
-                onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
-                placeholder="Qo'shimcha ma'lumot..."
-              />
-            </div>
-            <div className="modal-footer">
-              <button className="button secondary" onClick={() => setModal(null)}>Bekor</button>
-              <button className="button primary" onClick={handleSave} disabled={saving}>
-                {saving ? 'Saqlanmoqda...' : 'Saqlash'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal
+        open={!!modal}
+        title={modal === 'add' ? 'Yangi tarif' : 'Tarifni tahrirlash'}
+        onClose={closeModal}
+        footer={
+          <>
+            <button className="button secondary" onClick={closeModal}>Bekor</button>
+            <button className="button" onClick={handleSave} disabled={saving}>
+              {saving ? 'Saqlanmoqda...' : 'Saqlash'}
+            </button>
+          </>
+        }
+      >
+        <Input
+          label="Tarif nomi" required
+          value={form.name}
+          error={errors.name}
+          onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+          placeholder="Masalan: Standart, Premium, 3 oylik..."
+        />
+        <Input
+          label="Narx (so'm/oy)" required type="number" min="1"
+          value={form.price}
+          error={errors.price}
+          onChange={e => setForm(p => ({ ...p, price: e.target.value }))}
+          placeholder="100000"
+        />
+        <Textarea
+          label="Tavsif" rows={2}
+          value={form.description}
+          onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+          placeholder="Qo'shimcha ma'lumot..."
+        />
+      </Modal>
+
+      <ConfirmDialog
+        open={!!confirmTarget}
+        title="Tarifni o'chirish"
+        message={confirmTarget ? `"${confirmTarget.name}" tarifi o'chirilsinmi?` : ''}
+        detail="Bu tarif biriktirilgan guruhlar narxsiz qolishi mumkin."
+        confirmLabel="Ha, o'chirish"
+        loading={deleting}
+        onConfirm={handleDelete}
+        onClose={() => setConfirmTarget(null)}
+      />
     </div>
   )
 }

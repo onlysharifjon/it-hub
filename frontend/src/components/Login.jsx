@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import BrandLogo from './ui/BrandLogo'
 
 function Login({ onSuccess, error }) {
   const [username, setUsername] = useState('')
@@ -31,13 +32,12 @@ function Login({ onSuccess, error }) {
       {/* ── LEFT PANEL ── */}
       <div className="lp-left">
         <div className="lp-left-inner">
-          <div className="lp-logo">
-            <span className="lp-logo-icon">IT</span>
-            <span className="lp-logo-text">Hub</span>
-          </div>
+          {/* To'liq lokapning OQ varianti — panel to'q binafsha, ko'k
+              logotip bu yerda kontrastda yutqazardi. */}
+          <BrandLogo variant="full" tone="white" height={30} className="lp-logo" />
 
           <div className="lp-hero">
-            <h1 className="lp-hero-title">LMS<br />tizimi</h1>
+            <h1 className="lp-hero-title">O'quv markazi<br />bitta tizimda</h1>
             <p className="lp-hero-sub">
               O'quv markazining barcha jarayonlarini<br />
               yagona platformada boshqaring.
@@ -59,21 +59,26 @@ function Login({ onSuccess, error }) {
             </div>
           </div>
 
-          <p className="lp-copy">© 2026 IT Hub</p>
+          <p className="lp-copy">© 2026 Minar Academy · LMS</p>
         </div>
       </div>
 
       {/* ── RIGHT PANEL ── */}
       <div className="lp-right">
         <div className="lp-form-wrap">
+          {/* Mobil qatlamda chapdagi brend paneli yashiriladi — u yerda
+              ekranga sig'maydi. Shuning uchun logotip formaning tepasiga
+              chiqadi (brend rangida, oq fon ustida). Desktopda esa bu
+              yashirin: chapdagi panel brendni allaqachon ko'rsatib turadi. */}
+          <BrandLogo variant="full" height={30} className="lp-mobile-logo" />
 
           {blockInfo ? (
             /* ── BLOCK / EXPIRY PANEL ── */
             <div className="lp-block-panel">
               <div className="lp-block-icon">
                 <svg viewBox="0 0 24 24" fill="none" width="48" height="48">
-                  <circle cx="12" cy="12" r="10" stroke="#ef4444" strokeWidth="1.8"/>
-                  <path d="M4.93 4.93l14.14 14.14" stroke="#ef4444" strokeWidth="1.8" strokeLinecap="round"/>
+                  <circle cx="12" cy="12" r="10" stroke="var(--danger)" strokeWidth="1.8"/>
+                  <path d="M4.93 4.93l14.14 14.14" stroke="var(--danger)" strokeWidth="1.8" strokeLinecap="round"/>
                 </svg>
               </div>
               <h2 className="lp-block-title">Kirish mumkin emas</h2>

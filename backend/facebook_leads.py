@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from . import models, schemas
 from .database import get_db
 from .models import UserRole
+from .phone_utils import dedup_key, normalize_phone
 
 load_dotenv()
 
@@ -94,35 +95,6 @@ def _default_stage(db: Session) -> Optional[models.LeadStage]:
     )
 
 
-REAPPLICATION_SLUG = "reapplication"
-
-
-def _reapplication_stage(db: Session) -> Optional[models.LeadStage]:
-    """"Qayta ariza" bosqichi — telefon raqami bazada boshqa bosqichda allaqachon
-    bor bo'lsa, Facebook'dan qayta kelgan lid "Yangi"ga emas, shu bosqichga tushadi.
-    Bosqich mavjud bo'lmasa, birinchi chaqiriqda avtomatik yaratiladi."""
-    stage = db.query(models.LeadStage).filter(models.LeadStage.slug == REAPPLICATION_SLUG).first()
-    if stage:
-        return stage
-    new_stage_order = (
-        db.query(models.LeadStage)
-        .filter(models.LeadStage.slug == "new")
-        .with_entities(models.LeadStage.order)
-        .scalar()
-    )
-    stage = models.LeadStage(
-        name="Qayta ariza",
-        slug=REAPPLICATION_SLUG,
-        order=(new_stage_order + 5) if new_stage_order is not None else 15,
-        color="orange",
-        icon="circle",
-        kind="lead",
-    )
-    db.add(stage)
-    db.flush()
-    return stage
-
-
 def _current_period() -> str:
     return datetime.utcnow().strftime("%Y-%m")
 
@@ -151,9 +123,18 @@ def _bump_referral_stat(db: Session, referrer_id: Optional[int], *, leads_delta:
 
 
 def _existing_lead_by_phone(db: Session, phone: str) -> Optional[models.Lead]:
+    """Shu raqamli CRM lidi bormi — formatlash farqini hisobga olmay izlaydi.
+
+    Ilgari bu yerda `Lead.phone == phone` aynan matn solishtiruvi turgan edi,
+    shuning uchun "+998901234567" va "901234567" ikki alohida lid bo'lib
+    tushib ketardi (bazada 111 ta shunday dublikat to'plangan edi).
+    """
+    key = dedup_key(phone)
+    if not key:
+        return None
     return (
         db.query(models.Lead)
-        .filter(models.Lead.phone == phone)
+        .filter(models.Lead.phone_key == key)
         .order_by(models.Lead.created_at.desc())
         .first()
     )
@@ -186,14 +167,19 @@ def _create_crm_lead(db: Session, *, full_name: Optional[str], phone: str,
                       created_time_raw: Optional[str], phone_missing: bool = False,
                       existing_lead: Optional[models.Lead] = None) -> models.Lead:
     source = _get_or_create_facebook_source(db)
-    stage = _reapplication_stage(db) if existing_lead is not None else _default_stage(db)
+    # Takroriy ariza ham oddiy lid — u birinchi bosqichga ("Yangi") tushadi.
+    # Ilgari bu yerda avtomatik yaratiladigan "Qayta ariza" bosqichi bor edi:
+    # uni hech kim so'ramagan, voronkada bunday bosqich yo'q edi va lidlar
+    # o'sha ko'rinmas ustunda yig'ilib qolardi. Takrorlik faktining o'zi
+    # pastdagi izohda yoziladi — buning uchun alohida bosqich kerak emas.
+    stage = _default_stage(db)
     owner_id = _system_user_id(db)
 
     notes_lines = ["Facebook Lead Ads orqali (Make.com webhook) avtomatik yaratildi."]
     if existing_lead is not None:
         notes_lines.append(
-            f"Bu raqam bazada allaqachon bor edi (lid #{existing_lead.id}, "
-            f"bosqich: {existing_lead.status}) — shuning uchun \"Qayta ariza\"ga tushdi."
+            f"DIQQAT: bu raqam bazada allaqachon bor edi (lid #{existing_lead.id}, "
+            f"bosqich: {existing_lead.status}) — takroriy ariza."
         )
     if phone_missing:
         notes_lines.append(
@@ -211,6 +197,7 @@ def _create_crm_lead(db: Session, *, full_name: Optional[str], phone: str,
     lead = models.Lead(
         full_name=display_name,
         phone=phone,
+        phone_key=dedup_key(phone),
         status=stage.slug if stage else models.LeadStatus.new.value,
         stage_id=stage.id if stage else None,
         source_id=source.id,
@@ -265,12 +252,16 @@ def receive_facebook_lead(
     existing = None
     if raw_phone is not None:
         cutoff = datetime.utcnow() - DEDUP_WINDOW
-        existing = (
+        key = dedup_key(raw_phone)
+        recent = (
             db.query(models.FacebookLead)
-            .filter(models.FacebookLead.phone == raw_phone, models.FacebookLead.received_at >= cutoff)
+            .filter(models.FacebookLead.received_at >= cutoff)
             .order_by(models.FacebookLead.received_at.desc())
-            .first()
+            .all()
         )
+        # Oyna kichik (5 daqiqa) — qatorlar sanoqli, formatlash farqini
+        # hisobga olib Python tomonida solishtiramiz.
+        existing = next((f for f in recent if key and dedup_key(f.phone) == key), None)
     if existing:
         # Merge: yangi qiymat bo'sh bo'lmasa yangilaymiz, bo'sh bo'lsa eski (mavjud)
         # ma'lumotni saqlab qolamiz. CRM'dagi Lead'ga tegilmaydi — xodim allaqachon

@@ -5,6 +5,7 @@
  *   onChange: (newValue) => void
  */
 import DateRangePicker from './DateRangePicker'
+import { tashkentNow } from '../utils/datetime'
 
 const presets = [
   { key: 'all',   label: 'Barchasi' },
@@ -14,7 +15,7 @@ const presets = [
 ]
 
 function applyPreset(key) {
-  const now = new Date()
+  const now = tashkentNow()
   const pad = n => String(n).padStart(2, '0')
   const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
 

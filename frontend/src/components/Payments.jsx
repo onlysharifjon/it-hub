@@ -3,19 +3,27 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faTrash, faFileExcel, faCreditCard,
-  faChevronDown, faFilter, faPrint, faMoneyBillWave, faPen,
+  faFilter, faPrint, faMoneyBillWave, faPen,
   faTriangleExclamation, faList, faBolt, faBullseye,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchPayments, createPayment, updatePayment, deletePayment, fetchStudents, fetchGroups,
   exportExcelUrl, receiptUrl, openDownload, fetchPaymentExpected, fetchStudentPaymentSummary,
 } from '../api'
-import Pagination from './Pagination'
 import DateFilter from './DateFilter'
+import DataTable, { RowActions } from './ui/DataTable'
+import ConfirmDialog from './ui/ConfirmDialog'
+import Badge from './ui/Badge'
+import { Metric, MetricStrip } from './ui/Metric'
+import Modal from './ui/Modal'
+import { Input, Select } from './ui/Field'
+import { tashkentNow } from '../utils/datetime'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
-const NOW = new Date()
+const NOW = tashkentNow()
 const YEARS = Array.from({ length: 5 }, (_, i) => NOW.getFullYear() - 2 + i)
+const fmtn = n => Number(n || 0).toLocaleString('uz-UZ')
+
 const EMPTY = { student_id: '', group_id: '', amount: '', month: NOW.getMonth() + 1, year: NOW.getFullYear(), notes: '', via_sales: false }
 
 export default function Payments({ currentUser }) {
@@ -38,6 +46,7 @@ export default function Payments({ currentUser }) {
   const [monthStudents, setMonthStudents] = useState([])
   const [statsLoading, setStatsLoading] = useState(true)
   const [quickPayLoading, setQuickPayLoading] = useState(null)   // student_id
+  const [voidTarget, setVoidTarget] = useState(null)             // bekor qilinayotgan to'lov
 
   useEffect(() => {
     fetchStudents({ page_size: 100 }).then(r => setStudents(r.items || []))
@@ -178,11 +187,11 @@ export default function Payments({ currentUser }) {
     setModal(true)
   }
 
-  async function handleDelete(id) {
-    if (!confirm("To'lov bekor qilinadi va talaba yana to'lanmagan holatga qaytadi. Tasdiqlaysizmi?")) return
+  async function handleVoid() {
     try {
-      await deletePayment(id)
+      await deletePayment(voidTarget.id)
       toast.success("To'lov bekor qilindi")
+      setVoidTarget(null)
       afterPaymentChange()
     } catch (e) { toast.error(e.message) }
   }
@@ -191,281 +200,318 @@ export default function Payments({ currentUser }) {
   const meta = data.meta
   const total = payments.reduce((s, p) => s + parseFloat(p.amount), 0)
 
+  // ── Ustunlar ──────────────────────────────────────────────────────────
+  const paymentColumns = [
+    {
+      key: 'student_name', header: 'Talaba', sortable: true,
+      render: p => (
+        <span className="cell-copy">
+          <strong>{p.student_name}</strong>
+          {p.via_sales && (
+            <Badge variant="success" size="sm" title="Sales orqali jalb qilingan">
+              <FontAwesomeIcon icon={faBullseye} /> Sales
+            </Badge>
+          )}
+        </span>
+      ),
+    },
+    { key: 'group_name', header: 'Guruh', sortable: true },
+    {
+      key: 'amount', header: 'Miqdor', align: 'right', sortable: true,
+      sortValue: p => Number(p.amount),
+      render: p => <span className="amount is-in">{fmtn(p.amount)} so'm</span>,
+    },
+    {
+      key: 'status', header: 'Holat', sortable: true,
+      render: p => p.status === 'paid'
+        ? <Badge variant="success" size="sm">To'landi</Badge>
+        : p.status === 'partial'
+          ? <Badge variant="warning" size="sm">Qoldi: {fmtn(p.remaining)}</Badge>
+          : <span className="text-muted">—</span>,
+    },
+    {
+      key: 'period', header: 'Oy / Yil', sortable: true,
+      sortValue: p => p.year * 12 + p.month,
+      render: p => <span className="text-muted">{MONTHS[p.month - 1]} {p.year}</span>,
+    },
+    {
+      key: 'paid_at', header: 'Sana', sortable: true,
+      render: p => <span className="muted-sm">{new Date(p.paid_at).toLocaleDateString('uz-UZ')}</span>,
+    },
+    { key: 'notes', header: 'Izoh', render: p => p.notes ? <span className="cell-clamp">{p.notes}</span> : <span className="text-muted">—</span> },
+    {
+      key: 'actions', header: '', align: 'right', className: 'actions',
+      render: p => (
+        <RowActions>
+          <button className="btn-icon" title="Chek ko'rish" aria-label="Chek ko'rish"
+            onClick={() => openDownload(receiptUrl(p.id)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
+            <FontAwesomeIcon icon={faPrint} />
+          </button>
+          {isAdmin && (
+            <>
+              <button className="btn-icon" title="Tahrirlash" aria-label="Tahrirlash" onClick={() => handleEdit(p)}>
+                <FontAwesomeIcon icon={faPen} />
+              </button>
+              <button className="btn-icon danger" title="To'lovni bekor qilish" aria-label="To'lovni bekor qilish"
+                onClick={() => setVoidTarget(p)}>
+                <FontAwesomeIcon icon={faTrash} />
+              </button>
+            </>
+          )}
+        </RowActions>
+      ),
+    },
+  ]
+
+  const debtorColumns = [
+    {
+      key: 'full_name', header: 'Talaba', sortable: true,
+      render: s => (
+        <>
+          <strong>{s.full_name}</strong>
+          <div className="muted-sm">{s.phone1}</div>
+        </>
+      ),
+    },
+    {
+      key: 'groups', header: 'Guruh(lar)',
+      render: s => (
+        <div className="chip-row">
+          {(s.group_names || []).map((n, gi) => <span key={gi} className="tag">{n}</span>)}
+        </div>
+      ),
+    },
+    {
+      key: 'owed_month', header: "Oylik to'lov", align: 'right', sortable: true,
+      sortValue: s => Number(s.owed_month || 0),
+      render: s => <span className="num">{fmtn(s.owed_month)} so'm</span>,
+    },
+    {
+      key: 'paid_month', header: "To'langan", align: 'right', sortable: true,
+      sortValue: s => Number(s.paid_month || 0),
+      render: s => <span className="amount is-in">{fmtn(s.paid_month)} so'm</span>,
+    },
+    {
+      key: 'debt', header: 'Qarz', align: 'right', sortable: true,
+      sortValue: s => Number(s.debt || 0),
+      render: s => <span className="amount is-out">{fmtn(s.debt)} so'm</span>,
+    },
+    {
+      key: 'actions', header: '', align: 'right', className: 'actions',
+      render: s => (
+        <button className="btn-sm primary" disabled={quickPayLoading === s.id} onClick={() => quickPay(s)}>
+          <FontAwesomeIcon icon={faBolt} /> {quickPayLoading === s.id ? '...' : "To'liq to'lash"}
+        </button>
+      ),
+    },
+  ]
+
+  const collectionPct = totalExpected > 0 ? (totalPaidMonth / totalExpected) * 100 : null
+
   return (
     <div className="page">
       <div className="page-header">
-        <h1>
-          <FontAwesomeIcon icon={faCreditCard} className="page-icon" />
-          To'lovlar
-        </h1>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faCreditCard} className="page-icon" /> To'lovlar</h1>
+          <p className="page-subtitle">{MONTHS[filter.month - 1]} {filter.year} · to'lov qabul qilish va qarzdorlik</p>
+        </div>
         <div className="header-actions">
+          <select className="field-sm" value={filter.month} aria-label="Oy"
+            onChange={e => setFilter(p => ({ ...p, month: parseInt(e.target.value) }))}>
+            {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select>
+          <select className="field-sm" value={filter.year} aria-label="Yil"
+            onChange={e => setFilter(p => ({ ...p, year: parseInt(e.target.value) }))}>
+            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
           <button className="button secondary" onClick={() => openDownload(exportExcelUrl(filter.month, filter.year)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
             <FontAwesomeIcon icon={faFileExcel} /> Excel
           </button>
-          <button className="button primary" onClick={() => { setEditing(null); setForm(EMPTY); setModal(true) }}>
+          <button className="button" onClick={() => { setEditing(null); setForm(EMPTY); setModal(true) }}>
             <FontAwesomeIcon icon={faPlus} /> To'lov qo'shish
           </button>
         </div>
       </div>
 
-      <div className="kpi-grid">
-        <div className="kpi-card" style={{ borderTop: '3px solid #dc2626' }}>
-          <div className="kpi-label"><FontAwesomeIcon icon={faTriangleExclamation} /> Jami qarzdorlik</div>
-          <div className="kpi-value" style={{ color: '#dc2626' }}>
-            {statsLoading ? '—' : totalDebt.toLocaleString()} <span className="kpi-currency">so'm</span>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-label"><FontAwesomeIcon icon={faTriangleExclamation} /> Qarzdorlar soni</div>
-          <div className="kpi-value">{statsLoading ? '—' : debtors.length}</div>
-        </div>
-        <div className="kpi-card" style={{ borderTop: '3px solid #16a34a' }}>
-          <div className="kpi-label"><FontAwesomeIcon icon={faMoneyBillWave} /> Jami to'langan (oy)</div>
-          <div className="kpi-value" style={{ color: '#16a34a' }}>
-            {statsLoading ? '—' : totalPaidMonth.toLocaleString()} <span className="kpi-currency">so'm</span>
-          </div>
-        </div>
-        <div className="kpi-card">
-          <div className="kpi-label"><FontAwesomeIcon icon={faCreditCard} /> Kutilayotgan (oy)</div>
-          <div className="kpi-value">
-            {statsLoading ? '—' : totalExpected.toLocaleString()} <span className="kpi-currency">so'm</span>
-          </div>
-        </div>
-      </div>
+      {/* ── Oyning holati: bitta zich qator, karta devori emas ── */}
+      <MetricStrip columns={4}>
+        <Metric
+          label="Jami qarzdorlik" tone="danger"
+          value={statsLoading ? '—' : fmtn(totalDebt)} unit="so'm"
+          sub={statsLoading ? '' : `${debtors.length} o'quvchi`}
+          onClick={() => setView('debtors')}
+        />
+        <Metric
+          label="Yig'ilgan (oy)" tone="success"
+          value={statsLoading ? '—' : fmtn(totalPaidMonth)} unit="so'm"
+          sub={collectionPct == null ? '' : `${collectionPct.toFixed(0)}% yig'ildi`}
+        />
+        <Metric
+          label="Kutilayotgan (oy)"
+          value={statsLoading ? '—' : fmtn(totalExpected)} unit="so'm"
+        />
+        <Metric
+          label="Sahifadagi to'lovlar"
+          value={fmtn(total)} unit="so'm"
+          sub={meta ? `${meta.total} ta yozuv` : ''}
+        />
+      </MetricStrip>
 
       <div className="toolbar">
-        <button className={`button small ${view === 'list' ? 'primary' : 'secondary'}`} onClick={() => setView('list')}>
-          <FontAwesomeIcon icon={faList} /> Barcha to'lovlar
-        </button>
-        <button className={`button small ${view === 'debtors' ? 'primary' : 'secondary'}`} onClick={() => setView('debtors')}>
-          <FontAwesomeIcon icon={faTriangleExclamation} /> Qarzdorlar {!statsLoading && `(${debtors.length})`}
-        </button>
-      </div>
-
-      <div className="toolbar">
-        <FontAwesomeIcon icon={faFilter} className="text-muted" />
-        <select className="field-sm" value={filter.month} onChange={e => setFilter(p => ({ ...p, month: parseInt(e.target.value) }))}>
-          {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-        </select>
-        <select className="field-sm" value={filter.year} onChange={e => setFilter(p => ({ ...p, year: parseInt(e.target.value) }))}>
-          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
-        {view === 'list' && <button className="button secondary small" onClick={applyFilter}>Filtrlash</button>}
+        <div className="segmented" role="group" aria-label="Ko'rinish">
+          <button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>
+            <FontAwesomeIcon icon={faList} /> Barcha to'lovlar
+          </button>
+          <button className={view === 'debtors' ? 'active' : ''} onClick={() => setView('debtors')}>
+            <FontAwesomeIcon icon={faTriangleExclamation} /> Qarzdorlar{!statsLoading && ` (${debtors.length})`}
+          </button>
+        </div>
         {view === 'list' && (
-          <div className="total-badge">
-            Sahifada: <strong>{total.toLocaleString()} so'm</strong>
-            {meta && <span className="text-muted"> ({meta.total} ta)</span>}
-          </div>
+          <>
+            <DateFilter value={dateFilter} onChange={handleDateFilter} />
+            <button className="button secondary small" onClick={applyFilter}>
+              <FontAwesomeIcon icon={faFilter} /> Filtrlash
+            </button>
+          </>
         )}
       </div>
-      {view === 'list' && (
-        <div className="toolbar">
-          <DateFilter value={dateFilter} onChange={handleDateFilter} />
-        </div>
-      )}
 
       {view === 'debtors' ? (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Talaba</th>
-                <th>Guruh(lar)</th>
-                <th>Oylik to'lov</th>
-                <th>To'langan</th>
-                <th>Qarz</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {statsLoading ? (
-                <tr><td colSpan={7} className="muted center py-4">Yuklanmoqda...</td></tr>
-              ) : debtors.length === 0 ? (
-                <tr><td colSpan={7} className="muted center py-4">Bu oy uchun qarzdorlar yo'q 🎉</td></tr>
-              ) : debtors.map((s, i) => (
-                <tr key={s.id}>
-                  <td className="text-muted">{i + 1}</td>
-                  <td><strong>{s.full_name}</strong><div className="text-muted" style={{ fontSize: 12 }}>{s.phone1}</div></td>
-                  <td>
-                    {(s.group_names || []).map((n, gi) => <span key={gi} className="badge" style={{ marginRight: 4 }}>{n}</span>)}
-                  </td>
-                  <td className="amount">{Number(s.owed_month || 0).toLocaleString()} so'm</td>
-                  <td className="amount">{Number(s.paid_month || 0).toLocaleString()} so'm</td>
-                  <td className="amount" style={{ color: '#dc2626', fontWeight: 700 }}>{Number(s.debt || 0).toLocaleString()} so'm</td>
-                  <td>
-                    <button className="button primary small" disabled={quickPayLoading === s.id} onClick={() => quickPay(s)}>
-                      <FontAwesomeIcon icon={faBolt} /> {quickPayLoading === s.id ? 'Yuklanmoqda...' : "To'liq to'lash"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
+        <DataTable
+          columns={debtorColumns}
+          rows={debtors}
+          loading={statsLoading}
+          rowKey={s => s.id}
+          clientPageSize={25}
+          densityToggle densityKey="debtors"
+          empty={{
+            icon: faMoneyBillWave,
+            title: 'Qarzdorlar yo\'q',
+            description: `${MONTHS[filter.month - 1]} ${filter.year} uchun barcha to'lovlar yig'ilgan.`,
+          }}
+        />
       ) : (
-        <>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Talaba</th>
-                  <th>Guruh</th>
-                  <th>Miqdor</th>
-                  <th>Holat</th>
-                  <th>Oy / Yil</th>
-                  <th>Sana</th>
-                  <th>Izoh</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {payments.map((p, i) => (
-                  <tr key={p.id}>
-                    <td className="text-muted">{(page - 1) * 25 + i + 1}</td>
-                    <td>
-                      {p.student_name}
-                      {p.via_sales && (
-                        <span className="badge" style={{ marginLeft: 6, background: '#dcfce7', color: '#16a34a' }} title="Sales orqali jalb qilingan">
-                          <FontAwesomeIcon icon={faBullseye} /> Sales
-                        </span>
-                      )}
-                    </td>
-                    <td>{p.group_name}</td>
-                    <td className="amount">{Number(p.amount).toLocaleString()} so'm</td>
-                    <td>
-                      {p.status === 'paid'
-                        ? <span className="badge" style={{ background: '#dcfce7', color: '#16a34a' }}>To'landi</span>
-                        : p.status === 'partial'
-                          ? <span className="badge" style={{ background: '#fef3c7', color: '#d97706' }}>Qoldi: {Number(p.remaining || 0).toLocaleString()}</span>
-                          : <span className="text-muted">—</span>}
-                    </td>
-                    <td>{MONTHS[p.month - 1]} {p.year}</td>
-                    <td>{new Date(p.paid_at).toLocaleDateString('uz')}</td>
-                    <td>{p.notes || <span className="text-muted">—</span>}</td>
-                    <td>
-                      <button
-                        className="btn-icon"
-                        title="Chek ko'rish"
-                        onClick={() => openDownload(receiptUrl(p.id)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}
-                      >
-                        <FontAwesomeIcon icon={faPrint} />
-                      </button>
-                      {isAdmin && (
-                        <>
-                          <button className="btn-icon" title="Tahrirlash" onClick={() => handleEdit(p)}>
-                            <FontAwesomeIcon icon={faPen} />
-                          </button>
-                          <button className="btn-icon danger" title="To'lovni bekor qilish" onClick={() => handleDelete(p.id)}>
-                            <FontAwesomeIcon icon={faTrash} />
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {payments.length === 0 && (
-                  <tr><td colSpan={9} className="muted center py-4">To'lovlar yo'q</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <Pagination meta={meta} onPageChange={handlePageChange} />
-        </>
+        <DataTable
+          columns={paymentColumns}
+          rows={payments}
+          loading={loading}
+          meta={meta}
+          onPageChange={handlePageChange}
+          densityToggle densityKey="payments"
+          empty={{
+            icon: faCreditCard,
+            title: "To'lovlar yo'q",
+            description: 'Tanlangan davr uchun yozuv topilmadi — oy/yil yoki sana filtrini o\'zgartiring.',
+          }}
+        />
       )}
 
-      {modal && (
-        <div className="modal-overlay" onClick={() => { setModal(false); setEditing(null) }}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3><FontAwesomeIcon icon={faCreditCard} /> {editing ? "To'lovni tahrirlash" : "Yangi to'lov"}</h3>
-              <button className="modal-close" onClick={() => { setModal(false); setEditing(null) }}>✕</button>
-            </div>
-            <div className="modal-body">
-              <label>Talaba *</label>
-              <select className="field" value={form.student_id} disabled={!!editing} onChange={e => setForm(p => ({ ...p, student_id: e.target.value }))}>
-                <option value="">— Tanlang —</option>
-                {students.map(s => <option key={s.id} value={s.id}>{s.full_name} ({s.phone1})</option>)}
-              </select>
-              {(() => {
-                const selectedStudent = students.find(s => String(s.id) === String(form.student_id))
-                // Tahrirlashda joriy to'lov o'zi hisoblagan bo'lishi mumkin — shu holda
-                // hali ham o'chirib qo'yish (belgini olib tashlash) imkoni qoldiriladi.
-                const alreadyCredited = !!selectedStudent?.sales_credited && !(editing && form.via_sales)
-                return (
-                  <>
-                    <label>Sales</label>
-                    <button
-                      type="button"
-                      className={`button small ${form.via_sales || alreadyCredited ? 'primary' : 'secondary'}`}
-                      disabled={alreadyCredited}
-                      style={form.via_sales || alreadyCredited ? { background: '#16a34a', borderColor: '#16a34a' } : undefined}
-                      title={alreadyCredited ? "Bu talaba uchun Sales'ga allaqachon hisoblangan" : "Bu talabani sales rolidagi xodim jalb qilgan bo'lsa bosing"}
-                      onClick={() => setForm(p => ({ ...p, via_sales: !p.via_sales }))}
-                    >
-                      <FontAwesomeIcon icon={faBullseye} />{' '}
-                      {alreadyCredited ? 'Sales — hisoblangan ✓' : form.via_sales ? 'Sales — belgilandi' : 'Sales'}
-                    </button>
-                  </>
-                )
-              })()}
-              <label>Guruh *</label>
-              <select className="field" value={form.group_id} disabled={!!editing} onChange={e => setForm(p => ({ ...p, group_id: e.target.value }))}>
-                <option value="">— Tanlang —</option>
-                {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
-              <label>Miqdor (so'm) *</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input className="field" style={{ flex: 1 }} type="number" min="1" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} placeholder="500000" />
-                {expected && expected.remaining > 0 && (
-                  <button type="button" className="button secondary" title="To'liq summani yozish"
-                    onClick={() => setForm(p => ({ ...p, amount: String(expected.remaining) }))}>
-                    <FontAwesomeIcon icon={faMoneyBillWave} /> To'liq
-                  </button>
-                )}
-              </div>
-              {expected && expected.expected > 0 && (() => {
-                const entered = parseFloat(form.amount) || 0
-                const left = Math.max(0, expected.remaining - entered)
-                return (
-                  <div style={{ margin: '8px 0 2px', fontSize: 13, lineHeight: 1.7 }}>
-                    <div>To'liq oylik: <strong>{expected.expected.toLocaleString()} so'm</strong></div>
-                    <div>Avval to'langan: <strong>{expected.paid.toLocaleString()} so'm</strong></div>
-                    <div style={{ color: left > 0 ? '#d97706' : '#16a34a', fontWeight: 700 }}>
-                      {left > 0 ? `Qoladi: ${left.toLocaleString()} so'm` : "To'liq to'lanadi ✓"}
-                    </div>
-                  </div>
-                )
-              })()}
-              <div className="row-2">
-                <div>
-                  <label>Oy *</label>
-                  <select className="field" value={form.month} onChange={e => setForm(p => ({ ...p, month: e.target.value }))}>
-                    {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label>Yil *</label>
-                  <select className="field" value={form.year} onChange={e => setForm(p => ({ ...p, year: e.target.value }))}>
-                    {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-                  </select>
-                </div>
-              </div>
-              <label>Izoh</label>
-              <input className="field" value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Ixtiyoriy" />
-            </div>
-            <div className="modal-footer">
-              <button className="button secondary" onClick={() => { setModal(false); setEditing(null) }}>Bekor</button>
-              <button className="button primary" onClick={handleSave} disabled={saving}>
-                {saving ? 'Saqlanmoqda...' : 'Saqlash'}
+      <ConfirmDialog
+        open={!!voidTarget}
+        title="To'lovni bekor qilish"
+        message={voidTarget ? `${voidTarget.student_name} — ${fmtn(voidTarget.amount)} so'm to'lov bekor qilinsinmi?` : ''}
+        detail="Talaba yana to'lanmagan holatga qaytadi va qarzdorlar ro'yxatiga tushadi."
+        confirmLabel="Ha, bekor qilish"
+        onConfirm={handleVoid}
+        onClose={() => setVoidTarget(null)}
+      />
+
+      <Modal
+        open={modal}
+        title={editing ? "To'lovni tahrirlash" : "Yangi to'lov"}
+        onClose={() => { setModal(false); setEditing(null) }}
+        footer={
+          <>
+            <button className="button secondary" onClick={() => { setModal(false); setEditing(null) }}>Bekor</button>
+            <button className="button" onClick={handleSave} disabled={saving}>
+              {saving ? 'Saqlanmoqda...' : 'Saqlash'}
+            </button>
+          </>
+        }
+      >
+        <Select label="Talaba" required value={form.student_id} disabled={!!editing}
+          onChange={e => setForm(p => ({ ...p, student_id: e.target.value }))}>
+          <option value="">— Tanlang —</option>
+          {students.map(s => <option key={s.id} value={s.id}>{s.full_name} ({s.phone1})</option>)}
+        </Select>
+
+        {(() => {
+          const selectedStudent = students.find(s => String(s.id) === String(form.student_id))
+          // Tahrirlashda joriy to'lov o'zi hisoblagan bo'lishi mumkin — shu holda
+          // hali ham o'chirib qo'yish (belgini olib tashlash) imkoni qoldiriladi.
+          const alreadyCredited = !!selectedStudent?.sales_credited && !(editing && form.via_sales)
+          return (
+            <div className="ui-field">
+              <span className="ui-field-label">Sales atributsiyasi</span>
+              <button
+                type="button"
+                className={`button ${form.via_sales || alreadyCredited ? '' : 'secondary'} small`}
+                disabled={alreadyCredited}
+                onClick={() => setForm(p => ({ ...p, via_sales: !p.via_sales }))}
+              >
+                <FontAwesomeIcon icon={faBullseye} />{' '}
+                {alreadyCredited ? 'Sales — hisoblangan' : form.via_sales ? 'Sales — belgilandi' : 'Sales orqali kelgan'}
               </button>
+              <span className="ui-field-hint">
+                {alreadyCredited
+                  ? "Bu talaba uchun Sales'ga allaqachon hisoblangan — takroran hisoblanmaydi."
+                  : "Talabani sales rolidagi xodim jalb qilgan bo'lsa belgilang. Hisob bir marta yuritiladi."}
+              </span>
             </div>
+          )
+        })()}
+
+        <Select label="Guruh" required value={form.group_id} disabled={!!editing}
+          onChange={e => setForm(p => ({ ...p, group_id: e.target.value }))}>
+          <option value="">— Tanlang —</option>
+          {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </Select>
+
+        <div className="ui-field">
+          <span className="ui-field-label">Miqdor (so'm) <span className="ui-field-req">*</span></span>
+          <div className="field-row">
+            <input className="field" type="number" min="1" value={form.amount}
+              onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} placeholder="500000" />
+            {expected && expected.remaining > 0 && (
+              <button type="button" className="button secondary" style={{ flex: 'none' }}
+                title="To'liq summani yozish"
+                onClick={() => setForm(p => ({ ...p, amount: String(expected.remaining) }))}>
+                <FontAwesomeIcon icon={faMoneyBillWave} /> To'liq
+              </button>
+            )}
           </div>
         </div>
-      )}
+
+        {expected && expected.expected > 0 && (() => {
+          const entered = parseFloat(form.amount) || 0
+          const left = Math.max(0, expected.remaining - entered)
+          return (
+            <dl className="pay-preview">
+              <div><dt>To'liq oylik</dt><dd>{fmtn(expected.expected)} so'm</dd></div>
+              <div><dt>Avval to'langan</dt><dd>{fmtn(expected.paid)} so'm</dd></div>
+              <div className={left > 0 ? 'is-partial' : 'is-full'}>
+                <dt>{left > 0 ? 'Qoladi' : 'Natija'}</dt>
+                <dd>{left > 0 ? `${fmtn(left)} so'm` : "To'liq to'lanadi"}</dd>
+              </div>
+            </dl>
+          )
+        })()}
+
+        <div className="field-row">
+          <Select label="Oy" required value={form.month}
+            onChange={e => setForm(p => ({ ...p, month: e.target.value }))}>
+            {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </Select>
+          <Select label="Yil" required value={form.year}
+            onChange={e => setForm(p => ({ ...p, year: e.target.value }))}>
+            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+          </Select>
+        </div>
+
+        <Input label="Izoh" value={form.notes}
+          onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Ixtiyoriy" />
+      </Modal>
+
     </div>
   )
 }

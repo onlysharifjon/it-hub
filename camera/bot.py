@@ -51,7 +51,7 @@ def _has_class_today(schedule: str) -> tuple:
 
 # ── Context for Claude ─────────────────────────────────────────────────────────
 def _build_context() -> str:
-    now        = datetime.now()
+    now        = config.now()
     today      = now.strftime("%Y-%m-%d")
     wd         = _UZ_DAY_NAMES[now.weekday()]
     month_name = _MONTHS_UZ[now.month]
@@ -109,7 +109,7 @@ def _keyword_answer(text: str) -> str | None:
         if not debtors:
             return "✅ Hamma o'quvchi to'lov qilgan!"
         lines = "\n".join(f"  • {s['full_name']}" for s in debtors)
-        mn    = _MONTHS_UZ[datetime.now().month]
+        mn    = _MONTHS_UZ[config.now().month]
         return f"💸 {mn} oyida to'lamagan o'quvchilar ({len(debtors)} ta):\n{lines}"
 
     if any(w in t for w in ["dars", "jadval", "bugun dars", "qaysi dars"]):
@@ -238,7 +238,7 @@ def _snapshot_loop() -> None:
         try:
             resp = requests.get("http://localhost:8765/snap", timeout=5)
             if resp.status_code == 200:
-                now  = datetime.now().strftime("%H:%M")
+                now  = config.now().strftime("%H:%M")
                 wd   = _UZ_DAY_NAMES[datetime.today().weekday()]
                 events  = shared.get_events()
                 present = [e["name"] for e in events if e["event_type"] == "keldi"]

@@ -56,7 +56,7 @@ def log_event(person: dict, person_type: str, event: str) -> None:
     """
     try:
         wb = _load_or_create()
-        now = datetime.now()
+        now = config.now()
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H:%M:%S")
         name = person.get("full_name", f"ID {person.get('id')}")
@@ -85,7 +85,7 @@ def log_event(person: dict, person_type: str, event: str) -> None:
 def _role_uz(role: str) -> str:
     return {
         "admin":       "Administrator",
-        "metodist":    "Metodist",
+        "support_teacher": "Support Teacher",
         "teacher":     "O'qituvchi",
         "call_center": "Call Center",
         "hunter":      "Hunter",

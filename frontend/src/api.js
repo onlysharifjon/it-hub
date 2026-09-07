@@ -20,11 +20,24 @@ function authHeaders() {
     : { 'Content-Type': 'application/json' }
 }
 
+// FastAPI validatsiya xatosi (422) `detail`ni ro'yxat qilib qaytaradi
+// ({loc, msg, type}[]) — buni o'qiladigan matnga aylantiradi, aks holda
+// "Server xatosi" bilan haqiqiy sababi (masalan parol uzunligi) yashiringan bo'lardi.
+function formatValidationDetail(detail) {
+  if (!Array.isArray(detail)) return null
+  return detail.map(d => {
+    const field = Array.isArray(d.loc) ? d.loc[d.loc.length - 1] : null
+    return field && typeof field === 'string' ? `${field}: ${d.msg}` : d.msg
+  }).join('; ')
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders(), ...options })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
-    const msg = typeof err.detail === 'string' ? err.detail : 'Server xatosi'
+    const msg = typeof err.detail === 'string'
+      ? err.detail
+      : formatValidationDetail(err.detail) || 'Server xatosi'
     const error = Object.assign(new Error(msg), { status: res.status })
     if (err.detail && typeof err.detail === 'object') error.detail = err.detail
     throw error
@@ -81,9 +94,29 @@ export async function fetchLeads(params = {}) {
   if (params.bucket)    q.set('bucket', params.bucket)
   if (params.pool)      q.set('pool', 'true')
   if (params.today)     q.set('today', 'true')
+  if (params.overdue)   q.set('overdue', 'true')
+  if (params.limit)     q.set('limit', params.limit)
+  if (params.offset)    q.set('offset', params.offset)
   return request(`/leads${q.toString() ? '?' + q : ''}`)
 }
 export async function createLead(p)                    { return request('/leads', { method: 'POST', body: JSON.stringify(p) }) }
+export async function updateLead(id, p)                { return request(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
+// ── Ish markazi / qo'ng'iroq faoliyati ──
+export async function fetchWorkCenter(userId)         { return request(`/work-center${userId ? `?user_id=${userId}` : ''}`) }
+export async function createWorkTask(body)            { return request('/work-center/tasks', { method: 'POST', body: JSON.stringify(body) }) }
+export async function updateWorkTask(sourceKey, body) { return request(`/work-center/tasks?source_key=${encodeURIComponent(sourceKey)}`, { method: 'PATCH', body: JSON.stringify(body) }) }
+export async function logCall(body)                   { return request('/activities/call', { method: 'POST', body: JSON.stringify(body) }) }
+export async function fetchTeamActivity(from, to)     { return request(`/activities/stats?date_from=${from}&date_to=${to}`) }
+export async function fetchOperatorActivity(id, from, to) { return request(`/activities/operators/${id}?date_from=${from}&date_to=${to}`) }
+export async function fetchCallActivities(params = {}) {
+  const qs = Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
+  return request(`/activities${qs ? '?' + qs : ''}`)
+}
+export async function fetchConversionTree(month, year) { return request(`/leads/conversion-tree?month=${month}&year=${year}`) }
+export async function fetchLeadsByIds(ids)            { return request(`/leads/by-ids?ids=${ids.join(',')}`) }
+export async function addLeadNote(id, body)            { return request(`/leads/${id}/notes`, { method: 'POST', body: JSON.stringify({ body }) }) }
+export async function convertLead(id, p = {})          { return request(`/leads/${id}/convert`, { method: 'POST', body: JSON.stringify(p) }) }
 export async function updateLeadStatus(id, p)          { return request(`/leads/${id}/status`, { method: 'PATCH', body: JSON.stringify(p) }) }
 export async function moveLeadStage(id, p)             { return request(`/leads/${id}/stage`, { method: 'PATCH', body: JSON.stringify(p) }) }
 export async function deleteLead(id)                   { return request(`/leads/${id}`, { method: 'DELETE' }) }
@@ -117,6 +150,7 @@ export async function fetchReminders(params = {}) {
 export async function createReminder(p)                { return request('/reminders', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updateReminder(id, p)            { return request(`/reminders/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
 export async function deleteReminder(id)               { return request(`/reminders/${id}`, { method: 'DELETE' }) }
+export async function fetchCommentStats()              { return request('/leads/comment-stats') }
 
 // Notifications
 export async function fetchNotifications(unreadOnly = false) { return request(`/notifications${unreadOnly ? '?unread_only=true' : ''}`) }
@@ -199,6 +233,7 @@ export async function fetchGroups(params = {}) {
   const q = new URLSearchParams()
   if (params.is_active !== undefined) q.set('is_active', params.is_active)
   if (params.search)    q.set('search', params.search)
+  if (params.schedule)  q.set('schedule', params.schedule)
   if (params.date_from) q.set('date_from', params.date_from)
   if (params.date_to)   q.set('date_to', params.date_to)
   if (params.page)      q.set('page', params.page)
@@ -303,18 +338,13 @@ export async function createTariff(p)       { return request('/tariffs', { metho
 export async function updateTariff(id, p)   { return request(`/tariffs/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deleteTariff(id)      { return request(`/tariffs/${id}`, { method: 'DELETE' }) }
 
-
-// ── Discounts ─────────────────────────────────────────────────────────────────
-
-export async function fetchDiscounts()         { return request('/discounts') }
-export async function createDiscount(p)        { return request('/discounts', { method: 'POST', body: JSON.stringify(p) }) }
-export async function updateDiscount(id, p)    { return request(`/discounts/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
-export async function deleteDiscount(id)       { return request(`/discounts/${id}`, { method: 'DELETE' }) }
-
 // ── Finance ───────────────────────────────────────────────────────────────────
 
 export async function fetchFinanceMonthly(month, year) {
   return request(`/finance/monthly?month=${month}&year=${year}`)
+}
+export async function fetchFinanceTrend(month, year, months = 6) {
+  return request(`/finance/trend?month=${month}&year=${year}&months=${months}`)
 }
 
 // ── Today Attendance ──────────────────────────────────────────────────────────
@@ -332,9 +362,49 @@ export async function fetchExpenses(month, year) {
   if (year)  q.set('year', year)
   return request(`/expenses${q.toString() ? '?' + q : ''}`)
 }
+export async function fetchExpenseStaffOptions() { return request('/expenses/staff-options') }
 export async function createExpense(p)      { return request('/expenses', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updateExpense(id, p)  { return request(`/expenses/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deleteExpense(id)     { return request(`/expenses/${id}`, { method: 'DELETE' }) }
+
+// ── Salary (xodimlar oyligi) ────────────────────────────────────────────────────
+
+export async function fetchSalaryOverview(month, year) {
+  return request(`/salary?month=${month}&year=${year}`)
+}
+export async function fetchMySalary(month, year) {
+  return request(`/salary/me?month=${month}&year=${year}`)
+}
+export async function setStaffSalary(userId, salary, month, year) {
+  const q = (month && year) ? `?month=${month}&year=${year}` : ''
+  return request(`/salary/${userId}${q}`, { method: 'PUT', body: JSON.stringify({ salary }) })
+}
+export async function setStaffInternship(userId, month, year) {
+  return request(`/salary/${userId}?month=${month}&year=${year}`, {
+    method: 'PUT', body: JSON.stringify({ salary: 0, is_internship: true }),
+  })
+}
+export async function clearSalaryOverride(userId, month, year) {
+  return request(`/salary/${userId}/override?month=${month}&year=${year}`, { method: 'DELETE' })
+}
+export async function fetchSalaryBreakdown(userId, month, year) {
+  return request(`/salary/${userId}/breakdown?month=${month}&year=${year}`)
+}
+
+// ── Group certificates (dizaynli sertifikat) ────────────────────────────────
+
+export async function fetchGroupCertificates(groupId) {
+  return request(`/groups/${groupId}/certificates`)
+}
+export async function fetchMyCertificateGroups() {
+  return request(`/teacher/certificates`)
+}
+export async function generateGroupCertificates(groupId, payload) {
+  return request(`/groups/${groupId}/certificates/generate`, { method: 'POST', body: JSON.stringify(payload) })
+}
+export async function saveGroupCertificates(groupId, items) {
+  return request(`/groups/${groupId}/certificates`, { method: 'PUT', body: JSON.stringify({ items }) })
+}
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
@@ -352,6 +422,12 @@ export async function fetchTeacherDashboard(month, year) {
 export async function fetchStatsOverview(year) {
   const q = year ? `?year=${year}` : ''
   return request(`/stats/overview${q}`)
+}
+
+// Oylik o'quvchi o'sishi — dashboard'dagi "o'sish" bloki uchun.
+export async function fetchStudentGrowth(year) {
+  const q = year ? `?year=${year}` : ''
+  return request(`/stats/student-growth${q}`)
 }
 
 // Yuklab-olish URL'lari uzoq muddatli kirish tokenini emas, har safar olinadigan qisqa
@@ -562,6 +638,9 @@ export async function setBotEmployeeAdmin(employeeId, tier) {
 export async function fetchBotSetting(key)      { return request(`/bot/settings/${key}`) }
 export async function setBotSetting(key, value) {
   return request(`/bot/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) })
+}
+export async function sendInvestorStatsNow() {
+  return request('/bot/investor/send-now', { method: 'POST' })
 }
 export async function createBotInviteLink(tier) {
   return request('/bot/invite-links', { method: 'POST', body: JSON.stringify({ tier }) })

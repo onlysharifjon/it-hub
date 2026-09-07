@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
+import { faTriangleExclamation, faCircleCheck } from '@fortawesome/free-solid-svg-icons'
 import { fetchMyWarnings } from '../api'
+import DataTable from './ui/DataTable'
+import Badge from './ui/Badge'
 
-const SEVERITY_LABEL = { gray: 'Kulrang', yellow: 'Sariq', red: 'Qizil' }
-const SEVERITY_STYLE = {
-  gray:   { background: '#e5e7eb', color: '#374151' },
-  yellow: { background: '#fef9c3', color: '#a16207' },
-  red:    { background: '#fee2e2', color: '#dc2626' },
+const SEVERITY = {
+  gray:   { label: 'Kulrang', variant: 'neutral', rank: 1 },
+  yellow: { label: 'Sariq',   variant: 'warning', rank: 2 },
+  red:    { label: 'Qizil',   variant: 'danger',  rank: 3 },
 }
 
 export default function MyWarnings() {
@@ -23,53 +24,59 @@ export default function MyWarnings() {
       .finally(() => setLoading(false))
   }, [])
 
+  const active = items.filter(w => !w.cancelled_at)
+
+  const columns = [
+    {
+      key: 'severity', header: 'Daraja', sortable: true,
+      sortValue: w => SEVERITY[w.severity]?.rank ?? 0,
+      render: w => {
+        const s = SEVERITY[w.severity] || SEVERITY.gray
+        return <Badge variant={s.variant} size="sm">{w.code ? `${w.code} — ${s.label}` : s.label}</Badge>
+      },
+    },
+    { key: 'reason', header: 'Sabab', render: w => <span className="cell-clamp">{w.reason}</span> },
+    { key: 'issued_by_name', header: 'Kim berdi', sortable: true, render: w => <span className="text-muted">{w.issued_by_name || '—'}</span> },
+    {
+      key: 'created_at', header: 'Sana', sortable: true,
+      render: w => <span className="muted-sm">{new Date(w.created_at).toLocaleString('uz-UZ')}</span>,
+    },
+    {
+      key: 'status', header: 'Holat', sortable: true,
+      sortValue: w => (w.cancelled_at ? 1 : 0),
+      render: w => (
+        <span className={`status-badge ${w.cancelled_at ? 'inactive' : 'active'}`}>
+          {w.cancelled_at ? 'Bekor qilingan' : 'Faol'}
+        </span>
+      ),
+    },
+  ]
+
   return (
     <div className="page">
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faTriangleExclamation} className="page-icon" /> Mening ogohlantirishlarim</h1>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faTriangleExclamation} className="page-icon" /> Mening ogohlantirishlarim</h1>
+          <p className="page-subtitle">
+            {active.length > 0
+              ? `${active.length} ta faol ogohlantirish`
+              : 'Faol ogohlantirish yo‘q'}
+          </p>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Daraja</th>
-                <th>Sabab</th>
-                <th>Kim berdi</th>
-                <th>Sana</th>
-                <th>Holat</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((w, i) => (
-                <tr key={w.id} className={w.cancelled_at ? 'row-inactive' : ''}>
-                  <td className="text-muted">{i + 1}</td>
-                  <td>
-                    <span className="badge" style={SEVERITY_STYLE[w.severity]}>
-                      {w.code ? `${w.code} — ${SEVERITY_LABEL[w.severity]}` : SEVERITY_LABEL[w.severity]}
-                    </span>
-                  </td>
-                  <td style={{ maxWidth: 400 }}>{w.reason}</td>
-                  <td className="text-muted">{w.issued_by_name || '—'}</td>
-                  <td className="text-muted">{new Date(w.created_at).toLocaleString('uz-UZ')}</td>
-                  <td>
-                    <span className={`status-badge ${w.cancelled_at ? 'inactive' : 'active'}`}>
-                      {w.cancelled_at ? 'Bekor qilingan' : 'Faol'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {items.length === 0 && (
-                <tr><td colSpan={6} className="muted center py-4">Sizga ogohlantirish berilmagan</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        rows={items}
+        loading={loading}
+        rowClassName={w => (w.cancelled_at ? 'row-inactive' : undefined)}
+        clientPageSize={25}
+        empty={{
+          icon: faCircleCheck,
+          title: 'Ogohlantirish yo‘q',
+          description: 'Sizga hech qanday intizomiy ogohlantirish berilmagan.',
+        }}
+      />
     </div>
   )
 }

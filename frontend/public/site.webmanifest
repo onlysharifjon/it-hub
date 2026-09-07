@@ -1,0 +1,15 @@
+{
+  "name": "Minar Academy LMS",
+  "short_name": "Minar LMS",
+  "description": "O'quv markazining CRM va LMS tizimi",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F8FAFC",
+  "theme_color": "#2961FF",
+  "icons": [
+    { "src": "/brand/minar-icon-192.png?v=1", "sizes": "192x192", "type": "image/png" },
+    { "src": "/brand/minar-icon-512.png?v=1", "sizes": "512x512", "type": "image/png" },
+    { "src": "/brand/minar-icon-512.png?v=1", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

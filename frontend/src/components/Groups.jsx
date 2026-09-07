@@ -10,22 +10,20 @@ import {
   getGroup, addStudentToGroup, removeStudentFromGroup,
   fetchStudents, fetchTeachers, fetchTariffs,
 } from '../api'
+import useConfirm from './ui/useConfirm'
 import DateFilter from './DateFilter'
 import Pagination from './Pagination'
+import { STAGE_COLORS, STAGE_LABELS, STAGE_OPTIONS } from '../constants/domain'
 
-const EMPTY_GROUP = { name: '', stage: 'foundation', teacher_id: '', tariff_id: '', course_price: '', teacher_pay_per_student: '', schedule: '', lesson_time: '', start_date: '', telegram_chat_id: '' }
+const EMPTY_GROUP = { name: '', stage: 'foundation', teacher_id: '', tariff_id: '', course_price: '', schedule: '', lesson_time: '', start_date: '', telegram_chat_id: '' }
 
-const STAGE_COLORS = {
-  foundation: { bg: '#eff6ff', color: '#1d4ed8', bar: '#3b82f6' },
-  frontend:   { bg: '#f0fdf4', color: '#15803d', bar: '#22c55e' },
-  backend:    { bg: '#faf5ff', color: '#7e22ce', bar: '#a855f7' },
-}
-const STAGE_LABELS = { foundation: 'Foundation', frontend: 'Frontend', backend: 'Backend' }
 
 export default function Groups({ onOpenGroup }) {
+  const [confirmUI, ask] = useConfirm()
   const [data, setData] = useState({ items: [], meta: null })
   const [dateFilter, setDateFilter] = useState({ preset: 'all', date_from: '', date_to: '' })
   const [statusFilter, setStatusFilter] = useState('active')   // active | archived | all
+  const [dayFilter, setDayFilter] = useState('all')   // all | Juft kunlar | Toq kunlar
   const [page, setPage] = useState(1)
   const [teachers, setTeachers] = useState([])
   const [allStudents, setAllStudents] = useState([])
@@ -45,11 +43,12 @@ export default function Groups({ onOpenGroup }) {
     fetchTariffs().then(r => setTariffs(r || []))
   }, [])
 
-  async function load(df = dateFilter, p = page, sf = statusFilter) {
+  async function load(df = dateFilter, p = page, sf = statusFilter, dyf = dayFilter) {
     setLoading(true)
     try {
       const res = await fetchGroups({
         is_active: sf === 'all' ? undefined : sf === 'active',
+        schedule: dyf === 'all' ? undefined : dyf,
         date_from: df.date_from || undefined,
         date_to: df.date_to || undefined,
         page: p, page_size: 20,
@@ -70,6 +69,12 @@ export default function Groups({ onOpenGroup }) {
     setStatusFilter(sf)
     setPage(1)
     load(dateFilter, 1, sf)
+  }
+
+  function handleDayFilter(dyf) {
+    setDayFilter(dyf)
+    setPage(1)
+    load(dateFilter, 1, statusFilter, dyf)
   }
 
   function handlePageChange(p) {
@@ -95,7 +100,7 @@ export default function Groups({ onOpenGroup }) {
       name: g.name, stage: g.stage || 'foundation',
       teacher_id: g.teacher_id || '',
       tariff_id: matched ? String(matched.id) : '',
-      course_price: g.course_price, teacher_pay_per_student: g.teacher_pay_per_student || '',
+      course_price: g.course_price,
       schedule: g.schedule || '',
       lesson_time: g.lesson_time || '',
       start_date: g.start_date ? g.start_date.slice(0, 10) : '',
@@ -135,7 +140,13 @@ export default function Groups({ onOpenGroup }) {
 
   async function handleToggle(g) {
     if (g.is_active) {
-      if (!confirm(`"${g.name}" guruhi arxivga olinadi. Arxivdagi guruh moliya, maosh va qarzdorlik hisobotlarida ko'rinmaydi. Davom etasizmi?`)) return
+      const ok = await ask({
+        title: 'Guruhni arxivlash',
+        message: `"${g.name}" guruhi arxivga olinsinmi?`,
+        detail: "Arxivdagi guruh moliya, maosh va qarzdorlik hisobotlarida ko'rinmaydi. Keyin qaytarish mumkin.",
+        confirmLabel: 'Ha, arxivlash',
+      })
+      if (!ok) return
     }
     try {
       await updateGroup(g.id, { is_active: !g.is_active })
@@ -169,27 +180,38 @@ export default function Groups({ onOpenGroup }) {
 
   return (
     <div className="page">
+      {confirmUI}
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faUsers} className="page-icon" /> Guruhlar</h1>
-        <button className="button primary" onClick={openAdd}>
-          <FontAwesomeIcon icon={faPlus} /> Guruh yaratish
-        </button>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faUsers} className="page-icon" /> Guruhlar</h1>
+          <p className="page-subtitle">Kohorta, o'qituvchi, jadval va kurs progressi</p>
+        </div>
+        <div className="header-actions">
+          <button className="button" onClick={openAdd}>
+            <FontAwesomeIcon icon={faPlus} /> Guruh yaratish
+          </button>
+        </div>
       </div>
 
       <div className="toolbar">
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div className="segmented" role="group" aria-label="Holat bo'yicha filtr">
           {[['active', 'Faol'], ['archived', 'Arxiv'], ['all', 'Hammasi']].map(([val, label]) => (
-            <button
-              key={val}
-              className={`button small ${statusFilter === val ? 'primary' : 'secondary'}`}
-              onClick={() => handleStatusFilter(val)}
-            >
+            <button key={val} className={statusFilter === val ? 'active' : ''}
+              onClick={() => handleStatusFilter(val)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="segmented" role="group" aria-label="Kun bo'yicha filtr">
+          {[['all', 'Barchasi'], ['Juft kunlar', 'Juft'], ['Toq kunlar', 'Toq']].map(([val, label]) => (
+            <button key={val} className={dayFilter === val ? 'active' : ''}
+              onClick={() => handleDayFilter(val)}>
               {label}
             </button>
           ))}
         </div>
         <DateFilter value={dateFilter} onChange={handleDateFilter} />
-        {data.meta && <span className="muted">Jami: {data.meta.total} ta guruh</span>}
+        {data.meta && <span className="table-count">Jami: <strong>{data.meta.total}</strong> ta guruh</span>}
       </div>
 
       {loading ? <div className="muted center">Yuklanmoqda...</div> : (
@@ -203,7 +225,7 @@ export default function Groups({ onOpenGroup }) {
               >
                 <div className="group-card-header">
                   <h3>{g.name}</h3>
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <div className="group-card-badges">
                     <span
                       className="stage-badge"
                       style={{
@@ -233,7 +255,7 @@ export default function Groups({ onOpenGroup }) {
                     </span>
                     <span
                       className="group-progress-pct"
-                      style={{ color: g.progress_pct >= 80 ? '#ef4444' : g.progress_pct >= 60 ? '#f59e0b' : STAGE_COLORS[g.stage || 'foundation'].color }}
+                      style={{ color: g.progress_pct >= 80 ? 'var(--danger)' : g.progress_pct >= 60 ? 'var(--warning)' : STAGE_COLORS[g.stage || 'foundation'].color }}
                     >
                       {g.progress_pct}%
                     </span>
@@ -247,14 +269,12 @@ export default function Groups({ onOpenGroup }) {
                       }}
                     />
                   </div>
-                  <div className="group-progress-remaining">
+                  <div className={`group-progress-remaining${
+                    g.remaining_lessons <= 0 ? ' is-done' : g.remaining_lessons <= 5 ? ' is-near' : ''
+                  }`}>
                     {g.remaining_lessons > 0
-                      ? <span style={{ color: g.remaining_lessons <= 5 ? '#ef4444' : '#737373' }}>
-                          {g.remaining_lessons} dars qoldi
-                          {g.remaining_lessons <= 5 && ' ⚠'}
-                        </span>
-                      : <span style={{ color: '#16a34a', fontWeight: 600 }}>Tugadi ✓</span>
-                    }
+                      ? `${g.remaining_lessons} dars qoldi`
+                      : 'Kurs tugadi'}
                   </div>
                 </div>
 
@@ -289,6 +309,10 @@ export default function Groups({ onOpenGroup }) {
             <div className="modal-body">
               <label>Guruh nomi *</label>
               <input className="field" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Masalan: Python 1-guruh" />
+              <label>Daraja</label>
+              <select className="field" value={form.stage || 'foundation'} onChange={e => setForm(p => ({ ...p, stage: e.target.value }))}>
+                {STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
               <label>Ustoz</label>
               <select className="field" value={form.teacher_id} onChange={e => setForm(p => ({ ...p, teacher_id: e.target.value }))}>
                 <option value="">— Tanlang —</option>
@@ -338,7 +362,7 @@ export default function Groups({ onOpenGroup }) {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setModal(null)}>Bekor</button>
-              <button className="button primary" onClick={handleSave} disabled={saving}>
+              <button className="button" onClick={handleSave} disabled={saving}>
                 {saving ? 'Saqlanmoqda...' : 'Saqlash'}
               </button>
             </div>
@@ -368,7 +392,7 @@ export default function Groups({ onOpenGroup }) {
                     <option key={t.id} value={t.id}>{t.name} — {Number(t.price).toLocaleString()} so'm</option>
                   ))}
                 </select>
-                <button className="button primary" onClick={handleAddStudent}>
+                <button className="button" onClick={handleAddStudent}>
                   <FontAwesomeIcon icon={faUserPlus} /> Qo'shish
                 </button>
               </div>

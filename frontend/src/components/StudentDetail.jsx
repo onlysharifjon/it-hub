@@ -15,11 +15,13 @@ import {
   fetchStudentVacations, createStudentVacation, deleteStudentVacation,
   fetchGroups, addStudentToGroup, checkStudentTelegram, API_BASE, tashkentToday,
 } from '../api'
+import useConfirm from './ui/useConfirm'
 
 const fmtSum = n => Number(n || 0).toLocaleString('uz-UZ')
 const VAC_TODAY = tashkentToday()
 
 export default function StudentDetail({ student: studentProp, onBack, currentUser, onChanged }) {
+  const [confirmUI, ask] = useConfirm()
   const isHunter = currentUser?.role === 'hunter' || currentUser?.role === 'admin'
   const [s, setS] = useState(studentProp)
   const [form, setForm] = useState(() => toForm(studentProp))
@@ -127,10 +129,17 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
   }
 
   async function handleArchiveToggle() {
+    if (!s.is_archived) {
+      const ok = await ask({
+        title: 'Arxivga o\'tkazish',
+        message: `"${s.full_name}" arxivga o'tkazilsinmi?`,
+        detail: "Arxivdagi talaba ro'yxatlarda, moliya va qarzdorlik hisobotlarida ko'rinmaydi. Keyin qaytarish mumkin.",
+        confirmLabel: 'Ha, arxivlash',
+      })
+      if (!ok) return
+    }
     try {
-      const updated = s.is_archived
-        ? await unarchiveStudent(s.id)
-        : (confirm(`"${s.full_name}" ni arxivga o'tkazishni tasdiqlaysizmi?`) ? await archiveStudent(s.id) : null)
+      const updated = s.is_archived ? await unarchiveStudent(s.id) : await archiveStudent(s.id)
       if (updated) { setS(updated); onChanged?.(updated); toast.success(s.is_archived ? "Arxivdan chiqarildi" : "Arxivga o'tkazildi") }
     } catch (e) { toast.error(e.message) }
   }
@@ -180,24 +189,31 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
   }
 
   async function handleVacDelete(id) {
-    if (!confirm("Bu ta'til yozuvini o'chirishni tasdiqlaysizmi?")) return
+    const ok = await ask({
+      title: 'Ta\'til yozuvini o\'chirish',
+      message: "Bu ta'til yozuvi o'chirilsinmi?",
+      detail: "To'lov hisobi shu talaba uchun qayta hisoblanadi.",
+      confirmLabel: "Ha, o'chirish",
+    })
+    if (!ok) return
     try { await deleteStudentVacation(s.id, id); toast.success("O'chirildi"); await loadVacations() }
     catch (e) { toast.error(e.message) }
   }
 
   return (
     <div className="page">
+      {confirmUI}
       <div className="page-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-          <button className="btn-sm" onClick={onBack}>
+        <div className="detail-title">
+          <button className="btn-sm" onClick={onBack} aria-label="Orqaga">
             <FontAwesomeIcon icon={faArrowLeft} /> Orqaga
           </button>
-          <h1 style={{ margin: 0 }}>
+          <h1>
             <FontAwesomeIcon icon={faUserGraduate} className="page-icon" />
             {s.full_name}
           </h1>
           {s.is_demo
-            ? <span className="status-badge inactive" style={{ background: '#fef3c7', color: '#b45309' }}>Demo darsga kelmagan</span>
+            ? <span className="status-badge pending">Demo darsga kelmagan</span>
             : <span className={`status-badge ${s.is_active ? 'active' : 'inactive'}`}>{s.is_active ? 'Faol' : 'Nofaol'}</span>}
           {s.is_archived && <span className="status-badge inactive">Arxivda</span>}
         </div>
@@ -228,14 +244,14 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
               <div className="stat-row">
                 <span>Telegram ID</span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <strong style={{ color: tgCheck === 'fail' ? '#b45309' : undefined }}>{s.telegram_user_id}</strong>
+                  <strong style={{ color: tgCheck === 'fail' ? 'var(--warning-text)' : undefined }}>{s.telegram_user_id}</strong>
                   <button
                     className="btn-icon"
                     title="Yetkazishni sinab ko'rish (sinov xabari yuboradi)"
                     style={{ padding: 4 }}
                     disabled={tgCheck === 'checking'}
                     onClick={handleTelegramCheck}
-                  >
+                   aria-label="Yetkazishni sinab ko'rish (sinov xabari yuboradi)">
                     <FontAwesomeIcon icon={tgCheck === 'checking' ? faSpinner : faPaperPlane} spin={tgCheck === 'checking'} style={{ fontSize: 11 }} />
                   </button>
                 </span>
@@ -265,7 +281,7 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
                 <option value="">— guruh tanlang —</option>
                 {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
-              <button className="button primary" style={{ marginTop: 8, width: '100%' }} onClick={handleAttach} disabled={attaching}>
+              <button className="button" style={{ marginTop: 8, width: '100%' }} onClick={handleAttach} disabled={attaching}>
                 {attaching ? 'Saqlanmoqda...' : 'Biriktirish'}
               </button>
             </div>
@@ -342,7 +358,7 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
               <input className="field" value={form.telegram_user_id} onChange={e => setForm(p => ({ ...p, telegram_user_id: e.target.value }))} placeholder="123456789" />
               <label>Izoh</label>
               <textarea className="field" rows={2} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Qo'shimcha ma'lumot..." />
-              <button className="button primary" style={{ marginTop: 10 }} onClick={handleSave} disabled={saving}>
+              <button className="button" style={{ marginTop: 10 }} onClick={handleSave} disabled={saving}>
                 <FontAwesomeIcon icon={faFloppyDisk} /> {saving ? 'Saqlanmoqda...' : 'Saqlash'}
               </button>
             </div>
@@ -431,7 +447,7 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
                               <span style={{
                                 display: 'inline-flex', alignItems: 'center', gap: 5,
                                 padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-                                background: isKeldi ? '#dcfce7' : '#fee2e2', color: isKeldi ? '#16a34a' : '#dc2626',
+                                background: isKeldi ? 'var(--success-bg)' : 'var(--danger-bg)', color: isKeldi ? 'var(--success-text)' : 'var(--danger-text)',
                               }}>
                                 <FontAwesomeIcon icon={isKeldi ? faArrowRightToBracket : faArrowRightFromBracket} />
                                 {isKeldi ? 'Keldi' : 'Ketdi'}
@@ -468,7 +484,7 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
               <label>Sababi (ixtiyoriy)</label>
               <input className="field" value={vacForm.reason} placeholder="Masalan: shifokor tavsiyasi"
                 onChange={e => setVacForm(p => ({ ...p, reason: e.target.value }))} />
-              <button className="button primary" style={{ marginTop: 10 }} onClick={handleVacSave} disabled={vacSaving}>
+              <button className="button" style={{ marginTop: 10 }} onClick={handleVacSave} disabled={vacSaving}>
                 <FontAwesomeIcon icon={faPlus} /> {vacSaving ? 'Saqlanmoqda...' : "Qo'shish"}
               </button>
 
@@ -501,8 +517,8 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
 
 function StudentAvatar({ photoUrl, size = 60 }) {
   if (!photoUrl) return (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: '#e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
-      <FontAwesomeIcon icon={faUserGraduate} style={{ color: '#94a3b8', fontSize: size * 0.4 }} />
+    <div style={{ width: size, height: size, borderRadius: '50%', background: 'var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+      <FontAwesomeIcon icon={faUserGraduate} style={{ color: 'var(--muted)', fontSize: size * 0.4 }} />
     </div>
   )
   return (

@@ -5,26 +5,46 @@ import {
   faCircleCheck, faCircleXmark, faPaperPlane, faInbox,
 } from '@fortawesome/free-solid-svg-icons'
 import { fetchBotChats, fetchBotChatMessages } from '../api'
+import { tashkentDate, tashkentToday } from '../utils/datetime'
 
 const KIND_META = {
-  student: { icon: faUserGraduate, label: 'Talaba',  color: '#2563eb' },
-  staff:   { icon: faUserTie,      label: 'Xodim',   color: '#7c3aed' },
-  unknown: { icon: faCircleQuestion, label: "Noma'lum", color: '#6b7280' },
+  student: { icon: faUserGraduate, label: 'Talaba',  color: 'var(--primary)' },
+  staff:   { icon: faUserTie,      label: 'Xodim',   color: 'var(--accent)' },
+  unknown: { icon: faCircleQuestion, label: "Noma'lum", color: 'var(--muted)' },
+}
+
+/**
+ * Bot API vaqtni ikki xil ko'rinishda qaytaradi: mintaqasiz ("2026-09-04T10:20:30")
+ * va mintaqali ("2026-09-04T10:20:30+05:00"). Ilgari kodda har doim 'Z'
+ * qo'shilardi — mintaqali qatorlar "...+05:00Z" bo'lib, `new Date()` uchun
+ * yaroqsiz sana chiqardi va ro'yxatdagi HAR BIR qatorda "Invalid Date" yozilardi.
+ * Shuning uchun 'Z' faqat mintaqa ko'rsatilmagan qatorlarga qo'shiladi.
+ */
+function parseTs(iso) {
+  if (!iso) return null
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(iso)
+  const d = new Date(hasZone ? iso : iso + 'Z')
+  return isNaN(d) ? null : d
+}
+
+/** Telegram xabarlari HTML bilan yuboriladi — ro'yxat ko'rinishida teglar matn
+ *  sifatida chiqib qolmasligi uchun oddiy teglarni olib tashlaymiz. */
+function stripTags(text) {
+  return (text || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
 }
 
 function fmtTime(iso) {
-  if (!iso) return ''
-  return new Date(iso + 'Z').toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
+  const d = parseTs(iso)
+  return d ? d.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' }) : ''
 }
 function fmtDay(iso) {
-  if (!iso) return ''
-  return new Date(iso + 'Z').toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const d = parseTs(iso)
+  return d ? d.toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
 }
 function fmtListTime(iso) {
-  if (!iso) return ''
-  const d = new Date(iso + 'Z')
-  const now = new Date()
-  const sameDay = d.toDateString() === now.toDateString()
+  const d = parseTs(iso)
+  if (!d) return ''
+  const sameDay = tashkentDate(d) === tashkentToday()
   return sameDay
     ? d.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })
     : d.toLocaleDateString('uz-UZ', { day: '2-digit', month: '2-digit' })
@@ -83,7 +103,10 @@ export default function ChatBot() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faComments} className="page-icon" /> Chatbot</h1>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faComments} className="page-icon" /> Chatbot</h1>
+          <p className="page-subtitle">Telegram bot orqali kelgan suhbatlar</p>
+        </div>
       </div>
 
       <div className="chatbot-layout">
@@ -128,10 +151,10 @@ export default function ChatBot() {
                       {c.last_direction === 'out' && (
                         <FontAwesomeIcon
                           icon={c.last_sent_ok ? faCircleCheck : faCircleXmark}
-                          style={{ color: c.last_sent_ok ? '#16a34a' : '#dc2626', marginRight: 4, fontSize: 11 }}
+                          style={{ color: c.last_sent_ok ? 'var(--success-text)' : 'var(--danger-text)', marginRight: 4, fontSize: 11 }}
                         />
                       )}
-                      <span className="chatbot-chat-preview-text">{c.last_text || '—'}</span>
+                      <span className="chatbot-chat-preview-text">{stripTags(c.last_text) || '—'}</span>
                     </div>
                   </div>
                 </button>
@@ -183,12 +206,12 @@ export default function ChatBot() {
                             {m.message_type === 'auto_notify' && m.direction === 'out' && (
                               <div className="chatbot-bubble-tag">avtomatik xabar</div>
                             )}
-                            <div className="chatbot-bubble-text">{m.text || '—'}</div>
+                            <div className="chatbot-bubble-text">{stripTags(m.text) || '—'}</div>
                             <div className="chatbot-bubble-meta">
                               {m.direction === 'out' && (
                                 <FontAwesomeIcon
                                   icon={m.sent_ok ? faCircleCheck : faCircleXmark}
-                                  style={{ color: m.sent_ok ? '#bbf7d0' : '#fecaca', fontSize: 10 }}
+                                  style={{ color: m.sent_ok ? 'var(--success-bg)' : 'var(--danger-border)', fontSize: 10 }}
                                 />
                               )}
                               {fmtTime(m.created_at)}

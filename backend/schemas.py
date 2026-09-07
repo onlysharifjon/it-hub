@@ -57,6 +57,7 @@ class UserUpdate(BaseModel):
     blocked_reason:  Optional[str]      = None
     blocked_contact: Optional[str]      = None
     telegram_chat_id: Optional[str]     = Field(None, max_length=50)
+    salary:          Optional[Decimal]  = Field(None, ge=0, le=Decimal("9999999999.99"))
 
 
 class ProfileUpdate(BaseModel):
@@ -145,6 +146,24 @@ class LeadActivityRead(BaseModel):
 
 # ── Leads ───────────────────────────────────────────────────────────────────
 
+def _validate_phone(v: Optional[str]) -> Optional[str]:
+    """Telefonda kamida 7 ta raqam bo'lishi shart.
+
+    Ilgari faqat `min_length=7` (belgilar soni) tekshirilardi, shuning uchun
+    bazaga "Maxsud", "Xa", "91" kabi qiymatlar tushib qolgan va ular ustidagi
+    "Qo'ng'iroq qilish" tugmasi ishlamas edi.
+    """
+    if v is None:
+        return v
+    v = v.strip()
+    if not v:
+        return None
+    digits = sum(c.isdigit() for c in v)
+    if digits < 7:
+        raise ValueError("Telefon raqamida kamida 7 ta raqam bo'lishi kerak")
+    return v
+
+
 class LeadCreate(BaseModel):
     full_name:           str            = Field(..., min_length=2, max_length=200)
     phone:               str            = Field(..., min_length=7, max_length=30)
@@ -156,9 +175,45 @@ class LeadCreate(BaseModel):
     parent2_phone:       Optional[str]  = Field(None, max_length=30)
     interested_group_id: Optional[int]  = None
 
+    _v_phone = validator("phone", "parent_phone", "parent2_phone", allow_reuse=True)(_validate_phone)
+
+
+class LeadUpdate(BaseModel):
+    """Lidni tahrirlash — faqat yuborilgan maydonlar o'zgaradi."""
+    full_name:           Optional[str]  = Field(None, min_length=2, max_length=200)
+    phone:               Optional[str]  = Field(None, min_length=7, max_length=30)
+    course_interest:     Optional[str]  = None
+    source_id:           Optional[int]  = None
+    notes:               Optional[str]  = None
+    callback_at:         Optional[datetime] = None
+    date_of_birth:       Optional[date] = None
+    parent_phone:        Optional[str]  = Field(None, max_length=30)
+    parent2_phone:       Optional[str]  = Field(None, max_length=30)
+    interested_group_id: Optional[int]  = None
+
+    _v_phone = validator("phone", "parent_phone", "parent2_phone", allow_reuse=True)(_validate_phone)
+
+
+class LeadNoteCreate(BaseModel):
+    """Lidga izoh (sanasiz) — tarixga `note` sifatida yoziladi."""
+    body: str = Field(..., min_length=1, max_length=2000)
+
+
+class LeadConvert(BaseModel):
+    """Lidni talabaga aylantirish."""
+    group_id:     Optional[int] = None    # darhol guruhga qo'shish (ixtiyoriy)
+    tariff_id:    Optional[int] = None
+    father_name:  Optional[str] = Field(None, max_length=200)
+    mother_name:  Optional[str] = Field(None, max_length=200)
+    is_demo:      bool          = False   # hali demo darsga kelmagan bo'lsa
+    keep_lead:    bool          = True    # lid tarixi saqlansin (o'chirilmasin)
+
 
 class LeadStatusUpdate(BaseModel):
-    status:      LeadStatus
+    # Bosqichlar sozlanadigan bo'lgani uchun (LeadStage) bu yerda qat'iy enum
+    # bo'lishi mumkin emas — "demo", "reapplication" kabi keyin qo'shilgan
+    # bosqichlar enum'da yo'q va 422 xatoga olib kelardi.
+    status:      str                = Field(..., min_length=1, max_length=30)
     callback_at: Optional[datetime] = None
     notes:       Optional[str]      = None
 
@@ -195,8 +250,14 @@ class LeadRead(BaseModel):
     created_by_id:   int
     created_by_name: Optional[str]      = None
     updated_by_name: Optional[str]      = None
+    referred_by_id:  Optional[int]      = None
+    referred_by_name: Optional[str]     = None
+    phone_display:   Optional[str]      = None   # +998 XX XXX XX XX ko'rinishi
+    is_overdue:      bool               = False  # callback_at o'tib ketganmi
     created_at:      datetime
     updated_at:      Optional[datetime] = None
+    next_reminder_body:   Optional[str]      = None
+    next_reminder_due_at: Optional[datetime] = None
 
     class Config:
         orm_mode = True
@@ -253,6 +314,25 @@ class ReminderRead(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class CommentMonthStat(BaseModel):
+    period: str
+    count:  int
+
+
+class CommentAuthorStat(BaseModel):
+    author_name: str
+    count:       int
+
+
+class CommentStatsRead(BaseModel):
+    total:         int
+    first_at:      Optional[datetime] = None
+    last_at:       Optional[datetime] = None
+    months:        List[CommentMonthStat]  = []
+    busiest_month: Optional[CommentMonthStat] = None
+    by_author:     List[CommentAuthorStat] = []
 
 
 # ── Notifications ───────────────────────────────────────────────────────────
@@ -319,6 +399,262 @@ class LeadAnalyticsRead(BaseModel):
     distribution: List[FunnelStep]
     sources:      List[SourceStat]
     referrals:    List[ReferrerStat] = []
+
+
+# ── Conversion Tree (lid oqimi tahlili) ─────────────────────────────────────
+#
+# Tugun kaliti (`key`) — bosqich ID'si emas, MATN. Sabab: bosqich o'zgarishlari
+# tarixi (`lead_activities.meta_json`) bosqich NOMINI saqlaydi, ID'sini emas.
+# Admin bosqichni o'chirsa yoki qayta nomlasa, eski yozuvlar baribir tarixda
+# qoladi. Shuning uchun mavjud bosqichlar "s<id>" kalitini, tarixda uchraydigan
+# lekin endi mavjud bo'lmagan nomlar esa "h:<nom>" kalitini oladi — daraxt
+# hech qachon ma'lumot yo'qotmaydi.
+
+class TreeStageNode(BaseModel):
+    key:      str
+    id:       Optional[int]  = None
+    name:     str
+    slug:     Optional[str]  = None
+    color:    Optional[str]  = None
+    kind:     str                       # lead | won | lost | unknown
+    order:    int
+    count:    int                       # shu bosqichga YETIB KELGAN lidlar soni
+    percent:  float
+    lead_ids: List[int] = []
+
+
+class TreeTransition(BaseModel):
+    from_key:  str
+    to_key:    str
+    from_name: str
+    to_name:   str
+    count:     int
+    percent:   float                    # `from` bosqichiga yetgan lidlarga nisbatan
+    kind:      str                      # normal | skip | back | won | lost
+    lead_ids:  List[int] = []
+
+
+class TreeInsight(BaseModel):
+    kind:     str                       # bottleneck | warning | success | info
+    title:    str
+    detail:   Optional[str] = None
+    value:    Optional[str] = None
+    from_key: Optional[str] = None      # bosilganda daraxtda shu o'tishni ochish uchun
+    to_key:   Optional[str] = None
+    stage_key: Optional[str] = None
+
+
+class TreeSourceStat(BaseModel):
+    id:         Optional[int] = None
+    name:       str
+    leads:      int
+    won:        int
+    conversion: float
+    revenue:    float
+    lead_ids:   List[int] = []
+
+
+class TreeOperatorStat(BaseModel):
+    id:         Optional[int] = None
+    name:       str
+    leads:      int
+    won:        int
+    conversion: float
+    revenue:    float
+
+
+class ConversionTreeRead(BaseModel):
+    month:                  int
+    year:                   int
+    total_leads:            int
+    won_leads:              int
+    lost_leads:             int
+    open_leads:             int
+    conversion_rate:        float
+    revenue:                float
+    avg_conversion_days:    Optional[float] = None
+    median_conversion_days: Optional[float] = None
+    avg_revenue_per_won:    Optional[float] = None
+    direct_conversions:     int = 0
+    direct_conversion_ids:  List[int] = []
+    students_created:       int = 0
+    won_without_student:    int = 0
+    won_without_student_ids: List[int] = []
+    stages:                 List[TreeStageNode] = []
+    transitions:            List[TreeTransition] = []
+    insights:               List[TreeInsight] = []
+    sources:                List[TreeSourceStat] = []
+    operators:              List[TreeOperatorStat] = []
+    can_see_operators:      bool = False
+    scope:                  str = "all"      # all | own — qaysi lidlar hisobga olingani
+
+
+
+# ── Ish markazi / qo'ng'iroq faoliyati ──────────────────────────────────────
+
+class WorkTaskRead(BaseModel):
+    source_key:    str
+    task_type:     str
+    task_label:    str
+    title:         str
+    reason:        Optional[str] = None
+    priority:      str
+    status:        str = "new"
+    due_at:        Optional[datetime] = None
+    overdue:       bool = False
+    entity_type:   Optional[str] = None
+    entity_id:     Optional[int] = None
+    phone:         Optional[str] = None
+    phone2:        Optional[str] = None
+    assigned_to_id:   Optional[int] = None
+    assigned_to_name: Optional[str] = None
+    meta:          dict = {}
+    last_outcome:  Optional[str] = None
+    last_note:     Optional[str] = None
+    completed_at:  Optional[datetime] = None
+    postponed_to:  Optional[datetime] = None
+    is_manual:     bool = False
+
+
+class WorkCenterKpi(BaseModel):
+    total:     int = 0
+    completed: int = 0
+    remaining: int = 0
+    critical:  int = 0
+    overdue:   int = 0
+
+
+class DailyCallStats(BaseModel):
+    calls:            int = 0
+    connected:        int = 0
+    no_answer:        int = 0
+    callbacks:        int = 0
+    payment_calls:    int = 0
+    absence_calls:    int = 0
+    completed_tasks:  int = 0
+
+
+class WorkCenterRead(BaseModel):
+    date:         str
+    kpi:          WorkCenterKpi
+    tasks:        List[WorkTaskRead] = []
+    completed:    List[WorkTaskRead] = []
+    daily:        DailyCallStats
+    scope_user_id: Optional[int] = None
+    can_pick_user: bool = False
+
+
+class WorkTaskCreate(BaseModel):
+    title:        str = Field(..., min_length=1, max_length=200)
+    reason:       Optional[str] = None
+    priority:     str = Field("normal", max_length=12)
+    due_at:       Optional[datetime] = None
+    entity_type:  Optional[str] = Field(None, max_length=16)
+    entity_id:    Optional[int] = None
+    assigned_to_id: Optional[int] = None
+
+
+class WorkTaskUpdate(BaseModel):
+    status:       str = Field(..., max_length=12)   # completed|skipped|postponed|cancelled|in_progress|new
+    postponed_to: Optional[datetime] = None
+    note:         Optional[str] = None
+    # Generatordan kelgan vazifa hali bazada bo'lmasligi mumkin — kalitni
+    # to'ldirish uchun kerakli kontekst.
+    task_type:    Optional[str] = None
+    title:        Optional[str] = None
+    entity_type:  Optional[str] = None
+    entity_id:    Optional[int] = None
+    priority:     Optional[str] = None
+
+
+class CallActivityCreate(BaseModel):
+    entity_type:  str = Field(..., max_length=16)   # lead | student
+    entity_id:    int
+    outcome:      str = Field(..., max_length=32)
+    note:         Optional[str] = None
+    next_action:  Optional[str] = Field(None, max_length=32)
+    next_action_at: Optional[datetime] = None
+    duration_sec: Optional[int] = None
+    source_key:   Optional[str] = Field(None, max_length=160)
+    task_type:    Optional[str] = Field(None, max_length=32)
+    payment_promise: Optional[str] = Field(None, max_length=16)
+    promised_at:  Optional[date] = None
+    complete_task: bool = True
+
+
+class CallActivityRead(BaseModel):
+    id:             int
+    user_id:        int
+    user_name:      Optional[str] = None
+    entity_type:    str
+    entity_id:      int
+    entity_name:    Optional[str] = None
+    phone:          Optional[str] = None
+    task_type:      Optional[str] = None
+    outcome:        str
+    outcome_label:  Optional[str] = None
+    note:           Optional[str] = None
+    next_action:    Optional[str] = None
+    next_action_at: Optional[datetime] = None
+    duration_sec:   Optional[int] = None
+    state_before:   Optional[str] = None
+    state_after:    Optional[str] = None
+    payment_promise: Optional[str] = None
+    promised_at:    Optional[date] = None
+    created_at:     datetime
+    edited_at:      Optional[datetime] = None
+    edited_by_name: Optional[str] = None
+    original_note:  Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+class CallActivityPage(BaseModel):
+    items: List[CallActivityRead] = []
+    total: int = 0
+    page:  int = 1
+    pages: int = 1
+
+
+class OperatorStat(BaseModel):
+    id:              int
+    name:            str
+    role:            Optional[str] = None
+    calls:           int = 0
+    connected:       int = 0
+    no_answer:       int = 0
+    completed_tasks: int = 0
+    callbacks:       int = 0
+    payment_calls:   int = 0
+    absence_calls:   int = 0
+    leads_handled:   int = 0
+    connect_rate:    float = 0.0
+
+
+class TeamActivityRead(BaseModel):
+    date_from:        date
+    date_to:          date
+    total_calls:      int = 0
+    connected:        int = 0
+    no_answer:        int = 0
+    completed_tasks:  int = 0
+    callbacks:        int = 0
+    payment_calls:    int = 0
+    absence_calls:    int = 0
+    connect_rate:     float = 0.0
+    avg_calls_per_operator: float = 0.0
+    operators:        List[OperatorStat] = []
+    insights:         List[TreeInsight] = []
+
+
+class OperatorDetailRead(BaseModel):
+    operator:   OperatorStat
+    date_from:  date
+    date_to:    date
+    calls:      List[CallActivityRead] = []
+    tasks:      List[WorkTaskRead] = []
+
 
 
 # ── Intake forms (public lead capture) ──────────────────────────────────────
@@ -614,8 +950,8 @@ class GroupStudentRead(BaseModel):
         orm_mode = True
 
 
-STAGE_LABELS = {'foundation': 'Foundation', 'frontend': 'Frontend', 'backend': 'Backend'}
-STAGE_TOTAL_LESSONS = {'foundation': 24, 'frontend': 72, 'backend': 108}
+STAGE_LABELS = {'foundation': 'Foundation', 'fullstack': 'Fullstack', 'frontend': 'Frontend', 'backend': 'Backend'}
+STAGE_TOTAL_LESSONS = {'foundation': 24, 'fullstack': 108, 'frontend': 72, 'backend': 108}
 
 
 class GroupRead(BaseModel):
@@ -627,7 +963,6 @@ class GroupRead(BaseModel):
     teacher_id: Optional[int] = None
     teacher_name: Optional[str] = None
     course_price: Decimal
-    teacher_pay_per_student: Decimal = Decimal('0')
     schedule: Optional[str] = None
     lesson_time: Optional[str] = None
     start_date: Optional[datetime] = None
@@ -654,7 +989,6 @@ class GroupCreate(BaseModel):
     course_id: Optional[int] = None
     teacher_id: Optional[int] = None
     course_price: Decimal = Field(..., ge=0)
-    teacher_pay_per_student: Decimal = Field(Decimal('0'), ge=0)
     schedule: Optional[str] = Field(None, max_length=200)
     lesson_time: Optional[str] = Field(None, max_length=5, regex=r"^\d{2}:\d{2}$")
     start_date: Optional[datetime] = None
@@ -667,7 +1001,6 @@ class GroupUpdate(BaseModel):
     course_id: Optional[int] = None
     teacher_id: Optional[int] = None
     course_price: Optional[Decimal] = Field(None, ge=0)
-    teacher_pay_per_student: Optional[Decimal] = Field(None, ge=0)
     schedule: Optional[str] = Field(None, max_length=200)
     lesson_time: Optional[str] = Field(None, max_length=5, regex=r"^\d{2}:\d{2}$")
     start_date: Optional[datetime] = None
@@ -756,6 +1089,9 @@ class ExpenseRead(BaseModel):
     amount: Decimal
     month: int
     year: int
+    category: str = 'other'
+    staff_id: Optional[int] = None
+    staff_name: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -767,6 +1103,8 @@ class ExpenseCreate(BaseModel):
     amount: Decimal = Field(..., gt=0, le=_MAX_MONEY)
     month: int = Field(..., ge=1, le=12)
     year: int = Field(..., ge=2020)
+    category: Literal['other', 'salary'] = 'other'
+    staff_id: Optional[int] = None
 
 
 class ExpenseUpdate(BaseModel):
@@ -774,6 +1112,100 @@ class ExpenseUpdate(BaseModel):
     amount: Optional[Decimal] = Field(None, gt=0, le=_MAX_MONEY)
     month: Optional[int] = Field(None, ge=1, le=12)
     year: Optional[int] = Field(None, ge=2020)
+    category: Optional[Literal['other', 'salary']] = None
+    staff_id: Optional[int] = None
+
+
+# ── Salary ────────────────────────────────────────────────────────────────────
+
+class SalaryStaffRow(BaseModel):
+    staff_id: int
+    full_name: str
+    role: UserRole
+    salary: Decimal = Decimal('0')
+    paid: Decimal = Decimal('0')
+    remaining: Decimal = Decimal('0')
+    auto: bool = False                          # True — formula bo'yicha hisoblangan (qo'lda o'zgartirilmagan)
+    student_count: Optional[int] = None          # faqat o'qituvchi uchun — shu oy o'qitgan talabalar soni
+    auto_salary: Optional[Decimal] = None         # faqat o'qituvchi uchun — formula bo'yicha hisob (override bo'lsa ham)
+    is_internship: bool = False                   # shu oy uchun "stajirovka" belgilangan — oylik 0
+    has_override: bool = False                    # shu oy uchun qo'lda override mavjud (auto emas)
+
+
+class SalaryOverview(BaseModel):
+    month: int
+    year: int
+    rows: List[SalaryStaffRow]
+    total_salary: Decimal = Decimal('0')
+    total_paid: Decimal = Decimal('0')
+
+
+class SalarySetRequest(BaseModel):
+    salary: Decimal = Field(Decimal('0'), ge=0, le=_MAX_MONEY)
+    is_internship: bool = False                   # true bo'lsa — amount 0 ga majburlanadi, shu oy "stajirovka"
+
+
+class SalaryBreakdownItem(BaseModel):
+    group_id: int
+    group_name: str
+    student_id: int
+    student_name: str
+    lessons_held: int
+    attended: int
+    per_lesson: Decimal
+    share: Decimal
+
+
+class SalaryBreakdown(BaseModel):
+    staff_id: int
+    month: int
+    year: int
+    base_salary: Decimal = Decimal('0')
+    per_student_total: Decimal = Decimal('0')
+    student_bonus_unit: Decimal = Decimal('50000')  # 1 talaba to'liq oy qatnasa oladigan bonus
+    items: List[SalaryBreakdownItem] = []
+    total: Decimal = Decimal('0')
+
+
+# ── Group certificates (dizaynli, HTML/print shabloni) ───────────────────────
+# Eslatma: bu `Certificate`/`CertificateRead` (talaba profilidagi PDF-fayl
+# havolali sertifikat) dan farqli, alohida ("guruh sertifikati") funksiya.
+
+class GroupCertificateOut(BaseModel):
+    id: int
+    group_id: int
+    student_id: int
+    cert_number: str
+    student_name: str
+    course_label: str
+    issue_date: str
+    signer_name: str
+    signer_title: str
+
+    class Config:
+        orm_mode = True
+
+
+class GroupCertificateGenerateRequest(BaseModel):
+    course_label: str = ''
+    issue_date: str = ''
+    signer_name: str = "Sharifjon Mo'minov"
+    signer_title: str = 'CEO'
+    student_ids: Optional[List[int]] = None   # null — guruhning barcha a'zolari
+
+
+class GroupCertificateUpdateItem(BaseModel):
+    id: int
+    student_name: Optional[str] = None
+    cert_number: Optional[str] = None
+    course_label: Optional[str] = None
+    issue_date: Optional[str] = None
+    signer_name: Optional[str] = None
+    signer_title: Optional[str] = None
+
+
+class GroupCertificateBulkUpdateRequest(BaseModel):
+    items: List[GroupCertificateUpdateItem]
 
 
 # ── Statistics ────────────────────────────────────────────────────────────────
@@ -810,6 +1242,8 @@ class StatsOverview(BaseModel):
     external_expenses: Decimal = Decimal('0')
     total_expenses: Decimal = Decimal('0')
     net_profit: Decimal = Decimal('0')
+    attendance_rate: float = 0.0      # joriy oy: belgilangan yozuvlardan "keldi" foizi
+    total_teachers: int = 0           # faol o'qituvchilar soni
     monthly_history: List[MonthlyStats]
 
 
@@ -936,7 +1370,7 @@ class SpecialDiscountRead(BaseModel):
     student_name: Optional[str] = None
     group_id: Optional[int] = None
     group_name: Optional[str] = None
-    kind: str                                # free_month | monthly
+    kind: str                                # free_month | monthly | one_time
     amount: Optional[Decimal] = None
     month: Optional[int] = None
     year: Optional[int] = None
@@ -952,10 +1386,10 @@ class SpecialDiscountRead(BaseModel):
 class SpecialDiscountCreate(BaseModel):
     student_id: int
     group_id: Optional[int] = None           # NULL = barcha guruhlar
-    kind: str = Field(..., regex="^(free_month|monthly)$")
-    amount: Optional[Decimal] = Field(None, gt=0, le=_MAX_MONEY)   # monthly uchun
-    month: Optional[int] = Field(None, ge=1, le=12) # free_month uchun
-    year: Optional[int] = Field(None, ge=2020)      # free_month uchun
+    kind: str = Field(..., regex="^(free_month|monthly|one_time)$")
+    amount: Optional[Decimal] = Field(None, gt=0, le=_MAX_MONEY)   # monthly/one_time uchun
+    month: Optional[int] = Field(None, ge=1, le=12) # free_month/one_time uchun
+    year: Optional[int] = Field(None, ge=2020)      # free_month/one_time uchun
     reason: Optional[str] = Field(None, max_length=300)
 
 

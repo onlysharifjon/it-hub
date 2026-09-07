@@ -9,7 +9,7 @@ from .database import Base
 
 class UserRole(str, enum.Enum):
     admin       = "admin"        # superadmin — to'liq nazorat + daromad statistika
-    metodist    = "metodist"     # metodist   — dars CRUD + talabalar/guruhlar
+    metodist    = "support_teacher"  # Support Teacher — dars CRUD + talabalar/guruhlar
     teacher     = "teacher"      # o'qituvchi  — faqat metodika ko'rish
     call_center = "call_center"  # call center — lidlar holati + talabalar/guruhlar
     hunter      = "hunter"       # hunter     — lid qo'shish + talabalar/guruhlar
@@ -40,6 +40,7 @@ class User(Base):
     telegram = Column(String(100), nullable=True)      # @username
     telegram_chat_id = Column(String(50), nullable=True)  # Telegram bot bildirishnomasi uchun chat/user ID
     face_photo_path = Column(String(500), nullable=True)  # kamera orqali davomat uchun yuz rasmi
+    salary = Column(Numeric(12, 2), nullable=True)  # belgilangan oylik (admin tomonidan kiritiladi)
     # Block & expiry
     blocked_reason  = Column(Text, nullable=True)         # sabab matni
     blocked_contact = Column(String(300), nullable=True)  # bog'lanish ma'lumoti
@@ -231,7 +232,66 @@ class Expense(Base):
     amount = Column(Numeric(12, 2), nullable=False)
     month = Column(Integer, nullable=False)
     year = Column(Integer, nullable=False)
+    category = Column(String(20), nullable=False, default='other')  # other | salary
+    staff_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # category='salary' — kimga to'landi
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    staff = relationship("User", foreign_keys=[staff_id])
+
+    @property
+    def staff_name(self):
+        return (self.staff.full_name or self.staff.username) if self.staff else None
+
+
+class SalaryOverride(Base):
+    """O'qituvchining avtomatik hisoblangan (FIX + talaba boshiga) oyligini
+    superadmin biror oy uchun qo'lda o'zgartirsa — shu yerda saqlanadi.
+    Boshqa oylar formulaga ko'ra hisoblanishda davom etadi."""
+    __tablename__ = "salary_overrides"
+
+    id = Column(Integer, primary_key=True, index=True)
+    staff_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    month = Column(Integer, nullable=False)
+    year = Column(Integer, nullable=False)
+    amount = Column(Numeric(12, 2), nullable=False)
+    is_internship = Column(Boolean, nullable=False, default=False)  # true — shu oy "stajirovka", oylik 0
+    set_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("staff_id", "month", "year", name="uq_salary_override"),)
+
+    staff = relationship("User", foreign_keys=[staff_id])
+    set_by = relationship("User", foreign_keys=[set_by_id])
+
+
+class GroupCertificate(Base):
+    """Guruh uchun generatsiya qilingan (dizaynli) sertifikat — bir marta
+    generatsiya qilingandan keyin saqlanadi, qayta ochilganda (yoki
+    "regenerate" bosilganda) o'sha yozuv qaytariladi, admin/hunter/o'qituvchi
+    uni tahrirlab qayta saqlashi (PUT) mumkin. `Certificate` (PDF-fayl
+    havolali, talaba profilida) modelidan farqli — bu HTML/print shabloni
+    orqali generatsiya qilinadigan rasmiy sertifikat."""
+    __tablename__ = "group_certificates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("groups.id"), nullable=False, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    cert_number = Column(String(60), nullable=False)
+    student_name = Column(String(200), nullable=False)      # generatsiya vaqtidagi ism — keyin mustaqil tahrirlanadi
+    course_label = Column(String(120), nullable=False, default='')
+    issue_date = Column(String(30), nullable=False, default='')
+    signer_name = Column(String(200), nullable=False, default="Sharifjon Mo'minov")
+    signer_title = Column(String(60), nullable=False, default='CEO')
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("group_id", "student_id", name="uq_certificate_group_student"),)
+
+    group = relationship("Group")
+    student = relationship("Student")
+    created_by = relationship("User", foreign_keys=[created_by_id])
 
 
 class Attendance(Base):
@@ -285,6 +345,9 @@ class Lead(Base):
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String(200), nullable=False)
     phone = Column(String(30), nullable=False)
+    # Dublikat izlash uchun normallashtirilgan kalit (oxirgi 9 raqam). Yozuvda
+    # doim phone bilan birga yangilanadi — indeks orqali O(1) tekshiriladi.
+    phone_key = Column(String(16), nullable=True, index=True)
     course_interest = Column(String(100), nullable=True)   # foundation/frontend/backend
     status = Column(String(30), nullable=False, default=LeadStatus.new.value, index=True)  # stage.slug bilan sinxron
     stage_id = Column(Integer, ForeignKey("lead_stages.id"), nullable=True, index=True)
@@ -389,6 +452,9 @@ class Reminder(Base):
     status = Column(String(20), nullable=False, default="pending", index=True)  # pending | done | dismissed
     snoozed_until = Column(DateTime, nullable=True)
     done_at = Column(DateTime, nullable=True)
+    # Muddati kelganda bildirishnoma yuborilgan vaqt — bir eslatma uchun
+    # bildirishnoma faqat bir marta ketishi uchun.
+    notified_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=True)
 
@@ -566,6 +632,7 @@ class SpecialDiscount(Base):
     kind:
       - free_month: tanlangan oy (month/year) to'liq bepul
       - monthly:    har oy uchun amount so'm chegirma (butun kurs davomida, is_active=True bo'lsa)
+      - one_time:   tanlangan oy (month/year) uchun bir martalik amount so'm chegirma
     group_id NULL bo'lsa — talabaning barcha guruhlariga tegishli.
     """
     __tablename__ = "special_discounts"
@@ -573,10 +640,10 @@ class SpecialDiscount(Base):
     id = Column(Integer, primary_key=True, index=True)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=True, index=True)
-    kind = Column(String(20), nullable=False)               # free_month | monthly
-    amount = Column(Numeric(12, 2), nullable=True)          # monthly uchun: so'm/oy
-    month = Column(Integer, nullable=True)                  # free_month uchun
-    year = Column(Integer, nullable=True)                   # free_month uchun
+    kind = Column(String(20), nullable=False)               # free_month | monthly | one_time
+    amount = Column(Numeric(12, 2), nullable=True)          # monthly/one_time uchun: so'm
+    month = Column(Integer, nullable=True)                  # free_month/one_time uchun
+    year = Column(Integer, nullable=True)                   # free_month/one_time uchun
     reason = Column(String(300), nullable=True)             # sabab/izoh
     is_active = Column(Boolean, nullable=False, default=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -785,3 +852,101 @@ class StaffWarning(Base):
     issued_by = relationship("User", foreign_keys=[issued_by_id])
     cancelled_by = relationship("User", foreign_keys=[cancelled_by_id])
     discipline_code = relationship("DisciplineCode")
+
+
+class CallActivity(Base):
+    """Qo'ng'iroq yozuvi — o'zgartirilmaydigan tarix.
+
+    Nega alohida jadval: `LeadActivity` faqat lidga bog'lanadi va unda natija
+    (outcome), keyingi qadam, va'da qilingan to'lov kabi maydonlar yo'q.
+    Bu jadval esa lid VA talaba bo'yicha qo'ng'iroqlarni bir xil shaklda
+    saqlaydi — shuning uchun "kim kimga qo'ng'iroq qildi" degan savolga
+    bitta so'rov bilan javob berish mumkin.
+
+    Lidga qilingan qo'ng'iroq QO'SHIMCHA ravishda `LeadActivity` sifatida ham
+    yoziladi — lid kartasidagi mavjud tarix ikkiga bo'linib ketmasin.
+
+    Yozuv o'chirilmaydi va ustiga yozilmaydi: izoh tahrirlansa, asl matn
+    `original_note`da saqlanadi (§27 auditga talab).
+    """
+    __tablename__ = "call_activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    entity_type = Column(String(16), nullable=False, index=True)      # lead | student
+    entity_id = Column(Integer, nullable=False, index=True)
+    entity_name = Column(String(200), nullable=True)   # tarixda nom saqlansin
+    phone = Column(String(30), nullable=True)
+
+    source_key = Column(String(160), nullable=True, index=True)       # qaysi vazifadan
+    task_type = Column(String(32), nullable=True, index=True)
+
+    outcome = Column(String(32), nullable=False, index=True)
+    note = Column(Text, nullable=True)
+    next_action = Column(String(32), nullable=True)                   # callback | watch | close | other
+    next_action_at = Column(DateTime, nullable=True, index=True)
+    duration_sec = Column(Integer, nullable=True)
+
+    state_before = Column(String(80), nullable=True)
+    state_after = Column(String(80), nullable=True)
+
+    # To'lov bo'yicha qo'ng'iroqlar uchun
+    payment_promise = Column(String(16), nullable=True)               # yes | no | partial | unknown
+    promised_at = Column(Date, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    edited_at = Column(DateTime, nullable=True)
+    edited_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    original_note = Column(Text, nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    edited_by = relationship("User", foreign_keys=[edited_by_id])
+
+
+class WorkTask(Base):
+    """Ish markazidagi vazifa holati.
+
+    MUHIM: vazifalarning KO'PCHILIGI bu jadvalda saqlanmaydi. Ular har
+    so'rovda CRM ma'lumotidan (kechikkan callback, qarzdor talaba, ketma-ket
+    yo'qlama) qayta hisoblanadi. Bu yerda faqat xodim BIR NARSA QILGAN
+    vazifalar qatori paydo bo'ladi (bajarildi / keyinga surildi / o'tkazib
+    yuborildi) va qo'lda yaratilgan vazifalar.
+
+    Sabab: agar generator har safar qator yozsa, bir necha kunda o'n minglab
+    keraksiz qator to'planardi va "bir xil eslatma 5 marta chiqdi" muammosi
+    paydo bo'lardi. `source_key` deterministik bo'lgani uchun dublikat
+    imkonsiz — bitta talaba + bitta oy = bitta kalit.
+    """
+    __tablename__ = "work_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_key = Column(String(160), nullable=False, unique=True, index=True)
+    task_type = Column(String(32), nullable=False, index=True)
+
+    assigned_to_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    entity_type = Column(String(16), nullable=True)                   # lead | student | none
+    entity_id = Column(Integer, nullable=True, index=True)
+
+    title = Column(String(200), nullable=False)
+    reason = Column(Text, nullable=True)
+    priority = Column(String(12), nullable=False, default="normal")   # critical|high|normal|low
+    status = Column(String(12), nullable=False, default="new", index=True)
+    # new | in_progress | completed | skipped | postponed | cancelled
+
+    due_at = Column(DateTime, nullable=True, index=True)
+    postponed_to = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True, index=True)
+    completed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    outcome = Column(String(32), nullable=True)
+    note = Column(Text, nullable=True)
+    is_manual = Column(Boolean, nullable=False, default=False)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=True)
+
+    assigned_to = relationship("User", foreign_keys=[assigned_to_id])
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    completed_by = relationship("User", foreign_keys=[completed_by_id])

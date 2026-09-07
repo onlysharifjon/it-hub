@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faUsers, faPaperPlane, faTriangleExclamation, faLink } from '@fortawesome/free-solid-svg-icons'
+import { faUsers, faTriangleExclamation, faLink } from '@fortawesome/free-solid-svg-icons'
 import { fetchStaffOptions, fetchDisciplineCodes, setStaffTelegramChatId } from '../api'
 import StaffWarningModal from './StaffWarningModal'
-
-const ROLE_LABELS = {
-  admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi",
-  hunter: 'Hunter', call_center: 'Call Center', sales: 'Sales', audit: 'Audit',
-}
+import DataTable, { RowActions } from './ui/DataTable'
+import Modal from './ui/Modal'
+import Badge from './ui/Badge'
+import { Input } from './ui/Field'
+import { ROLE_LABELS, roleColor } from '../constants/domain'
 
 export default function Employees({ currentUser }) {
   const isAdmin = currentUser?.role === 'admin'
@@ -55,84 +55,79 @@ export default function Employees({ currentUser }) {
     return <div className="page"><p className="muted center py-8">Ruxsat yo'q</p></div>
   }
 
+  const columns = [
+    { key: 'full_name', header: 'F.I.O', sortable: true, render: s => <strong>{s.full_name || '—'}</strong> },
+    { key: 'username', header: 'Username', sortable: true, render: s => <span className="text-muted">{s.username}</span> },
+    {
+      key: 'role', header: 'Rol', sortable: true,
+      sortValue: s => ROLE_LABELS[s.role] || s.role,
+      render: s => <Badge size="sm" color={roleColor(s.role)}>{ROLE_LABELS[s.role] || s.role}</Badge>,
+    },
+    {
+      key: 'telegram_chat_id', header: 'Telegram', sortable: true,
+      sortValue: s => (s.telegram_chat_id ? 0 : 1),
+      render: s => s.telegram_chat_id
+        ? <span className="status-badge active" title={s.telegram_chat_id}>Bog'langan</span>
+        : <span className="status-badge inactive">Bog'lanmagan</span>,
+    },
+    {
+      key: 'actions', header: '', align: 'right', className: 'actions',
+      render: s => (
+        <RowActions>
+          <button className="btn-icon" title="Telegram ID bog'lash" aria-label="Telegram ID bog'lash" onClick={() => openLink(s)}>
+            <FontAwesomeIcon icon={faLink} />
+          </button>
+          <button className="btn-icon danger" title="Ogohlantirish yuborish" aria-label="Ogohlantirish yuborish" onClick={() => setWarningTarget(s)}>
+            <FontAwesomeIcon icon={faTriangleExclamation} />
+          </button>
+        </RowActions>
+      ),
+    },
+  ]
+
+  const linked = staffList.filter(s => s.telegram_chat_id).length
+
   return (
     <div className="page">
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faUsers} className="page-icon" /> Xodimlar</h1>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faUsers} className="page-icon" /> Xodimlar</h1>
+          <p className="page-subtitle">
+            {staffList.length} xodim · {linked} tasi Telegramga bog'langan
+          </p>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>F.I.O</th>
-                <th>Username</th>
-                <th>Rol</th>
-                <th>Telegram</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {staffList.map((s, i) => (
-                <tr key={s.id}>
-                  <td className="text-muted">{i + 1}</td>
-                  <td><strong>{s.full_name || '—'}</strong></td>
-                  <td className="text-muted">{s.username}</td>
-                  <td><span className="badge">{ROLE_LABELS[s.role] || s.role}</span></td>
-                  <td>
-                    {s.telegram_chat_id ? (
-                      <span className="status-badge active" title={s.telegram_chat_id}>Bog'langan</span>
-                    ) : (
-                      <span className="status-badge inactive">Bog'lanmagan</span>
-                    )}
-                  </td>
-                  <td>
-                    <button className="btn-icon" title="Telegram ID bog'lash" onClick={() => openLink(s)}>
-                      <FontAwesomeIcon icon={faLink} />
-                    </button>
-                    <button className="btn-icon" title="Ogohlantirish yuborish" onClick={() => setWarningTarget(s)}>
-                      <FontAwesomeIcon icon={faTriangleExclamation} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {staffList.length === 0 && (
-                <tr><td colSpan={6} className="muted center py-4">Xodimlar yo'q</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        rows={staffList}
+        loading={loading}
+        clientPageSize={25}
+        empty={{ icon: faUsers, title: "Xodimlar yo'q", description: 'Hisoblar "Foydalanuvchilar" bo\'limida yaratiladi.' }}
+      />
 
-      {linkTarget && (
-        <div className="modal-overlay" onClick={() => setLinkTarget(null)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3><FontAwesomeIcon icon={faPaperPlane} /> Telegram ID — {linkTarget.full_name || linkTarget.username}</h3>
-              <button className="modal-close" onClick={() => setLinkTarget(null)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <label>Telegram chat ID</label>
-              <input className="field" value={linkValue} onChange={e => setLinkValue(e.target.value)}
-                placeholder="masalan: 123456789" />
-              <p className="text-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
-                Xodim botga <strong>/start</strong> bosib, keyin <strong>/idyubor</strong> buyrug'i orqali
-                o'z ID'sini yuboradi — shu ID shu yerga kiritiladi.
-              </p>
-            </div>
-            <div className="modal-footer">
-              <button className="button secondary" onClick={() => setLinkTarget(null)}>Bekor</button>
-              <button className="button primary" onClick={handleSaveLink} disabled={saving}>
-                {saving ? 'Saqlanmoqda...' : 'Saqlash'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal
+        open={!!linkTarget}
+        title={linkTarget ? `Telegram ID — ${linkTarget.full_name || linkTarget.username}` : ''}
+        onClose={() => setLinkTarget(null)}
+        size="sm"
+        footer={
+          <>
+            <button className="button secondary" onClick={() => setLinkTarget(null)}>Bekor</button>
+            <button className="button" onClick={handleSaveLink} disabled={saving}>
+              {saving ? 'Saqlanmoqda...' : 'Saqlash'}
+            </button>
+          </>
+        }
+      >
+        <Input
+          label="Telegram chat ID"
+          value={linkValue}
+          onChange={e => setLinkValue(e.target.value)}
+          placeholder="masalan: 123456789"
+          hint="Xodim botga /start bosib, keyin /idyubor buyrug'i orqali o'z ID'sini yuboradi — shu ID shu yerga kiritiladi."
+        />
+      </Modal>
 
       {warningTarget && (
         <StaffWarningModal

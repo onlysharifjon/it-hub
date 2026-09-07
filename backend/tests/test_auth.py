@@ -24,7 +24,7 @@ def test_me_authenticated(client, metodist_token):
     assert res.status_code == 200
     data = res.json()
     assert data["username"] == "metodist"
-    assert data["role"] == "metodist"
+    assert data["role"] == "support_teacher"
 
 
 def test_me_no_token(client):

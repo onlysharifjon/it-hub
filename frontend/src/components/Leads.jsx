@@ -1,49 +1,84 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo, Fragment } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faPlus, faMagnifyingGlass, faPhone, faCircle,
+  faBullseye, faPlus, faMagnifyingGlass, faPhone, faCircle,
   faPen, faTrash, faTableColumns, faList, faSliders, faXmark,
   faArrowUp, faArrowDown, faClockRotateLeft, faChartPie,
   faBell, faCheck, faClock, faTriangleExclamation,
   faInbox, faHandHolding, faShareNodes, faLink, faCopy, faClipboardList,
+  faCommentDots, faSpinner, faArrowRotateRight, faUserPlus, faBellSlash,
+  faHourglassHalf, faPaperPlane, faArrowDownWideShort, faArrowUpWideShort,
 } from '@fortawesome/free-solid-svg-icons'
 import {
-  fetchLeads, createLead, moveLeadStage, deleteLead,
+  fetchLeads, createLead, updateLead, addLeadNote, convertLead, moveLeadStage, deleteLead,
   fetchLeadStages, createLeadStage, updateLeadStage, reorderLeadStages, deleteLeadStage,
-  fetchLeadSources, fetchLeadActivities, fetchLeadAnalytics,
-  fetchReminders, createReminder, updateReminder,
-  fetchNotifications, fetchUnreadCount, markNotificationRead, markAllNotificationsRead,
-  claimLead, releaseLead, shareLead, fetchGroups,
+  fetchLeadSources, fetchLeadActivities, fetchLeadAnalytics, fetchCommentStats,
+  fetchReminders, createReminder, updateReminder, deleteReminder,
+  claimLead, releaseLead, shareLead, fetchGroups, fetchTariffs,
   fetchIntakeForms, createIntakeForm, updateIntakeForm, deleteIntakeForm,
 } from '../api'
+import { parseTs, fmtDateTime, fmtTime, fmtRelative, fmtDayLabel, dayKey, inputToIso, isoToInput } from '../utils/datetime'
+import useConfirm from './ui/useConfirm'
+import { STAGE_OPTIONS, STAGE_LABELS } from '../constants/domain'
+import useFocusTrap from './ui/useFocusTrap'
+import DataTable from './ui/DataTable'
+import Modal from './ui/Modal'
+import Badge from './ui/Badge'
+import { Input, Textarea, Select } from './ui/Field'
+import { BarChart } from './ui/Chart'
+import { EmptyState } from './ui/States'
 
 // Bosqich rangi kaliti → hex
-const COLORS = {
-  sky: '#0ea5e9', indigo: '#6366f1', amber: '#d97706', violet: '#7c3aed',
-  emerald: '#059669', red: '#dc2626', slate: '#64748b', purple: '#9333ea',
-  teal: '#0d9488', rose: '#e11d48', blue: '#2563eb', green: '#16a34a',
-  orange: '#ea580c', cyan: '#0891b2',
-}
-const COLOR_KEYS = Object.keys(COLORS)
+// Bosqich rangi kaliti → CSS o'zgaruvchisi.
+//
+// Ilgari bu yerda qat'iy hex turardi va qorong'i rejimda to'q ko'k/binafsha
+// bosqich ranglari fon bilan qo'shilib ketardi. Endi qiymat `styles.css`
+// dagi `--stage-*` tokenidan keladi: yorug'da to'yingan, qorong'ida esa
+// yorug'roq variant — ikkalasi ham bitta joyda ta'riflangan.
+const COLOR_KEYS = [
+  'sky', 'indigo', 'amber', 'violet', 'emerald', 'red', 'slate',
+  'purple', 'teal', 'rose', 'blue', 'green', 'orange', 'cyan',
+]
+/** Kalit → CSS o'zgaruvchisi (mavzuga qarab qiymati almashadi). */
+const COLORS = Object.fromEntries(COLOR_KEYS.map(k => [k, `var(--stage-${k})`]))
 const hex = (c) => COLORS[c] || COLORS.slate
+/** Rangning joriy yuza ustidagi yumshoq tinti — alfa qo'shish o'rniga. */
+const soft = (c) => `color-mix(in srgb, ${c} 16%, var(--surface))`
 
 const KIND_LABEL = { lead: 'Jarayon', won: 'Yutuq', lost: 'Yo‘qotish' }
 
+// Kurs ro'yxati guruh bosqichlari bilan bir manbadan olinadi (constants/domain).
+// Ilgari bu yerda 'frontend'/'backend' qattiq yozilgan edi — bazadagi guruhlarda
+// esa bunday bosqich yo'q (foundation/fullstack), ya'ni tanlov real emas edi.
+// Eski lidlarda saqlanib qolgan qiymatlar ro'yxatga qo'shib qo'yiladi.
+const LEGACY_COURSES = ['frontend', 'backend']
 const COURSES = [
-  { key: '',           label: 'Kurs tanlang' },
-  { key: 'foundation', label: 'Foundation' },
-  { key: 'frontend',   label: 'Frontend' },
-  { key: 'backend',    label: 'Backend' },
+  { key: '', label: 'Kurs tanlang' },
+  ...STAGE_OPTIONS.map(o => ({ key: o.value, label: o.label })),
 ]
+const courseOptionsFor = (current) => (
+  current && LEGACY_COURSES.includes(current)
+    ? [...COURSES, { key: current, label: `${STAGE_LABELS[current] || current} (eski)` }]
+    : COURSES
+)
 
 const EMPTY_FORM = {
   full_name: '', phone: '', course_interest: '', source_id: '', notes: '',
   date_of_birth: '', parent_phone: '', parent2_phone: '', interested_group_id: '',
 }
-const fmtDate = (s) => s ? new Date(s).toLocaleString('uz-UZ', { dateStyle: 'short', timeStyle: 'short' }) : ''
+// Vaqt o'girish yagona joyda — `utils/datetime`.
+const fmtDate = fmtDateTime
+
+/** Ism bosh harflari — izoh muallifining belgisi ('Ali Valiyev' → 'AV'). */
+const initials = (name) => (name || '?').trim().split(/\s+/).slice(0, 2)
+  .map(w => w[0]).join('').toUpperCase()
+
+// Kanban ustunida bir marta chiziladigan karta soni
+const COL_PAGE = 40
 
 export default function Leads({ currentUser }) {
+  const [confirmUI, ask] = useConfirm()
   const role = currentUser?.role
   const isAdmin = role === 'admin'
   const isHunter = role === 'hunter'
@@ -54,6 +89,8 @@ export default function Leads({ currentUser }) {
   const canMove    = isHunter || isSales || role === 'call_center' || isAdmin
   const canDelete  = isHunter || isSales || isAdmin
   const canSeeOwner = isHunter || role === 'call_center' || isAdmin
+  // Talabaga aylantirish — backend'da require_call_center (call_center/hunter/admin)
+  const canConvert = isHunter || isCallCenter || isAdmin
 
   const [view, setView]     = useState('kanban')     // 'kanban' | 'list'
   const [leads, setLeads]   = useState([])
@@ -65,6 +102,7 @@ export default function Leads({ currentUser }) {
 
   const [addModal, setAddModal] = useState(false)
   const [form, setForm]   = useState(EMPTY_FORM)
+  const [formErrors, setFormErrors] = useState({})
   const [saving, setSaving] = useState(false)
 
   const [drawer, setDrawer]         = useState(null)   // lead object
@@ -73,57 +111,94 @@ export default function Leads({ currentUser }) {
   const [formModal, setFormModal]   = useState(false)
   const [poolMode, setPoolMode]     = useState(false)
   const [todayMode, setTodayMode]   = useState(false)
+  const [overdueMode, setOverdueMode] = useState(false)
   const [groups, setGroups]         = useState([])
+  const [tariffs, setTariffs]       = useState([])
+  const [editLead, setEditLead]     = useState(null)   // tahrirlanayotgan lid
+  const [convertFor, setConvertFor] = useState(null)   // talabaga aylantirilayotgan lid
 
   const [dragId, setDragId]       = useState(null)
   const [dragOver, setDragOver]   = useState(null)
+  // Bir ustunda bir vaqtda nechta karta chiziladi. 274 ta kartani birdan
+  // render qilish sahifani sekinlashtirardi — qolganini tugma bilan ochamiz.
+  const [colLimit, setColLimit]   = useState({})
+
+  const [loadError, setLoadError] = useState(false)
+  const [claimingId, setClaimingId] = useState(null)
+  const searchRef = useRef(null)
+  const searchSkipFirst = useRef(true)
 
   useEffect(() => { boot() }, [])
 
+  // Debounced live search (Enter still triggers immediately via onKeyDown)
+  useEffect(() => {
+    if (searchSkipFirst.current) { searchSkipFirst.current = false; return }
+    const t = setTimeout(() => { reload() }, 300)
+    return () => clearTimeout(t)
+  }, [search])
+
+  // "/" focuses search, unless already typing somewhere
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const tag = document.activeElement?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      e.preventDefault()
+      searchRef.current?.focus()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
   async function boot() {
     setLoading(true)
+    setLoadError(false)
     try {
       const [st, src] = await Promise.all([fetchLeadStages(), fetchLeadSources()])
       setStages(st)
       setSources(src)
       fetchGroups({ is_active: true }).then(g => setGroups(g.items || g || [])).catch(() => {})
+      fetchTariffs().then(t => setTariffs(t.items || t || [])).catch(() => {})
       await load(false)
-    } catch { toast.error("Yuklab bo'lmadi") }
+    } catch { toast.error("Yuklab bo'lmadi"); setLoadError(true) }
     finally { setLoading(false) }
   }
 
-  async function load(pool = poolMode, today = todayMode) {
+  async function load(pool = poolMode, today = todayMode, over = overdueMode) {
     const data = await fetchLeads({
       search: search || undefined,
       source_id: filterSource || undefined,
       pool: pool || undefined,
       today: today || undefined,
+      overdue: over || undefined,
     })
     setLeads(data)
   }
-  function togglePool() {
-    const next = !poolMode
-    setPoolMode(next)
-    if (next) setTodayMode(false)
+  // Uch preset bir-birini istisno qiladi — bir vaqtda faqat bittasi yoqiladi.
+  function applyPreset(next) {
+    setPoolMode(next.pool); setTodayMode(next.today); setOverdueMode(next.overdue)
     setLoading(true)
-    load(next, next ? false : todayMode).catch(() => toast.error("Yuklab bo'lmadi")).finally(() => setLoading(false))
+    load(next.pool, next.today, next.overdue)
+      .catch(() => toast.error("Yuklab bo'lmadi")).finally(() => setLoading(false))
   }
-  function toggleToday() {
-    const next = !todayMode
-    setTodayMode(next)
-    if (next) setPoolMode(false)
-    setLoading(true)
-    load(next ? false : poolMode, next).catch(() => toast.error("Yuklab bo'lmadi")).finally(() => setLoading(false))
-  }
+  function togglePool()    { const on = !poolMode;    applyPreset({ pool: on, today: false, overdue: false }) }
+  function toggleToday()   { const on = !todayMode;   applyPreset({ pool: false, today: on, overdue: false }) }
+  function toggleOverdue() { const on = !overdueMode; applyPreset({ pool: false, today: false, overdue: on }) }
   async function reload() {
     setLoading(true)
-    try { await load() } catch { toast.error("Yuklab bo'lmadi") } finally { setLoading(false) }
+    try { await load(); setLoadError(false) }
+    catch { toast.error("Yuklab bo'lmadi"); setLoadError(true) }
+    finally { setLoading(false) }
   }
   async function refreshStages() { try { setStages(await fetchLeadStages()) } catch {} }
 
   // ── Add lead ──
   async function handleAdd() {
-    if (!form.full_name.trim() || !form.phone.trim()) return toast.error('Ism va telefon majburiy')
+    const errs = {}
+    if (!form.full_name.trim()) errs.full_name = 'Ism majburiy'
+    if (!form.phone.trim()) errs.phone = 'Telefon majburiy'
+    setFormErrors(errs)
+    if (Object.keys(errs).length) return
     setSaving(true)
     try {
       await createLead({
@@ -138,19 +213,21 @@ export default function Leads({ currentUser }) {
         interested_group_id: form.interested_group_id ? Number(form.interested_group_id) : null,
       })
       toast.success("Lid qo'shildi")
-      setAddModal(false); setForm(EMPTY_FORM); reload()
+      setAddModal(false); setForm(EMPTY_FORM); setFormErrors({}); reload()
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
   // ── Claim / release ──
   async function handleClaim(lead) {
+    if (claimingId) return
+    setClaimingId(lead.id)
     try {
       const updated = await claimLead(lead.id)
       toast.success('Lid band qilindi')
       if (poolMode) setLeads(ls => ls.filter(l => l.id !== lead.id))
       else setLeads(ls => ls.map(l => l.id === updated.id ? updated : l))
       if (drawer?.id === lead.id) setDrawer(updated)
-    } catch (e) { toast.error(e.message) }
+    } catch (e) { toast.error(e.message) } finally { setClaimingId(null) }
   }
   async function handleRelease(lead) {
     try {
@@ -161,8 +238,71 @@ export default function Leads({ currentUser }) {
     } catch (e) { toast.error(e.message) }
   }
 
+  // ── Tahrirlash ──
+  function openEdit(lead) {
+    setEditLead({
+      id: lead.id,
+      full_name: lead.full_name || '',
+      phone: lead.phone || '',
+      course_interest: lead.course_interest || '',
+      source_id: lead.source_id ? String(lead.source_id) : '',
+      notes: lead.notes || '',
+      date_of_birth: lead.date_of_birth || '',
+      parent_phone: lead.parent_phone || '',
+      parent2_phone: lead.parent2_phone || '',
+      interested_group_id: lead.interested_group_id ? String(lead.interested_group_id) : '',
+    })
+  }
+  async function handleEditSave() {
+    if (!editLead) return
+    if (!editLead.full_name.trim()) return toast.error('Ism majburiy')
+    if (!editLead.phone.trim()) return toast.error('Telefon majburiy')
+    setSaving(true)
+    try {
+      const updated = await updateLead(editLead.id, {
+        full_name: editLead.full_name.trim(),
+        phone: editLead.phone.trim(),
+        course_interest: editLead.course_interest || null,
+        source_id: editLead.source_id ? Number(editLead.source_id) : null,
+        notes: editLead.notes || null,
+        date_of_birth: editLead.date_of_birth || null,
+        parent_phone: editLead.parent_phone || null,
+        parent2_phone: editLead.parent2_phone || null,
+        interested_group_id: editLead.interested_group_id ? Number(editLead.interested_group_id) : null,
+      })
+      setLeads(ls => ls.map(l => l.id === updated.id ? updated : l))
+      if (drawer?.id === updated.id) { setDrawer(updated); openActivities(updated.id) }
+      setEditLead(null)
+      toast.success('Saqlandi')
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  // ── Izoh (sanasiz) ──
+  async function handleAddNote(leadId, body) {
+    await addLeadNote(leadId, body)
+    openActivities(leadId)
+    toast.success("Izoh qo'shildi")
+  }
+
+  // ── Talabaga aylantirish ──
+  async function handleConvert(payload) {
+    if (!convertFor) return
+    setSaving(true)
+    try {
+      const student = await convertLead(convertFor.id, payload)
+      toast.success(`${student.full_name} talabalarga qo'shildi`)
+      setConvertFor(null); setDrawer(null); reload()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
   async function handleDelete(lead) {
-    if (!confirm(`"${lead.full_name}" lidini o'chirish?`)) return
+    const ok = await ask({
+      title: 'Lidni o\'chirish',
+      message: `"${lead.full_name}" lidi o'chirilsinmi?`,
+      detail: "Lid tarixi, eslatmalari va izohlari ham o'chadi. Qaytarib bo'lmaydi.",
+      confirmLabel: "Ha, o'chirish",
+    })
+    if (!ok) return
     try { await deleteLead(lead.id); toast.success("O'chirildi"); setDrawer(null); reload() }
     catch (e) { toast.error(e.message) }
   }
@@ -199,12 +339,24 @@ export default function Leads({ currentUser }) {
   const visibleStages = stages.filter(s => !s.is_archived)
   const byStage = (sid) => leads.filter(l => l.stage_id === sid)
 
+  const activeSourceName = sources.find(s => String(s.id) === String(filterSource))?.name
+  const hasActiveFilters = !!filterSource || poolMode || todayMode || overdueMode
+  function clearAllFilters() {
+    setFilterSource(''); setPoolMode(false); setTodayMode(false); setOverdueMode(false)
+    setLoading(true)
+    load(false, false, false).catch(() => toast.error("Yuklab bo'lmadi")).finally(() => setLoading(false))
+  }
+
+
   return (
     <div className="page">
+      {confirmUI}
       <div className="page-header">
-        <h1>Lidlar</h1>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <NotificationBell />
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faBullseye} className="page-icon" /> Lidlar</h1>
+          <p className="page-subtitle">Savdo quvuri — qo'ng'iroqdan to'lovgacha</p>
+        </div>
+        <div className="header-actions">
           {isAdmin && (
             <button className="button secondary" onClick={() => setFormModal(true)}>
               <FontAwesomeIcon icon={faClipboardList} /> Formalar
@@ -216,7 +368,7 @@ export default function Leads({ currentUser }) {
             </button>
           )}
           {canAddLead && (
-            <button className="button primary" onClick={() => setAddModal(true)}>
+            <button className="button" onClick={() => setAddModal(true)}>
               <FontAwesomeIcon icon={faPlus} /> Lid qo'shish
             </button>
           )}
@@ -227,11 +379,18 @@ export default function Leads({ currentUser }) {
       <div className="toolbar">
         <div className="search-wrap">
           <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
-          <input className="search-input" placeholder="Ism yoki telefon..."
+          <input ref={searchRef} className={`search-input${search ? ' has-clear' : ''}`}
+            placeholder="Ism yoki telefon... ( / )"
             value={search} onChange={e => setSearch(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && reload()} />
+          {search && (
+            <button className="search-clear" aria-label="Qidiruvni tozalash"
+              onClick={() => { setSearch(''); setTimeout(reload, 0) }}>
+              <FontAwesomeIcon icon={faXmark} />
+            </button>
+          )}
         </div>
-        <select className="field" style={{ maxWidth: 180 }} value={filterSource}
+        <select className="field-sm" value={filterSource} aria-label="Manba bo'yicha filtr"
           onChange={e => { setFilterSource(e.target.value); setTimeout(reload, 0) }}>
           <option value="">Barcha manbalar</option>
           {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -239,34 +398,107 @@ export default function Leads({ currentUser }) {
         <button className={`df-preset${poolMode ? ' active' : ''}`} onClick={togglePool} title="Band qilinmagan umumiy lidlar">
           <FontAwesomeIcon icon={faInbox} /> Umumiy havza
         </button>
-        {(isHunter || isCallCenter) && (
+        {(isHunter || isCallCenter || isAdmin) && (
           <button className={`df-preset${todayMode ? ' active' : ''}`} onClick={toggleToday} title="Faqat bugun kelishi kerak bo'lgan lidlar">
             <FontAwesomeIcon icon={faClock} /> Bugun
           </button>
         )}
+        {(isHunter || isCallCenter || isAdmin) && (
+          <button className={`df-preset${overdueMode ? ' active' : ''}`} onClick={toggleOverdue}
+            title="Kelish/qo'ng'iroq vaqti o'tib ketgan, hali yopilmagan lidlar">
+            <FontAwesomeIcon icon={faHourglassHalf} /> Kechikkanlar
+          </button>
+        )}
         <span style={{ flex: 1 }} />
-        <div className="view-toggle">
-          <button className={view === 'kanban' ? 'active' : ''} onClick={() => setView('kanban')}>
+        <div className="view-toggle" role="tablist" aria-label="Ko'rinish"
+          onKeyDown={e => {
+            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+            const order = ['kanban', 'list', 'analytics']
+            const i = order.indexOf(view)
+            const next = order[(i + (e.key === 'ArrowRight' ? 1 : order.length - 1)) % order.length]
+            setView(next)
+            e.currentTarget.querySelector(`[data-tab="${next}"]`)?.focus()
+          }}>
+          <button role="tab" data-tab="kanban" aria-selected={view === 'kanban'} tabIndex={view === 'kanban' ? 0 : -1}
+            className={view === 'kanban' ? 'active' : ''} onClick={() => setView('kanban')}>
             <FontAwesomeIcon icon={faTableColumns} /> Board
           </button>
-          <button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>
+          <button role="tab" data-tab="list" aria-selected={view === 'list'} tabIndex={view === 'list' ? 0 : -1}
+            className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>
             <FontAwesomeIcon icon={faList} /> Ro'yxat
           </button>
-          <button className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
+          <button role="tab" data-tab="analytics" aria-selected={view === 'analytics'} tabIndex={view === 'analytics' ? 0 : -1}
+            className={view === 'analytics' ? 'active' : ''} onClick={() => setView('analytics')}>
             <FontAwesomeIcon icon={faChartPie} /> Analitika
           </button>
         </div>
         <span className="toolbar-count">Jami: <strong>{leads.length}</strong></span>
       </div>
 
+      {hasActiveFilters && (
+        <div className="filter-chip-row">
+          {filterSource && (
+            <span className="filter-chip">
+              {activeSourceName || 'Manba'}
+              <button aria-label="Manba filterini olib tashlash"
+                onClick={() => { setFilterSource(''); setTimeout(reload, 0) }}>
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </span>
+          )}
+          {poolMode && (
+            <span className="filter-chip">
+              Umumiy havza
+              <button aria-label="Umumiy havza filterini olib tashlash" onClick={togglePool}>
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </span>
+          )}
+          {todayMode && (
+            <span className="filter-chip">
+              Bugun
+              <button aria-label="Bugun filterini olib tashlash" onClick={toggleToday}>
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </span>
+          )}
+          {overdueMode && (
+            <span className="filter-chip">
+              Kechikkanlar
+              <button aria-label="Kechikkanlar filterini olib tashlash" onClick={toggleOverdue}>
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </span>
+          )}
+          <button className="filter-clear-all" onClick={clearAllFilters}>Tozalash</button>
+        </div>
+      )}
+
       {view === 'analytics' ? (
         <Analytics />
+      ) : loadError ? (
+        <div className="board-error-state">
+          <FontAwesomeIcon icon={faTriangleExclamation} />
+          <div className="be-title">Ma'lumotlarni yuklashda xatolik yuz berdi.</div>
+          <button className="button secondary" onClick={boot}>
+            <FontAwesomeIcon icon={faArrowRotateRight} /> Qayta urinish
+          </button>
+        </div>
       ) : loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
+        <KanbanSkeleton count={visibleStages.length || 4} />
       ) : view === 'kanban' ? (
+        leads.length === 0 && (search || hasActiveFilters) ? (
+        <div className="board-empty-state">
+          <FontAwesomeIcon icon={faMagnifyingGlass} />
+          <div className="be-title">Hech qanday lid topilmadi</div>
+          <div className="be-sub">Qidiruv yoki filterlarni o'zgartirib ko'ring.</div>
+        </div>
+        ) : (
         <div className="kanban">
           {visibleStages.map(stage => {
             const items = byStage(stage.id)
+            const shown = colLimit[stage.id] || COL_PAGE
+            const visibleItems = items.slice(0, shown)
             return (
               <div key={stage.id}
                 className={`kanban-col${dragOver === stage.id ? ' drag-over' : ''}`}
@@ -279,20 +511,24 @@ export default function Leads({ currentUser }) {
                   <span className="count">{items.length}</span>
                 </div>
                 <div className="kanban-col-body">
-                  {items.map(lead => (
+                  {visibleItems.map(lead => (
                     <div key={lead.id}
                       className={`kanban-card${dragId === lead.id ? ' dragging' : ''}`}
                       style={{ '--card-accent': hex(stage.color) }}
                       draggable={canMove}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`${lead.full_name} — lidni ochish`}
                       onDragStart={() => setDragId(lead.id)}
                       onDragEnd={() => { setDragId(null); setDragOver(null) }}
-                      onClick={() => openDrawer(lead)}>
+                      onClick={() => openDrawer(lead)}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(lead) } }}>
                       <div className="kc-name">
                         {lead.full_name}
                         {lead.is_shared && !lead.claimed_by_id && <span className="kc-badge pool" style={{ marginLeft: 6 }}>havza</span>}
                         {lead.claimed_by_id === currentUser?.id && <span className="kc-badge mine" style={{ marginLeft: 6 }}>meniki</span>}
                       </div>
-                      <div className="kc-row"><FontAwesomeIcon icon={faPhone} /> {lead.phone}</div>
+                      <div className="kc-row kc-phone"><FontAwesomeIcon icon={faPhone} /> {lead.phone_display || lead.phone}</div>
                       <div className="kc-meta">
                         {lead.course_interest && <span className="kc-tag">{lead.course_interest}</span>}
                         {lead.source_name && <span className="kc-tag">{lead.source_name}</span>}
@@ -301,109 +537,212 @@ export default function Leads({ currentUser }) {
                         {canSeeOwner && !lead.claimed_by_name && lead.created_by_name && <span className="kc-tag">{lead.created_by_name}</span>}
                       </div>
                       {lead.callback_at ? (
-                        <div className="kc-row kc-callback" style={{ marginTop: 6 }}>
-                          <FontAwesomeIcon icon={faClockRotateLeft} /> {fmtDate(lead.callback_at)}
+                        <div className={`kc-row kc-callback${lead.is_overdue ? ' tone-danger' : ''}`} style={{ marginTop: 6 }}>
+                          <FontAwesomeIcon icon={lead.is_overdue ? faTriangleExclamation : faClockRotateLeft} />
+                          {' '}{fmtDate(lead.callback_at)}
+                          {lead.is_overdue && <strong style={{ marginLeft: 4 }}>· kechikdi</strong>}
                         </div>
                       ) : (
                         <div className="kc-row text-muted" style={{ marginTop: 6, fontSize: 12 }}>
                           <FontAwesomeIcon icon={faClock} /> {fmtDate(lead.created_at)}
                         </div>
                       )}
+                      {lead.notes && (
+                        <div className="kc-row text-muted kc-clamp2" style={{ marginTop: 6, fontSize: 12 }}
+                          title={lead.notes}>
+                          <FontAwesomeIcon icon={faCommentDots} style={{ marginTop: 2, flex: 'none' }} />
+                          {' '}{lead.notes}
+                        </div>
+                      )}
+                      {lead.next_reminder_body && (
+                        <div className="kc-row kc-callback kc-clamp2" style={{ marginTop: 6, fontSize: 12 }}
+                          title={lead.next_reminder_body}>
+                          <FontAwesomeIcon icon={faClock} style={{ marginTop: 2, flex: 'none' }} />
+                          {' '}{lead.next_reminder_body}
+                          {lead.next_reminder_due_at && <> ({fmtDate(lead.next_reminder_due_at)})</>}
+                        </div>
+                      )}
                       {lead.is_shared && !lead.claimed_by_id && canMove && (
-                        <button className="kc-claim" onClick={e => { e.stopPropagation(); handleClaim(lead) }}>
-                          <FontAwesomeIcon icon={faHandHolding} /> Band qilish
+                        <button className="kc-claim" disabled={claimingId === lead.id}
+                          aria-label={`${lead.full_name} lidini band qilish`}
+                          onClick={e => { e.stopPropagation(); handleClaim(lead) }}>
+                          {claimingId === lead.id
+                            ? <><FontAwesomeIcon icon={faSpinner} className="kc-spin" /> Band qilinmoqda...</>
+                            : <><FontAwesomeIcon icon={faHandHolding} /> Band qilish</>}
                         </button>
                       )}
                     </div>
                   ))}
-                  {items.length === 0 && <div className="kanban-empty">— bo'sh —</div>}
+                  {items.length > visibleItems.length && (
+                    <button className="button secondary" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }}
+                      onClick={() => setColLimit(m => ({ ...m, [stage.id]: shown + COL_PAGE }))}>
+                      Yana {Math.min(COL_PAGE, items.length - visibleItems.length)} ta
+                      <span className="text-muted"> ({visibleItems.length}/{items.length})</span>
+                    </button>
+                  )}
+                  {items.length === 0 && (
+                    <div className="kanban-empty">
+                      <FontAwesomeIcon icon={faInbox} />
+                      <div className="ke-title">Lidlar yo'q</div>
+                      <div className="ke-sub">Statusni o'zgartirish uchun lidni shu yerga tashlang</div>
+                    </div>
+                  )}
                 </div>
               </div>
             )
           })}
         </div>
+        )
       ) : (
         <ListView leads={leads} stages={stages} canSeeOwner={canSeeOwner}
-          canDelete={canDelete} onOpen={openDrawer} onDelete={handleDelete} />
+          canDelete={canDelete} canEdit={canMove} onOpen={openDrawer}
+          onEdit={openEdit} onDelete={handleDelete} />
       )}
 
       {/* Add Lead Modal */}
-      {addModal && (
-        <div className="modal-overlay" onClick={() => setAddModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Yangi lid</h3>
-              <button className="modal-close" onClick={() => setAddModal(false)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <label>Ism Familiya *</label>
-              <input className="field" value={form.full_name}
-                onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))} placeholder="To'liq ism" />
-              <label><FontAwesomeIcon icon={faPhone} /> Telefon *</label>
-              <input className="field" value={form.phone}
-                onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} placeholder="+998901234567" />
-              <label>Qiziqayotgan kurs</label>
-              <select className="field" value={form.course_interest}
-                onChange={e => setForm(p => ({ ...p, course_interest: e.target.value }))}>
-                {COURSES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-              </select>
-              <label>Manba</label>
-              <select className="field" value={form.source_id}
-                onChange={e => setForm(p => ({ ...p, source_id: e.target.value }))}>
-                <option value="">Manba tanlang</option>
-                {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <label>Tug'ilgan sana</label>
-                  <input className="field" type="date" value={form.date_of_birth}
-                    onChange={e => setForm(p => ({ ...p, date_of_birth: e.target.value }))} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label>Qiziqqan guruh</label>
-                  <select className="field" value={form.interested_group_id}
-                    onChange={e => setForm(p => ({ ...p, interested_group_id: e.target.value }))}>
-                    <option value="">—</option>
-                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <label>Ota-ona telefoni</label>
-                  <input className="field" value={form.parent_phone}
-                    onChange={e => setForm(p => ({ ...p, parent_phone: e.target.value }))} placeholder="+998..." />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label>2-telefon</label>
-                  <input className="field" value={form.parent2_phone}
-                    onChange={e => setForm(p => ({ ...p, parent2_phone: e.target.value }))} placeholder="+998..." />
-                </div>
-              </div>
-              <label>Izoh</label>
-              <textarea className="field" rows={2} value={form.notes}
-                onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Qo'shimcha ma'lumot..." />
-            </div>
-            <div className="modal-footer">
-              <button className="button secondary" onClick={() => setAddModal(false)}>Bekor</button>
-              <button className="button primary" onClick={handleAdd} disabled={saving}>
-                {saving ? 'Saqlanmoqda...' : "Qo'shish"}
-              </button>
-            </div>
-          </div>
+      <Modal
+        open={addModal}
+        title="Yangi lid"
+        onClose={() => setAddModal(false)}
+        footer={
+          <>
+            <button className="button secondary" onClick={() => setAddModal(false)}>Bekor</button>
+            <button className="button" onClick={handleAdd} disabled={saving}>
+              {saving ? 'Saqlanmoqda...' : "Qo'shish"}
+            </button>
+          </>
+        }
+      >
+        <Input
+          label="Ism Familiya" required
+          value={form.full_name} error={formErrors.full_name}
+          onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))}
+          placeholder="To'liq ism"
+        />
+        <Input
+          label="Telefon" required
+          value={form.phone} error={formErrors.phone}
+          onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
+          placeholder="+998901234567"
+        />
+        <Select
+          label="Qiziqayotgan kurs" value={form.course_interest}
+          onChange={e => setForm(p => ({ ...p, course_interest: e.target.value }))}
+        >
+          {COURSES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </Select>
+        <Select
+          label="Manba" value={form.source_id}
+          onChange={e => setForm(p => ({ ...p, source_id: e.target.value }))}
+        >
+          <option value="">Manba tanlang</option>
+          {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </Select>
+        <div className="field-row">
+          <Input
+            label="Tug'ilgan sana" type="date" value={form.date_of_birth}
+            onChange={e => setForm(p => ({ ...p, date_of_birth: e.target.value }))}
+          />
+          <Select
+            label="Qiziqqan guruh" value={form.interested_group_id}
+            onChange={e => setForm(p => ({ ...p, interested_group_id: e.target.value }))}
+          >
+            <option value="">—</option>
+            {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </Select>
         </div>
-      )}
+        <div className="field-row">
+          <Input
+            label="Ota-ona telefoni" value={form.parent_phone}
+            onChange={e => setForm(p => ({ ...p, parent_phone: e.target.value }))}
+            placeholder="+998..."
+          />
+          <Input
+            label="2-telefon" value={form.parent2_phone}
+            onChange={e => setForm(p => ({ ...p, parent2_phone: e.target.value }))}
+            placeholder="+998..."
+          />
+        </div>
+        <Textarea
+          label="Izoh" rows={2} value={form.notes}
+          onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
+          placeholder="Qo'shimcha ma'lumot..."
+        />
+      </Modal>
 
       {/* Lead drawer */}
       {drawer && (
         <LeadDrawer
           lead={drawer} stages={visibleStages} activities={activities}
-          canMove={canMove} canDelete={canDelete} currentUser={currentUser}
+          canMove={canMove} canDelete={canDelete} canConvert={canConvert}
+          currentUser={currentUser}
           onClose={() => setDrawer(null)}
           onMove={(sid, extra) => moveTo(drawer, sid, extra)}
           onClaim={() => handleClaim(drawer)}
           onRelease={() => handleRelease(drawer)}
+          onEdit={openEdit}
+          onNote={handleAddNote}
+          onConvert={setConvertFor}
           onDelete={() => handleDelete(drawer)} />
+      )}
+
+      {/* Lidni tahrirlash */}
+      <Modal
+        open={!!editLead}
+        title="Lidni tahrirlash"
+        onClose={() => setEditLead(null)}
+        footer={
+          <>
+            <button className="button secondary" onClick={() => setEditLead(null)}>Bekor</button>
+            <button className="button" onClick={handleEditSave} disabled={saving}>
+              {saving ? 'Saqlanmoqda...' : 'Saqlash'}
+            </button>
+          </>
+        }
+      >
+        {editLead && (
+          <>
+            <Input label="Ism Familiya" required value={editLead.full_name}
+              onChange={e => setEditLead(p => ({ ...p, full_name: e.target.value }))} />
+            <Input label="Telefon" required value={editLead.phone}
+              placeholder="+998901234567"
+              onChange={e => setEditLead(p => ({ ...p, phone: e.target.value }))} />
+            <Select label="Qiziqayotgan kurs" value={editLead.course_interest}
+              onChange={e => setEditLead(p => ({ ...p, course_interest: e.target.value }))}>
+              {courseOptionsFor(editLead.course_interest).map(c => (
+                <option key={c.key} value={c.key}>{c.label}</option>
+              ))}
+            </Select>
+            <Select label="Manba" value={editLead.source_id}
+              onChange={e => setEditLead(p => ({ ...p, source_id: e.target.value }))}>
+              <option value="">Manba tanlang</option>
+              {sources.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </Select>
+            <div className="field-row">
+              <Input label="Tug'ilgan sana" type="date" value={editLead.date_of_birth}
+                onChange={e => setEditLead(p => ({ ...p, date_of_birth: e.target.value }))} />
+              <Select label="Qiziqqan guruh" value={editLead.interested_group_id}
+                onChange={e => setEditLead(p => ({ ...p, interested_group_id: e.target.value }))}>
+                <option value="">Guruh tanlang</option>
+                {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </Select>
+            </div>
+            <div className="field-row">
+              <Input label="Ota-ona telefoni" value={editLead.parent_phone}
+                onChange={e => setEditLead(p => ({ ...p, parent_phone: e.target.value }))} />
+              <Input label="Qo'shimcha telefon" value={editLead.parent2_phone}
+                onChange={e => setEditLead(p => ({ ...p, parent2_phone: e.target.value }))} />
+            </div>
+            <Textarea label="Izoh" rows={3} value={editLead.notes}
+              onChange={e => setEditLead(p => ({ ...p, notes: e.target.value }))} />
+          </>
+        )}
+      </Modal>
+
+      {/* Talabaga aylantirish */}
+      {convertFor && (
+        <ConvertModal lead={convertFor} groups={groups} tariffs={tariffs} saving={saving}
+          onClose={() => setConvertFor(null)} onSubmit={handleConvert} />
       )}
 
       {/* Stage management */}
@@ -420,66 +759,168 @@ export default function Leads({ currentUser }) {
   )
 }
 
-// ── List (table) view ──────────────────────────────────────────────────────
-function ListView({ leads, stages, canSeeOwner, canDelete, onOpen, onDelete }) {
-  const stageOf = (id) => stages.find(s => s.id === id)
+// ── Skeleton loading state (mirrors the kanban structure) ─────────────────
+function SkeletonCard() {
   return (
-    <div className="table-wrap">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>#</th><th>Ism Familiya</th><th><FontAwesomeIcon icon={faPhone} /> Telefon</th>
-            <th>Manba</th><th>Bosqich</th><th>Vaqt / Izoh</th>
-            {canSeeOwner && <th>Hunter</th>}<th>Amallar</th>
-          </tr>
-        </thead>
-        <tbody>
-          {leads.map((lead, i) => {
-            const st = stageOf(lead.stage_id)
-            const c = hex(st?.color)
-            return (
-              <tr key={lead.id} style={{ cursor: 'pointer' }} onClick={() => onOpen(lead)}>
-                <td className="text-muted">{i + 1}</td>
-                <td><strong>{lead.full_name}</strong></td>
-                <td>{lead.phone}</td>
-                <td>{lead.source_name ? <span className="badge">{lead.source_name}</span> : <span className="text-muted">—</span>}</td>
-                <td>
-                  <span className="lead-status-badge" style={{ background: c + '22', color: c }}>
-                    {st?.name || lead.status}
-                  </span>
-                </td>
-                <td style={{ fontSize: 12, maxWidth: 200 }}>
-                  {lead.callback_at
-                    ? <div style={{ color: 'var(--warning)', fontWeight: 600 }}>{fmtDate(lead.callback_at)}</div>
-                    : <div className="text-muted">{fmtDate(lead.created_at)}</div>}
-                  {lead.notes && <div className="text-muted" style={{ marginTop: 2 }}>{lead.notes}</div>}
-                </td>
-                {canSeeOwner && <td className="text-muted" style={{ fontSize: 12 }}>{lead.created_by_name || '—'}</td>}
-                <td className="actions" onClick={e => e.stopPropagation()}>
-                  <button className="btn-icon" title="Ochish" onClick={() => onOpen(lead)}><FontAwesomeIcon icon={faPen} /></button>
-                  {canDelete && <button className="btn-icon danger" title="O'chirish" onClick={() => onDelete(lead)}><FontAwesomeIcon icon={faTrash} /></button>}
-                </td>
-              </tr>
-            )
-          })}
-          {leads.length === 0 && (
-            <tr><td colSpan={canSeeOwner ? 8 : 7} className="muted center py-4">Lidlar topilmadi</td></tr>
-          )}
-        </tbody>
-      </table>
+    <div className="skel-card">
+      <div className="skel-line" style={{ width: '62%' }} />
+      <div className="skel-line" style={{ width: '40%' }} />
+      <div className="skel-line" style={{ width: '80%' }} />
+    </div>
+  )
+}
+function SkeletonColumn() {
+  return (
+    <div className="kanban-col">
+      <div className="kanban-col-head">
+        <span className="dot" style={{ background: 'var(--border-2)' }} />
+        <span className="skel-line" style={{ width: 90, height: 11 }} />
+      </div>
+      <div className="skel-col">
+        <SkeletonCard /><SkeletonCard /><SkeletonCard />
+      </div>
+    </div>
+  )
+}
+function KanbanSkeleton({ count = 4 }) {
+  return (
+    <div className="kanban">
+      {Array.from({ length: count }).map((_, i) => <SkeletonColumn key={i} />)}
     </div>
   )
 }
 
+// ── List (table) view ──────────────────────────────────────────────────────
+function ListView({ leads, stages, canSeeOwner, canDelete, canEdit, onOpen, onEdit, onDelete }) {
+  const stageOf = (id) => stages.find(s => s.id === id)
+
+  const columns = [
+    { key: 'index', header: '#', width: 52, className: 'text-muted', render: (_l, i) => i + 1 },
+    {
+      key: 'full_name', header: 'Ism Familiya', sortable: true,
+      render: l => <strong>{l.full_name}</strong>,
+    },
+    {
+      key: 'phone', header: <><FontAwesomeIcon icon={faPhone} /> Telefon</>, sortable: true,
+      sortValue: l => l.phone,
+      render: l => <a href={`tel:${l.phone}`} onClick={e => e.stopPropagation()}>{l.phone_display || l.phone}</a>,
+    },
+    {
+      key: 'source_name', header: 'Manba', sortable: true,
+      render: l => l.source_name
+        ? <Badge variant="neutral" size="sm">{l.source_name}</Badge>
+        : <span className="text-muted">—</span>,
+    },
+    {
+      key: 'stage_id', header: 'Bosqich', sortable: true,
+      sortValue: l => stageOf(l.stage_id)?.order ?? 999,
+      render: l => {
+        const st = stageOf(l.stage_id)
+        return <Badge size="sm" color={hex(st?.color)}>{st?.name || l.status}</Badge>
+      },
+    },
+    {
+      key: 'time', header: 'Vaqt / Izoh',
+      sortValue: l => l.callback_at || l.created_at,
+      sortable: true,
+      render: l => (
+        <div className="lead-cell-meta">
+          {l.callback_at
+            ? <div className={l.is_overdue ? 'tone-danger' : 'tone-warning'}>
+                {l.is_overdue && <><FontAwesomeIcon icon={faTriangleExclamation} />{' '}</>}
+                {fmtDate(l.callback_at)}
+              </div>
+            : <div className="text-muted">{fmtDate(l.created_at)}</div>}
+          {l.notes && <div className="text-muted kc-clamp2">{l.notes}</div>}
+          {l.next_reminder_body && (
+            <div className="text-muted kc-clamp2">
+              <FontAwesomeIcon icon={faClock} /> {l.next_reminder_body}
+              {l.next_reminder_due_at && <> ({fmtDate(l.next_reminder_due_at)})</>}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    ...(canSeeOwner ? [{
+      key: 'created_by_name', header: 'Hunter', sortable: true,
+      render: l => <span className="text-muted">{l.created_by_name || '—'}</span>,
+    }] : []),
+    {
+      key: 'actions', header: 'Amallar', className: 'actions', align: 'right',
+      render: l => (
+        <span onClick={e => e.stopPropagation()}>
+          <button className="btn-icon" title="Ochish" aria-label="Ochish" onClick={() => onOpen(l)}>
+            <FontAwesomeIcon icon={faClipboardList} />
+          </button>
+          {canEdit && (
+            <button className="btn-icon" title="Tahrirlash" aria-label="Tahrirlash" onClick={() => onEdit(l)}>
+              <FontAwesomeIcon icon={faPen} />
+            </button>
+          )}
+          {canDelete && (
+            <button className="btn-icon danger" title="O'chirish" aria-label="O'chirish" onClick={() => onDelete(l)}>
+              <FontAwesomeIcon icon={faTrash} />
+            </button>
+          )}
+        </span>
+      ),
+    },
+  ]
+
+  return (
+    <DataTable
+      columns={columns}
+      rows={leads}
+      onRowClick={onOpen}
+      clientPageSize={25}
+      empty={{ icon: faInbox, title: 'Lidlar topilmadi', description: "Filtrlarni o'zgartiring yoki yangi lid qo'shing." }}
+    />
+  )
+}
+
 // ── Lead detail drawer with timeline ───────────────────────────────────────
-function LeadDrawer({ lead, stages, activities, canMove, canDelete, currentUser, onClose, onMove, onClaim, onRelease, onDelete }) {
-  const [cb, setCb] = useState(lead.callback_at ? lead.callback_at.slice(0, 16) : '')
+export function LeadDrawer({ lead, stages, activities, canMove, canDelete, canConvert,
+  currentUser, onClose, onMove, onClaim, onRelease, onDelete, onEdit, onNote, onConvert,
+  allowNote }) {
+  // Tree kabi tahlil ekranlarida bosqichni o'zgartirish o'chirilgan (ko'rsatkichlar
+  // ko'z oldida o'zgarib ketmasin), lekin izoh qoldirish baribir kerak.
+  const canNote = allowNote ?? canMove
+  const [confirmUI, ask] = useConfirm()
+  const [cb, setCb] = useState(isoToInput(lead.callback_at))
   const [reminders, setReminders] = useState([])
   const [remDue, setRemDue] = useState('')
   const [remBody, setRemBody] = useState('')
   const [remBusy, setRemBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const [noteBusy, setNoteBusy] = useState(false)
+  // Izohlar sukut bo'yicha eng yangisi tepada — xodim oxirgi gapni birinchi ko'radi.
+  const [noteAsc, setNoteAsc] = useState(false)
+
+  /* Tarix ikki xil narsani aralashtirib yuborardi: xodim yozgan izohlar va
+     tizim hodisalari ("bosqich o'zgardi", "yaratildi"). Lidda 20 ta izoh
+     bo'lsa, ular o'nlab avtomatik yozuvlar orasida ko'rinmay ketardi.
+     Endi izohlar alohida oqim, tarix esa faqat hodisalar. */
+  const notes  = useMemo(() => activities.filter(a => a.action === 'note'), [activities])
+  const events = useMemo(() => activities.filter(a => a.action !== 'note'), [activities])
+
+  /* Vaqt bo'yicha tartiblab, kunlarga bo'lamiz — sana har qatorda
+     takrorlanmasin, o'qish oson bo'lsin. */
+  const noteDays = useMemo(() => {
+    const ts = (a) => parseTs(a.created_at)?.getTime() ?? 0
+    const sorted = [...notes].sort((a, b) => noteAsc ? ts(a) - ts(b) : ts(b) - ts(a))
+    const days = []
+    for (const n of sorted) {
+      const key = dayKey(n.created_at)
+      if (!days.length || days[days.length - 1].key !== key) days.push({ key, items: [n] })
+      else days[days.length - 1].items.push(n)
+    }
+    return days
+  }, [notes, noteAsc])
+  const drawerRef = useRef(null)
+  useFocusTrap(true, drawerRef, onClose)
 
   useEffect(() => { loadReminders() }, [lead.id])
+  useEffect(() => { setCb(isoToInput(lead.callback_at)) }, [lead.id, lead.callback_at])
   async function loadReminders() {
     try { setReminders(await fetchReminders({ lead_id: lead.id })) } catch {}
   }
@@ -487,31 +928,69 @@ function LeadDrawer({ lead, stages, activities, canMove, canDelete, currentUser,
     if (!remDue) return toast.error('Vaqtni tanlang')
     setRemBusy(true)
     try {
-      await createReminder({ lead_id: lead.id, due_at: new Date(remDue).toISOString(), body: remBody || null, kind: 'call' })
+      await createReminder({ lead_id: lead.id, due_at: inputToIso(remDue), body: remBody || null, kind: 'call' })
       setRemDue(''); setRemBody(''); loadReminders(); toast.success("Eslatma qo'shildi")
     } catch (e) { toast.error(e.message) } finally { setRemBusy(false) }
   }
   async function doneReminder(r) {
     try { await updateReminder(r.id, { status: 'done' }); loadReminders() } catch (e) { toast.error(e.message) }
   }
+  async function snoozeReminder(r, hours) {
+    const until = new Date(Date.now() + hours * 3600 * 1000).toISOString()
+    try { await updateReminder(r.id, { snoozed_until: until }); loadReminders(); toast.success(`${hours} soatga surildi`) }
+    catch (e) { toast.error(e.message) }
+  }
+  async function removeReminder(r) {
+    const ok = await ask({ title: 'Eslatmani o\'chirish', message: "Bu eslatma o'chirilsinmi?", confirmLabel: "Ha, o'chirish" })
+    if (!ok) return
+    try { await deleteReminder(r.id); loadReminders() } catch (e) { toast.error(e.message) }
+  }
+  async function submitNote() {
+    const body = note.trim()
+    if (!body) return
+    setNoteBusy(true)
+    try { await onNote(lead.id, body); setNote('') }
+    catch (e) { toast.error(e.message) } finally { setNoteBusy(false) }
+  }
+  // Bosqichsiz lidda callback saqlash 404 berardi — avval bosqich tanlansin.
+  function saveCallback() {
+    if (!cb) return
+    if (!lead.stage_id) return toast.error('Avval bosqichni tanlang')
+    onMove(lead.stage_id, { callback_at: inputToIso(cb) })
+  }
 
   return (
     <div className="drawer-overlay" onClick={onClose}>
-      <div className="drawer" onClick={e => e.stopPropagation()}>
+      {confirmUI}
+      <div className="drawer" ref={drawerRef} role="dialog" aria-modal="true" aria-label={`${lead.full_name} — lid ma'lumotlari`} onClick={e => e.stopPropagation()}>
         <div className="drawer-head">
           <h3>{lead.full_name}</h3>
           <span style={{ flex: 1 }} />
-          {canDelete && <button className="btn-icon danger" title="O'chirish" onClick={onDelete}><FontAwesomeIcon icon={faTrash} /></button>}
-          <button className="modal-close" onClick={onClose}><FontAwesomeIcon icon={faXmark} /></button>
+          {canMove && <button className="btn-icon" title="Tahrirlash" aria-label="Lidni tahrirlash" onClick={() => onEdit(lead)}><FontAwesomeIcon icon={faPen} /></button>}
+          {canDelete && <button className="btn-icon danger" title="O'chirish" aria-label="Lidni o'chirish" onClick={onDelete}><FontAwesomeIcon icon={faTrash} /></button>}
+          <button className="modal-close" aria-label="Yopish" onClick={onClose}><FontAwesomeIcon icon={faXmark} /></button>
         </div>
         <div className="drawer-body">
-          <div className="kc-row" style={{ marginBottom: 6 }}><FontAwesomeIcon icon={faPhone} /> {lead.phone}</div>
+          <div className="kc-row" style={{ marginBottom: 6 }}><FontAwesomeIcon icon={faPhone} /> {lead.phone_display || lead.phone}</div>
+          <a className="button secondary" style={{ width: '100%', justifyContent: 'center', marginBottom: 12 }}
+            href={`tel:${lead.phone}`}>
+            <FontAwesomeIcon icon={faPhone} /> Qo'ng'iroq qilish
+          </a>
+          {lead.is_overdue && (
+            <div className="rem-item overdue" style={{ marginBottom: 12 }}>
+              <FontAwesomeIcon icon={faTriangleExclamation} style={{ marginTop: 3 }} />
+              <div style={{ flex: 1 }}>
+                <div className="rem-when">Kelish vaqti o'tib ketgan: {fmtDate(lead.callback_at)}</div>
+              </div>
+            </div>
+          )}
           <div className="kc-meta" style={{ marginBottom: 12 }}>
             {lead.course_interest && <span className="kc-tag">{lead.course_interest}</span>}
             {lead.source_name && <span className="kc-tag">Manba: {lead.source_name}</span>}
             {lead.interested_group_name && <span className="kc-tag">Guruh: {lead.interested_group_name}</span>}
             {lead.claimed_by_name && <span className="kc-tag">👤 {lead.claimed_by_name}</span>}
             {lead.created_by_name && <span className="kc-tag">Yaratdi: {lead.created_by_name}</span>}
+            {lead.referred_by_name && <span className="kc-tag">Taklif qilgan: {lead.referred_by_name}</span>}
           </div>
 
           {/* Rich fields */}
@@ -527,7 +1006,7 @@ function LeadDrawer({ lead, stages, activities, canMove, canDelete, currentUser,
           {canMove && (
             <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
               {lead.is_shared && !lead.claimed_by_id && (
-                <button className="button primary" style={{ flex: 1, justifyContent: 'center' }} onClick={onClaim}>
+                <button className="button" style={{ flex: 1, justifyContent: 'center' }} onClick={onClaim}>
                   <FontAwesomeIcon icon={faHandHolding} /> Band qilish
                 </button>
               )}
@@ -550,7 +1029,7 @@ function LeadDrawer({ lead, stages, activities, canMove, canDelete, currentUser,
                     <button key={s.id}
                       className={`leads-status-opt${on ? ' selected' : ''}`}
                       style={on ? { background: c + '18', borderColor: c, color: c } : {}}
-                      onClick={() => onMove(s.id, cb ? { callback_at: new Date(cb).toISOString() } : {})}>
+                      onClick={() => onMove(s.id, cb ? { callback_at: inputToIso(cb) } : {})}>
                       <FontAwesomeIcon icon={faCircle} style={{ color: c, fontSize: 8 }} />
                       {s.name}
                     </button>
@@ -560,15 +1039,78 @@ function LeadDrawer({ lead, stages, activities, canMove, canDelete, currentUser,
               <label>Kelish / qayta ring vaqti</label>
               <input className="field" type="datetime-local" value={cb}
                 onChange={e => setCb(e.target.value)}
-                onBlur={() => cb && onMove(lead.stage_id, { callback_at: new Date(cb).toISOString() })} />
+                onBlur={saveCallback} />
             </>
           )}
 
           {lead.notes && (
             <div style={{ marginTop: 14 }}>
-              <label>Izoh</label>
-              <div className="text-muted" style={{ fontSize: 13 }}>{lead.notes}</div>
+              <label>Izoh (lid kartasi)</label>
+              <div className="text-muted" style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{lead.notes}</div>
             </div>
+          )}
+
+          {canConvert && (
+            <button className="button" style={{ width: '100%', justifyContent: 'center', marginTop: 16 }}
+              onClick={() => onConvert(lead)}>
+              <FontAwesomeIcon icon={faUserPlus} /> Talabaga aylantirish
+            </button>
+          )}
+
+          {/* Izohlar — bitta lidga cheklovsiz izoh qoldirish mumkin,
+              vaqt bo'yicha tartiblangan holda ko'rsatiladi. */}
+          <div className="lc-head">
+            <h4><FontAwesomeIcon icon={faCommentDots} /> Izohlar
+              {notes.length > 0 && <span className="lc-count">{notes.length}</span>}</h4>
+            {notes.length > 1 && (
+              <button className="btn-icon" onClick={() => setNoteAsc(v => !v)}
+                title={noteAsc ? 'Eng eskisi tepada — almashtirish' : 'Eng yangisi tepada — almashtirish'}
+                aria-label="Izohlar tartibini almashtirish">
+                <FontAwesomeIcon icon={noteAsc ? faArrowUpWideShort : faArrowDownWideShort} />
+              </button>
+            )}
+          </div>
+
+          {canNote && (
+            <div className="lc-compose">
+              <Textarea rows={2} placeholder="Mijoz bilan nima gaplashildi?"
+                value={note} onChange={e => setNote(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitNote() }} />
+              <div className="lc-compose-foot">
+                <span className="muted">Ctrl+Enter — saqlash</span>
+                <button className="button" onClick={submitNote} disabled={noteBusy || !note.trim()}>
+                  <FontAwesomeIcon icon={noteBusy ? faSpinner : faPaperPlane} className={noteBusy ? 'kc-spin' : ''} />
+                  {' '}Saqlash
+                </button>
+              </div>
+            </div>
+          )}
+
+          {notes.length === 0 ? (
+            <div className="muted" style={{ fontSize: 13 }}>Hozircha izoh yo'q</div>
+          ) : (
+            <ul className="lead-comments">
+              {noteDays.map(day => (
+                <Fragment key={day.key}>
+                  <li className="lc-day"><span>{fmtDayLabel(day.items[0].created_at)}</span></li>
+                  {day.items.map(n => (
+                    <li key={n.id} className="lc-item">
+                      <span className="lc-avatar" aria-hidden="true">{initials(n.author_name)}</span>
+                      <div className="lc-main">
+                        <div className="lc-meta">
+                          <strong>{n.author_name || 'Tizim'}</strong>
+                          <time dateTime={n.created_at} title={fmtDateTime(n.created_at)}>
+                            {fmtTime(n.created_at)}
+                          </time>
+                          <span className="lc-rel">{fmtRelative(n.created_at)}</span>
+                        </div>
+                        <div className="lc-text">{n.description}</div>
+                      </div>
+                    </li>
+                  ))}
+                </Fragment>
+              ))}
+            </ul>
           )}
 
           {/* Reminders */}
@@ -581,10 +1123,18 @@ function LeadDrawer({ lead, stages, activities, canMove, canDelete, currentUser,
                 {r.body && <div className="text-muted" style={{ fontSize: 12 }}>{r.body}</div>}
               </div>
               {r.status === 'pending' && (
-                <button className="btn-icon" title="Bajarildi" onClick={() => doneReminder(r)}>
-                  <FontAwesomeIcon icon={faCheck} />
-                </button>
+                <>
+                  <button className="btn-icon" title="Bajarildi" aria-label="Eslatma bajarildi" onClick={() => doneReminder(r)}>
+                    <FontAwesomeIcon icon={faCheck} />
+                  </button>
+                  <button className="btn-icon" title="1 soatga surish" aria-label="1 soatga surish" onClick={() => snoozeReminder(r, 1)}>
+                    <FontAwesomeIcon icon={faBellSlash} />
+                  </button>
+                </>
               )}
+              <button className="btn-icon danger" title="O'chirish" aria-label="Eslatmani o'chirish" onClick={() => removeReminder(r)}>
+                <FontAwesomeIcon icon={faTrash} />
+              </button>
             </div>
           ))}
           {reminders.length === 0 && <div className="muted" style={{ fontSize: 13 }}>Eslatma yo'q</div>}
@@ -594,18 +1144,18 @@ function LeadDrawer({ lead, stages, activities, canMove, canDelete, currentUser,
                 value={remDue} onChange={e => setRemDue(e.target.value)} />
               <input className="field" style={{ flex: 1, minWidth: 120 }} placeholder="Izoh"
                 value={remBody} onChange={e => setRemBody(e.target.value)} />
-              <button className="button primary" onClick={addReminder} disabled={remBusy}>
+              <button className="button" onClick={addReminder} disabled={remBusy}>
                 <FontAwesomeIcon icon={faPlus} />
               </button>
             </div>
           )}
 
           <h4 style={{ margin: '22px 0 12px' }}><FontAwesomeIcon icon={faClockRotateLeft} /> Tarix</h4>
-          {activities.length === 0 ? (
+          {events.length === 0 ? (
             <div className="muted" style={{ fontSize: 13 }}>Hozircha yozuv yo'q</div>
           ) : (
             <ul className="timeline">
-              {activities.map(a => (
+              {events.map(a => (
                 <li key={a.id}>
                   <div className="tl-desc">{a.description}</div>
                   <div className="tl-meta">{a.author_name || 'Tizim'} · {fmtDate(a.created_at)}</div>
@@ -619,13 +1169,74 @@ function LeadDrawer({ lead, stages, activities, canMove, canDelete, currentUser,
   )
 }
 
+// ── Lidni talabaga aylantirish ─────────────────────────────────────────────
+function ConvertModal({ lead, groups, tariffs, saving, onClose, onSubmit }) {
+  const [groupId, setGroupId] = useState(lead.interested_group_id ? String(lead.interested_group_id) : '')
+  const [tariffId, setTariffId] = useState('')
+  const [fatherName, setFatherName] = useState('')
+  const [motherName, setMotherName] = useState('')
+  const [isDemo, setIsDemo] = useState(false)
+
+  return (
+    <Modal
+      open
+      title={`${lead.full_name} — talabaga aylantirish`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="button secondary" onClick={onClose}>Bekor</button>
+          <button className="button" disabled={saving}
+            onClick={() => onSubmit({
+              group_id: groupId ? Number(groupId) : null,
+              tariff_id: tariffId ? Number(tariffId) : null,
+              father_name: fatherName || null,
+              mother_name: motherName || null,
+              is_demo: isDemo,
+            })}>
+            {saving ? 'Yaratilmoqda...' : 'Talaba yaratish'}
+          </button>
+        </>
+      }
+    >
+      <div className="text-muted" style={{ fontSize: 13, marginBottom: 12 }}>
+        Lid ma'lumotlari talaba kartasiga ko'chiriladi: <strong>{lead.phone_display || lead.phone}</strong>
+        {lead.parent_phone && <> · ota-ona: {lead.parent_phone}</>}
+        . Lid "To'landi" bosqichiga o'tadi va tarixi saqlanadi.
+      </div>
+      <Select label="Guruhga qo'shish (ixtiyoriy)" value={groupId}
+        onChange={e => setGroupId(e.target.value)}>
+        <option value="">Guruhsiz qoldirish</option>
+        {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+      </Select>
+      {groupId && (
+        <Select label="Tarif" value={tariffId} onChange={e => setTariffId(e.target.value)}>
+          <option value="">Tarifsiz</option>
+          {tariffs.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </Select>
+      )}
+      <div className="field-row">
+        <Input label="Otasining ismi" value={fatherName} onChange={e => setFatherName(e.target.value)} />
+        <Input label="Onasining ismi" value={motherName} onChange={e => setMotherName(e.target.value)} />
+      </div>
+      <label className="check-row" style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+        <input type="checkbox" checked={isDemo} onChange={e => setIsDemo(e.target.checked)} />
+        <span>Demo talaba (hali darsga kelmagan)</span>
+      </label>
+    </Modal>
+  )
+}
+
+
 // ── Stage management (admin) ───────────────────────────────────────────────
 function StageManager({ stages, onClose, onChanged }) {
+  const [confirmUI, ask] = useConfirm()
   const [list, setList] = useState(stages)
   const [name, setName] = useState('')
   const [color, setColor] = useState('sky')
   const [kind, setKind] = useState('lead')
   const [busy, setBusy] = useState(false)
+  const modalRef = useRef(null)
+  useFocusTrap(true, modalRef, onClose)
 
   async function refresh() { const s = await fetchLeadStages(); setList(s); onChanged?.() }
 
@@ -639,7 +1250,13 @@ function StageManager({ stages, onClose, onChanged }) {
     try { await updateLeadStage(s.id, data); await refresh() } catch (e) { toast.error(e.message) }
   }
   async function remove(s) {
-    if (!confirm(`"${s.name}" bosqichini o'chirish?`)) return
+    const ok = await ask({
+      title: 'Bosqichni o\'chirish',
+      message: `"${s.name}" bosqichi o'chirilsinmi?`,
+      detail: 'Bu bosqichdagi lidlar birinchi bosqichga ko\'chiriladi.',
+      confirmLabel: "Ha, o'chirish",
+    })
+    if (!ok) return
     try { await deleteLeadStage(s.id); await refresh() } catch (e) { toast.error(e.message) }
   }
   async function move(idx, dir) {
@@ -653,10 +1270,11 @@ function StageManager({ stages, onClose, onChanged }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+      {confirmUI}
+      <div className="modal" ref={modalRef} onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
         <div className="modal-header">
           <h3>Pipeline bosqichlari</h3>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" aria-label="Yopish" onClick={onClose}>✕</button>
         </div>
         <div className="modal-body">
           {list.map((s, i) => (
@@ -693,7 +1311,7 @@ function StageManager({ stages, onClose, onChanged }) {
                   }} />
               ))}
             </div>
-            <button className="button primary" onClick={add} disabled={busy}>
+            <button className="button" onClick={add} disabled={busy}>
               <FontAwesomeIcon icon={faPlus} /> Bosqich qo'shish
             </button>
           </div>
@@ -702,67 +1320,6 @@ function StageManager({ stages, onClose, onChanged }) {
           <button className="button secondary" onClick={onClose}>Yopish</button>
         </div>
       </div>
-    </div>
-  )
-}
-
-// ── Notifications bell ──────────────────────────────────────────────────────
-function NotificationBell() {
-  const [open, setOpen] = useState(false)
-  const [items, setItems] = useState([])
-  const [count, setCount] = useState(0)
-
-  useEffect(() => {
-    refreshCount()
-    const t = setInterval(refreshCount, 30000)
-    return () => clearInterval(t)
-  }, [])
-
-  async function refreshCount() {
-    try { const r = await fetchUnreadCount(); setCount(r.count || 0) } catch {}
-  }
-  async function toggle() {
-    const next = !open
-    setOpen(next)
-    if (next) {
-      try { setItems(await fetchNotifications()) } catch {}
-    }
-  }
-  async function openItem(n) {
-    if (!n.is_read) {
-      try { await markNotificationRead(n.id); refreshCount() } catch {}
-    }
-    setItems(list => list.map(x => x.id === n.id ? { ...x, is_read: true } : x))
-  }
-  async function readAll() {
-    try { await markAllNotificationsRead(); setItems(list => list.map(x => ({ ...x, is_read: true }))); setCount(0) } catch {}
-  }
-
-  return (
-    <div className="bell-wrap">
-      <button className="bell-btn" onClick={toggle} title="Bildirishnomalar">
-        <FontAwesomeIcon icon={faBell} />
-        {count > 0 && <span className="bell-badge">{count > 99 ? '99+' : count}</span>}
-      </button>
-      {open && (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setOpen(false)} />
-          <div className="notif-dropdown">
-            <div className="notif-head">
-              <h4>Bildirishnomalar</h4>
-              <button className="df-preset" onClick={readAll}>Hammasini o'qildi</button>
-            </div>
-            {items.length === 0 && <div className="muted center py-4" style={{ fontSize: 13 }}>Bo'sh</div>}
-            {items.map(n => (
-              <div key={n.id} className={`notif-item${n.is_read ? '' : ' unread'}`} onClick={() => openItem(n)}>
-                <div className="ni-title">{n.title}</div>
-                {n.body && <div className="ni-body">{n.body}</div>}
-                <div className="ni-time">{fmtDate(n.created_at)}</div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
     </div>
   )
 }
@@ -940,7 +1497,7 @@ function FunnelBoard({ referrer, onClose }) {
             <svg className="ff-edges">
               <defs>
                 <marker id="ff-arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
-                  <path d="M0,0 L8,4 L0,8 Z" fill="#94a3b8" />
+                  <path d="M0,0 L8,4 L0,8 Z" fill="var(--muted-2)" />
                 </marker>
               </defs>
               {edges.map(([a, b]) => {
@@ -949,7 +1506,7 @@ function FunnelBoard({ referrer, onClose }) {
                 return (
                   <path key={a + b}
                     d={`M${p1.x},${p1.y} C ${mx},${p1.y} ${mx},${p2.y} ${p2.x},${p2.y}`}
-                    stroke="#94a3b8" strokeWidth="2.5" fill="none" markerEnd="url(#ff-arrowhead)" />
+                    stroke="var(--muted-2)" strokeWidth="2.5" fill="none" markerEnd="url(#ff-arrowhead)" />
                 )
               })}
             </svg>
@@ -1061,7 +1618,7 @@ function Analytics() {
                       <td className="num">{s.enrolled}</td>
                       <td className="num">
                         <span className="conv-pill" style={{
-                          background: (good ? COLORS.emerald : COLORS.amber) + '22',
+                          background: soft(good ? COLORS.emerald : COLORS.amber),
                           color: good ? COLORS.emerald : COLORS.amber,
                         }}>{s.conversion_rate}%</span>
                       </td>
@@ -1074,6 +1631,8 @@ function Analytics() {
         </div>
       </div>
 
+      <CommentStats />
+
       {data.referrals && data.referrals.length > 0 && (
         <div className="panel-card" style={{ marginTop: 22 }}>
           <h4>Taklif qilingan bolalar (oylik)</h4>
@@ -1081,7 +1640,6 @@ function Analytics() {
             Facebook/Instagram orqali kelgan va shu xodimga bog'langan lidlar — kulrang: kelgan lidlar, yashil: to'lov qilib ro'yxatdan o'tganlar
           </div>
           {data.referrals.map(r => {
-            const maxM = Math.max(1, ...r.months.map(m => Math.max(m.leads_count, m.paid_count)))
             return (
               <div key={r.referrer_id} style={{ marginBottom: 30 }}>
                 <div className="fr-top" style={{ marginBottom: 10 }}>
@@ -1106,25 +1664,17 @@ function Analytics() {
                   </button>
                 </div>
                 <div className="text-muted" style={{ fontSize: 11.5, margin: '14px 0 6px' }}>Oylik tarix</div>
-                <div className="bar-chart" style={{ height: 150 }}>
-                  {r.months.map(m => {
+                <BarChart
+                  height={150}
+                  seriesLabel="Lidlar"
+                  compareLabel="To'landi"
+                  valueFormat={v => String(Math.round(v))}
+                  tooltipFormat={v => String(Math.round(v))}
+                  data={r.months.map(m => {
                     const [y, mo] = m.period.split('-')
-                    return (
-                      <div key={m.period} className="bar-col">
-                        <div className="bar-amount">{m.leads_count}</div>
-                        <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end', width: '100%', height: 100 }}>
-                          <div className="bar" style={{ height: Math.max((m.leads_count / maxM) * 100, 3) }}
-                            title={`Lidlar: ${m.leads_count}`} />
-                          <div className="bar" style={{
-                            height: m.paid_count ? Math.max((m.paid_count / maxM) * 100, 3) : 0,
-                            background: COLORS.emerald,
-                          }} title={`To'landi: ${m.paid_count}`} />
-                        </div>
-                        <div className="bar-label">{mo}/{y.slice(2)}</div>
-                      </div>
-                    )
+                    return { label: `${mo}/${y.slice(2)}`, value: m.leads_count, compare: m.paid_count }
                   })}
-                </div>
+                />
               </div>
             )
           })}
@@ -1136,14 +1686,89 @@ function Analytics() {
   )
 }
 
+// ── Izohlar (eslatma matnlari) statistikasi ────────────────────────────────
+const MONTH_NAMES = ['Yan', 'Fev', 'Mar', 'Apr', 'May', 'Iyun', 'Iyul', 'Avg', 'Sen', 'Okt', 'Noy', 'Dek']
+const fmtMonth = (period) => {
+  const [y, mo] = period.split('-')
+  return `${MONTH_NAMES[Number(mo) - 1] || mo} ${y}`
+}
+const fmtDay = (s) => s ? new Date(s).toLocaleDateString('uz-UZ', { dateStyle: 'medium' }) : '—'
+
+function CommentStats() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => { (async () => {
+    try { setData(await fetchCommentStats()) } catch { toast.error("Izohlar statistikasini yuklab bo'lmadi") }
+    finally { setLoading(false) }
+  })() }, [])
+
+  if (loading) return <div className="panel-card" style={{ marginTop: 22 }}><div className="muted center py-4">Yuklanmoqda...</div></div>
+  if (!data) return null
+
+
+  return (
+    <div className="panel-card" style={{ marginTop: 22 }}>
+      <h4>Izohlar statistikasi</h4>
+      <div className="text-muted" style={{ fontSize: 12, marginBottom: 14 }}>
+        Lidlarga qo'shilgan eslatma/izohlar (matn kiritilganlar) bo'yicha
+      </div>
+
+      <div className="analytics-tiles" style={{ marginBottom: 18 }}>
+        <div className="a-tile"><div className="a-label">Jami izohlar</div><div className="a-value">{data.total}</div></div>
+        <div className="a-tile"><div className="a-label">Birinchi izoh</div><div className="a-value" style={{ fontSize: 15 }}>{fmtDay(data.first_at)}</div></div>
+        <div className="a-tile"><div className="a-label">Oxirgi izoh</div><div className="a-value" style={{ fontSize: 15 }}>{fmtDay(data.last_at)}</div></div>
+        <div className="a-tile">
+          <div className="a-label">Eng ko'p oy</div>
+          <div className="a-value" style={{ color: COLORS.indigo, fontSize: 15 }}>
+            {data.busiest_month ? `${fmtMonth(data.busiest_month.period)} · ${data.busiest_month.count}` : '—'}
+          </div>
+        </div>
+      </div>
+
+      {data.months.length === 0 ? (
+        <div className="muted" style={{ fontSize: 13 }}>Hozircha izoh yo'q</div>
+      ) : (
+        <>
+          <div className="text-muted" style={{ fontSize: 11.5, margin: '4px 0 6px' }}>Oylik tarix</div>
+          <BarChart
+            height={150}
+            valueFormat={v => String(Math.round(v))}
+            tooltipFormat={v => String(Math.round(v))}
+            highlightIndex={data.months.findIndex(m => m.period === data.busiest_month?.period)}
+            data={data.months.map(m => ({ label: fmtMonth(m.period), value: m.count }))}
+          />
+        </>
+      )}
+
+      {data.by_author.length > 0 && (
+        <>
+          <div className="text-muted" style={{ fontSize: 11.5, margin: '18px 0 6px' }}>Kim ko'proq izoh yozgan</div>
+          <table className="src-table">
+            <thead><tr><th>Xodim</th><th className="num">Izohlar</th></tr></thead>
+            <tbody>
+              {data.by_author.map(a => (
+                <tr key={a.author_name}><td>{a.author_name}</td><td className="num">{a.count}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Intake form manager (admin) ─────────────────────────────────────────────
 function IntakeFormManager({ sources, onClose }) {
+  const [confirmUI, ask] = useConfirm()
   const [list, setList] = useState([])
   const [name, setName] = useState('')
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
   const [sourceId, setSourceId] = useState('')
   const [busy, setBusy] = useState(false)
+  const modalRef = useRef(null)
+  useFocusTrap(true, modalRef, onClose)
 
   useEffect(() => { refresh() }, [])
   async function refresh() { try { setList(await fetchIntakeForms()) } catch {} }
@@ -1165,7 +1790,13 @@ function IntakeFormManager({ sources, onClose }) {
     try { await updateIntakeForm(f.id, { is_active: !f.is_active }); refresh() } catch (e) { toast.error(e.message) }
   }
   async function remove(f) {
-    if (!confirm(`"${f.name}" formasini o'chirish?`)) return
+    const ok = await ask({
+      title: 'Formani o\'chirish',
+      message: `"${f.name}" formasi o'chirilsinmi?`,
+      detail: 'Uning ommaviy havolasi ishlamay qoladi.',
+      confirmLabel: "Ha, o'chirish",
+    })
+    if (!ok) return
     try { await deleteIntakeForm(f.id); refresh() } catch (e) { toast.error(e.message) }
   }
   async function copy(slug) {
@@ -1175,10 +1806,11 @@ function IntakeFormManager({ sources, onClose }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
+      {confirmUI}
+      <div className="modal" ref={modalRef} onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
         <div className="modal-header">
           <h3>Ommaviy qabul formalari</h3>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" aria-label="Yopish" onClick={onClose}>✕</button>
         </div>
         <div className="modal-body">
           {list.length === 0 && <div className="muted" style={{ fontSize: 13 }}>Hozircha forma yo'q</div>}
@@ -1207,7 +1839,7 @@ function IntakeFormManager({ sources, onClose }) {
               <option value="">Manba tanlang</option>
               {sources.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-            <button className="button primary" style={{ marginTop: 12 }} onClick={add} disabled={busy}>
+            <button className="button" style={{ marginTop: 12 }} onClick={add} disabled={busy}>
               <FontAwesomeIcon icon={faPlus} /> Forma yaratish
             </button>
           </div>

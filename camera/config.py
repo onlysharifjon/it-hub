@@ -1,8 +1,22 @@
 """Konfiguratsiya — barcha sozlamalar .env orqali beriladi."""
 import os
+from datetime import datetime, timedelta, timezone
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── Vaqt zonasi (Toshkent, UTC+5) ────────────────────────────────────────────
+# Kamera xizmati serverda (UTC) ham, mahalliy kompyuterda ham ishlashi mumkin.
+# `datetime.now()` mashina sozlamasiga bog'liq bo'lgani uchun bu yerda vaqt
+# HAR DOIM UTC dan hisoblab chiqariladi — log va Telegram xabarlaridagi soat
+# CRM'dagi vaqt bilan bir xil bo'lishi shart.
+TASHKENT = timezone(timedelta(hours=5), "UTC+5")
+
+
+def now() -> datetime:
+    """Toshkent devor-soati, naive."""
+    return datetime.now(TASHKENT).replace(tzinfo=None)
 
 
 def _get(key: str, default: str = "") -> str:

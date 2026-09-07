@@ -3,14 +3,14 @@ import { fetchAuditLogs } from '../api'
 import DateFilter from './DateFilter'
 
 const ACTION_LABELS = {
-  create:    { label: 'Qo\'shildi',         color: '#4ade80' },
-  update:    { label: 'Tahrirlandi',         color: '#60a5fa' },
-  delete:    { label: 'O\'chirildi',         color: '#f87171' },
-  reorder:   { label: 'Tartib o\'zgardi',    color: '#fbbf24' },
-  block:     { label: 'Bloklandi',           color: '#f87171' },
-  unblock:   { label: 'Blok olib tashlandi', color: '#4ade80' },
-  archive:   { label: 'Arxivlandi',          color: '#94a3b8' },
-  unarchive: { label: 'Arxivdan chiqarildi', color: '#60a5fa' },
+  create:    { label: 'Qo\'shildi',         color: 'var(--success)' },
+  update:    { label: 'Tahrirlandi',         color: 'var(--primary)' },
+  delete:    { label: 'O\'chirildi',         color: 'var(--danger)' },
+  reorder:   { label: 'Tartib o\'zgardi',    color: 'var(--warning)' },
+  block:     { label: 'Bloklandi',           color: 'var(--danger)' },
+  unblock:   { label: 'Blok olib tashlandi', color: 'var(--success)' },
+  archive:   { label: 'Arxivlandi',          color: 'var(--muted)' },
+  unarchive: { label: 'Arxivdan chiqarildi', color: 'var(--primary)' },
 }
 
 function AuditLogPanel({ onClose }) {
@@ -66,7 +66,7 @@ function AuditLogPanel({ onClose }) {
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid #2a2a2a' }}>
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
           <DateFilter value={dateFilter} onChange={handleDateFilter} />
         </div>
 

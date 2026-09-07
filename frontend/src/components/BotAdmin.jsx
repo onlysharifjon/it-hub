@@ -1,21 +1,26 @@
 import { useEffect, useState } from 'react'
+import { TableSkeleton } from './ui/States'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faRobot, faUsers, faTag, faGear, faCrown,
-  faPlus, faToggleOn, faToggleOff, faCopy, faLink,
+  faPlus, faToggleOn, faToggleOff, faCopy, faLink, faChartLine, faPaperPlane,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchBotEmployees, fetchBotRoles, createBotRole, toggleBotRole,
   setBotEmployeeRole, setBotEmployeeAdmin, fetchBotSetting, setBotSetting,
-  createBotInviteLink,
+  createBotInviteLink, sendInvestorStatsNow,
 } from '../api'
+import DataTable, { RowActions } from './ui/DataTable'
+import Badge from './ui/Badge'
+import useConfirm from './ui/useConfirm'
 
 const TABS = [
   { key: 'employees', label: 'Xodimlar', icon: faUsers },
   { key: 'roles', label: 'Rollar', icon: faTag },
   { key: 'settings', label: 'Sozlamalar', icon: faGear },
   { key: 'admins', label: 'Admin / CEO', icon: faCrown },
+  { key: 'investors', label: 'Investorlar', icon: faChartLine },
 ]
 
 export default function BotAdmin() {
@@ -39,12 +44,13 @@ export default function BotAdmin() {
   return (
     <div className="page">
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faRobot} className="page-icon" /> Bot boshqaruvi</h1>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faRobot} className="page-icon" /> Bot boshqaruvi</h1>
+          <p className="page-subtitle">
+            O'zgarishlar botga darhol ta'sir qiladi va xodimga Telegram orqali xabar boradi.
+          </p>
+        </div>
       </div>
-      <p className="text-muted" style={{ fontSize: 13, marginTop: -8 }}>
-        Telegram bot'ning o'z xodim/rol/sozlama ma'lumotlari — bu yerdagi o'zgarishlar
-        botga darhol ta'sir qiladi va xodimga Telegram orqali xabar boradi.
-      </p>
 
       <div className="tab-bar">
         {TABS.map(t => (
@@ -55,13 +61,14 @@ export default function BotAdmin() {
       </div>
 
       {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
+        <TableSkeleton />
       ) : (
         <>
           {tab === 'employees' && <EmployeesTab employees={employees} roles={roles} reload={loadAll} />}
           {tab === 'roles' && <RolesTab roles={roles} reload={loadAll} />}
           {tab === 'settings' && <SettingsTab />}
           {tab === 'admins' && <AdminsTab employees={employees} reload={loadAll} />}
+          {tab === 'investors' && <InvestorsTab />}
         </>
       )}
     </div>
@@ -82,49 +89,41 @@ function EmployeesTab({ employees, roles, reload }) {
     finally { setBusyId(null) }
   }
 
+  const rows = employees.filter(e => !e.is_admin)
+
   return (
-    <div className="table-wrap">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Ism</th>
-            <th>Username</th>
-            <th>Hozirgi rol</th>
-            <th>Rol tayinlash</th>
-          </tr>
-        </thead>
-        <tbody>
-          {employees.filter(e => !e.is_admin).map((emp, i) => (
-            <tr key={emp.id}>
-              <td className="text-muted">{i + 1}</td>
-              <td style={{ fontWeight: 500 }}>{emp.full_name}</td>
-              <td className="text-muted">{emp.username ? `@${emp.username}` : '—'}</td>
-              <td>{emp.role_name
-                ? <span className="badge" style={{ background: '#dbeafe', color: '#1d4ed8' }}>{emp.role_name}</span>
-                : <span className="text-muted">Rol yo'q</span>}
-              </td>
-              <td>
-                <select
-                  className="field" style={{ maxWidth: 260 }}
-                  value={emp.role_id || ''}
-                  disabled={busyId === emp.id}
-                  onChange={e => handleRoleChange(emp, e.target.value)}
-                >
-                  <option value="">— Rolsiz —</option>
-                  {activeRoles.map(r => (
-                    <option key={r.id} value={r.id}>{r.name}{r.is_parent ? ' (Ota-ona)' : ''}</option>
-                  ))}
-                </select>
-              </td>
-            </tr>
-          ))}
-          {employees.filter(e => !e.is_admin).length === 0 && (
-            <tr><td colSpan={5} className="muted center py-4">Xodimlar yo'q</td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={[
+        { key: 'full_name', header: 'Ism', sortable: true, render: e => <strong>{e.full_name}</strong> },
+        { key: 'username', header: 'Username', sortable: true, render: e => <span className="text-muted">{e.username ? `@${e.username}` : '—'}</span> },
+        {
+          key: 'role_name', header: 'Hozirgi rol', sortable: true,
+          render: e => e.role_name
+            ? <Badge variant="primary" size="sm">{e.role_name}</Badge>
+            : <span className="text-muted">Rol yo'q</span>,
+        },
+        {
+          key: 'assign', header: 'Rol tayinlash', width: 260,
+          render: emp => (
+            <select
+              className="field-sm"
+              value={emp.role_id || ''}
+              disabled={busyId === emp.id}
+              aria-label="Rol tayinlash"
+              onChange={e => handleRoleChange(emp, e.target.value)}
+            >
+              <option value="">— Rolsiz —</option>
+              {activeRoles.map(r => (
+                <option key={r.id} value={r.id}>{r.name}{r.is_parent ? ' (Ota-ona)' : ''}</option>
+              ))}
+            </select>
+          ),
+        },
+      ]}
+      rows={rows}
+      clientPageSize={25}
+      empty={{ title: "Xodimlar yo'q", description: 'Botga /start bosgan xodimlar shu yerda paydo bo\'ladi.' }}
+    />
   )
 }
 
@@ -160,39 +159,40 @@ function RolesTab({ roles, reload }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '12px 0' }}>
-        <button className="button primary" onClick={() => setModal(true)}>
-          <FontAwesomeIcon icon={faPlus} /> Yangi rol
-        </button>
-      </div>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Nomi</th>
-              <th>Ota-ona rolimi?</th>
-              <th>Holat</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {roles.map((r, i) => (
-              <tr key={r.id} className={!r.is_active ? 'row-inactive' : ''}>
-                <td className="text-muted">{i + 1}</td>
-                <td style={{ fontWeight: 500 }}>{r.name}</td>
-                <td>{r.is_parent ? <span className="badge" style={{ background: '#dcfce7', color: '#16a34a' }}>Ha</span> : <span className="text-muted">Yo'q</span>}</td>
-                <td><span className={`status-badge ${r.is_active ? 'active' : 'inactive'}`}>{r.is_active ? 'Faol' : 'Nofaol'}</span></td>
-                <td>
-                  <button className="btn-icon" disabled={busyId === r.id} onClick={() => handleToggle(r)} title={r.is_active ? 'Nofaol qilish' : 'Faol qilish'}>
-                    <FontAwesomeIcon icon={r.is_active ? faToggleOn : faToggleOff} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        columns={[
+          { key: 'name', header: 'Nomi', sortable: true, render: r => <strong>{r.name}</strong> },
+          {
+            key: 'is_parent', header: 'Ota-ona rolimi?', sortable: true,
+            render: r => r.is_parent ? <Badge variant="success" size="sm">Ha</Badge> : <span className="text-muted">Yo'q</span>,
+          },
+          {
+            key: 'is_active', header: 'Holat', sortable: true,
+            render: r => <span className={`status-badge ${r.is_active ? 'active' : 'inactive'}`}>{r.is_active ? 'Faol' : 'Nofaol'}</span>,
+          },
+          {
+            key: 'actions', header: '', align: 'right', className: 'actions',
+            render: r => (
+              <RowActions>
+                <button className="btn-icon" disabled={busyId === r.id} onClick={() => handleToggle(r)}
+                  title={r.is_active ? 'Nofaol qilish' : 'Faol qilish'}
+                  aria-label={r.is_active ? 'Nofaol qilish' : 'Faol qilish'}>
+                  <FontAwesomeIcon icon={r.is_active ? faToggleOn : faToggleOff} />
+                </button>
+              </RowActions>
+            ),
+          },
+        ]}
+        rows={roles}
+        rowClassName={r => (!r.is_active ? 'row-inactive' : undefined)}
+        clientPageSize={25}
+        toolbar={
+          <button className="button small" onClick={() => setModal(true)}>
+            <FontAwesomeIcon icon={faPlus} /> Yangi rol
+          </button>
+        }
+        empty={{ title: "Rollar yo'q", description: 'Bot foydalanuvchilarini guruhlash uchun rol yarating.' }}
+      />
 
       {modal && (
         <div className="modal-overlay" onClick={() => setModal(false)}>
@@ -211,7 +211,7 @@ function RolesTab({ roles, reload }) {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setModal(false)}>Bekor</button>
-              <button className="button primary" onClick={handleCreate} disabled={saving}>
+              <button className="button" onClick={handleCreate} disabled={saving}>
                 {saving ? 'Saqlanmoqda...' : 'Yaratish'}
               </button>
             </div>
@@ -243,7 +243,7 @@ function SettingsTab() {
     finally { setSaving(false) }
   }
 
-  if (loading) return <div className="muted center py-8">Yuklanmoqda...</div>
+  if (loading) return <TableSkeleton />
 
   return (
     <div style={{ maxWidth: 420, marginTop: 16 }}>
@@ -252,7 +252,7 @@ function SettingsTab() {
         Talabaga alohida ota-ona biriktirilmagan hollarda davomat xabarlari shu ID'ga yuboriladi.
       </p>
       <input className="form-input" type="text" value={value} onChange={e => setValue(e.target.value)} placeholder="123456789" />
-      <button className="button primary" style={{ marginTop: 12 }} onClick={handleSave} disabled={saving}>
+      <button className="button" style={{ marginTop: 12 }} onClick={handleSave} disabled={saving}>
         {saving ? 'Saqlanmoqda...' : 'Saqlash'}
       </button>
     </div>
@@ -260,6 +260,7 @@ function SettingsTab() {
 }
 
 function AdminsTab({ employees, reload }) {
+  const [confirmUI, ask] = useConfirm()
   const [busyId, setBusyId] = useState(null)
   const [pickEmployee, setPickEmployee] = useState('')
   const [pickTier, setPickTier] = useState('admin')
@@ -272,7 +273,13 @@ function AdminsTab({ employees, reload }) {
   const nonAdmins = employees.filter(e => !e.is_admin)
 
   async function handleRemove(emp) {
-    if (!confirm(`${emp.full_name} adminlikdan olinsinmi?`)) return
+    const ok = await ask({
+      title: 'Adminlikdan olish',
+      message: `${emp.full_name} adminlikdan olinsinmi?`,
+      detail: "Xodim botni boshqara olmaydi, lekin bot foydalanuvchisi bo'lib qoladi.",
+      confirmLabel: 'Ha, olib tashlash',
+    })
+    if (!ok) return
     setBusyId(emp.id)
     try {
       await setBotEmployeeAdmin(emp.id, null)
@@ -313,52 +320,63 @@ function AdminsTab({ employees, reload }) {
 
   return (
     <div>
-      <h3 style={{ marginTop: 16 }}>Hozirgi adminlar</h3>
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Ism</th>
-              <th>Daraja</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {admins.map((a, i) => (
-              <tr key={a.id}>
-                <td className="text-muted">{i + 1}</td>
-                <td style={{ fontWeight: 500 }}>{a.full_name}</td>
-                <td>
-                  <span className="badge" style={{ background: a.is_superadmin ? '#fef9c3' : '#dbeafe', color: a.is_superadmin ? '#a16207' : '#1d4ed8' }}>
-                    {a.is_superadmin ? 'Superadmin (CEO)' : 'Admin'}
-                  </span>
-                </td>
-                <td>
-                  <button className="btn-icon danger" disabled={busyId === a.id} onClick={() => handleRemove(a)} title="Adminlikdan olish">
-                    <FontAwesomeIcon icon={faCrown} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {admins.length === 0 && <tr><td colSpan={4} className="muted center py-4">Adminlar yo'q</td></tr>}
-          </tbody>
-        </table>
+      {confirmUI}
+      <div className="ui-section-head">
+        <div className="ui-section-head-text">
+          <h2>Hozirgi adminlar</h2>
+          <p>Botni boshqarish huquqiga ega xodimlar</p>
+        </div>
       </div>
+      <DataTable
+        columns={[
+          { key: 'full_name', header: 'Ism', sortable: true, render: a => <strong>{a.full_name}</strong> },
+          {
+            key: 'is_superadmin', header: 'Daraja', sortable: true,
+            render: a => (
+              <Badge variant={a.is_superadmin ? 'warning' : 'primary'} size="sm">
+                {a.is_superadmin ? 'Superadmin (CEO)' : 'Admin'}
+              </Badge>
+            ),
+          },
+          {
+            key: 'actions', header: '', align: 'right', className: 'actions',
+            render: a => (
+              <RowActions>
+                <button className="btn-icon danger" disabled={busyId === a.id} onClick={() => handleRemove(a)}
+                  title="Adminlikdan olish" aria-label="Adminlikdan olish">
+                  <FontAwesomeIcon icon={faCrown} />
+                </button>
+              </RowActions>
+            ),
+          },
+        ]}
+        rows={admins}
+        clientPageSize={20}
+        empty={{ title: "Adminlar yo'q" }}
+      />
 
-      <h3 style={{ marginTop: 24 }}>Yangi admin tayinlash</h3>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <select className="field" style={{ maxWidth: 260 }} value={pickEmployee} onChange={e => setPickEmployee(e.target.value)}>
-          <option value="">— Xodimni tanlang —</option>
-          {nonAdmins.map(e => <option key={e.id} value={e.id}>{e.full_name}</option>)}
-        </select>
-        <select className="field" style={{ maxWidth: 200 }} value={pickTier} onChange={e => setPickTier(e.target.value)}>
-          <option value="admin">Oddiy admin</option>
-          <option value="superadmin">Superadmin (CEO)</option>
-        </select>
-        <button className="button primary" onClick={handlePromote} disabled={promoting}>
-          {promoting ? 'Berilmoqda...' : 'Admin qilish'}
-        </button>
+      <div className="ui-section-head">
+        <div className="ui-section-head-text">
+          <h2>Yangi admin tayinlash</h2>
+          <p>Xodimni tanlang va darajani belgilang</p>
+        </div>
+      </div>
+      <div className="card">
+        <div className="toolbar" style={{ marginBottom: 0 }}>
+          <select className="field-sm" style={{ minWidth: 240 }} value={pickEmployee}
+            aria-label="Xodim" onChange={e => setPickEmployee(e.target.value)}>
+            <option value="">— Xodimni tanlang —</option>
+            {nonAdmins.map(e => <option key={e.id} value={e.id}>{e.full_name}</option>)}
+          </select>
+          <select className="field-sm" style={{ minWidth: 180 }} value={pickTier}
+            aria-label="Daraja" onChange={e => setPickTier(e.target.value)}>
+            <option value="admin">Oddiy admin</option>
+            <option value="superadmin">Superadmin (CEO)</option>
+          </select>
+          <button className="button" onClick={handlePromote} disabled={promoting}>
+            {promoting ? 'Berilmoqda...' : 'Admin qilish'}
+          </button>
+        </div>
       </div>
 
       <h3 style={{ marginTop: 24 }}>Admin/CEO havolasi yaratish</h3>
@@ -370,15 +388,143 @@ function AdminsTab({ employees, reload }) {
           <option value="admin">Admin havolasi</option>
           <option value="superadmin">Superadmin (CEO) havolasi</option>
         </select>
-        <button className="button primary" onClick={handleCreateLink} disabled={creatingLink}>
+        <button className="button" onClick={handleCreateLink} disabled={creatingLink}>
           <FontAwesomeIcon icon={faLink} /> {creatingLink ? 'Yaratilmoqda...' : 'Havola yaratish'}
         </button>
       </div>
       {generatedLink && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
           <code style={{ fontSize: 13, wordBreak: 'break-all' }}>{generatedLink}</code>
-          <button className="btn-icon" onClick={copyLink} title="Nusxalash"><FontAwesomeIcon icon={faCopy} /></button>
+          <button className="btn-icon" onClick={copyLink} title="Nusxalash" aria-label="Nusxalash"><FontAwesomeIcon icon={faCopy} /></button>
         </div>
+      )}
+    </div>
+  )
+}
+
+const INVESTOR_KEYS = {
+  chatId: 'investor_chat_id',
+  dailyEnabled: 'investor_daily_stats_enabled',
+  dailyTime: 'investor_daily_stats_time',
+  newStudentEnabled: 'investor_new_student_enabled',
+  lastSent: 'investor_daily_stats_last_sent',
+}
+
+function InvestorsTab() {
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [chatId, setChatId] = useState('')
+  const [dailyEnabled, setDailyEnabled] = useState(false)
+  const [dailyTime, setDailyTime] = useState('09:00')
+  const [newStudentEnabled, setNewStudentEnabled] = useState(false)
+  const [lastSent, setLastSent] = useState('')
+
+  useEffect(() => { load() }, [])
+
+  async function load() {
+    setLoading(true)
+    try {
+      const [c, de, dt, ne, ls] = await Promise.all([
+        fetchBotSetting(INVESTOR_KEYS.chatId),
+        fetchBotSetting(INVESTOR_KEYS.dailyEnabled),
+        fetchBotSetting(INVESTOR_KEYS.dailyTime),
+        fetchBotSetting(INVESTOR_KEYS.newStudentEnabled),
+        fetchBotSetting(INVESTOR_KEYS.lastSent),
+      ])
+      setChatId(c.value || '')
+      setDailyEnabled(de.value === '1')
+      setDailyTime(dt.value || '09:00')
+      setNewStudentEnabled(ne.value === '1')
+      setLastSent(ls.value || '')
+    } catch { toast.error("Yuklab bo'lmadi") }
+    finally { setLoading(false) }
+  }
+
+  async function handleSave() {
+    if (!chatId.trim()) return toast.error('Investorlar guruhi Telegram chat ID kiritilmagan')
+    setSaving(true)
+    try {
+      await Promise.all([
+        setBotSetting(INVESTOR_KEYS.chatId, chatId.trim()),
+        setBotSetting(INVESTOR_KEYS.dailyEnabled, dailyEnabled ? '1' : '0'),
+        setBotSetting(INVESTOR_KEYS.dailyTime, dailyTime || '09:00'),
+        setBotSetting(INVESTOR_KEYS.newStudentEnabled, newStudentEnabled ? '1' : '0'),
+      ])
+      toast.success('Saqlandi')
+    } catch (e) { toast.error(e.message) }
+    finally { setSaving(false) }
+  }
+
+  async function handleSendNow() {
+    setSending(true)
+    try {
+      const r = await sendInvestorStatsNow()
+      if (r.ok) { toast.success('Statistika yuborildi'); load() }
+      else toast.error(r.detail || "Yuborib bo'lmadi")
+    } catch (e) { toast.error(e.message) }
+    finally { setSending(false) }
+  }
+
+  if (loading) return <TableSkeleton />
+
+  return (
+    <div style={{ maxWidth: 480, marginTop: 16 }}>
+      <p className="text-muted" style={{ fontSize: 13, marginTop: 0 }}>
+        Investorlar Telegram guruhiga avtomatik xabarnomalar — kunlik statistika va
+        guruhga yangi talaba qo'shilganda. Faqat superadmin boshqara oladi.
+      </p>
+
+      <label className="form-label">Investorlar guruhi Telegram chat ID</label>
+      <input
+        className="form-input" type="text" value={chatId}
+        onChange={e => setChatId(e.target.value)} placeholder="-1001234567890"
+      />
+      <p className="text-muted" style={{ fontSize: 12, marginTop: 4 }}>
+        Botni investorlar guruhiga admin qilib qo'shing, so'ng guruh chat ID'sini shu yerga kiriting.
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18 }}>
+        <button className="btn-icon" onClick={() => setDailyEnabled(v => !v)} title={dailyEnabled ? 'Nofaol qilish' : 'Faol qilish'}>
+          <FontAwesomeIcon icon={dailyEnabled ? faToggleOn : faToggleOff} size="lg" />
+        </button>
+        <div>
+          <div style={{ fontWeight: 500 }}>Kunlik statistika yuborish</div>
+          <div className="text-muted" style={{ fontSize: 12 }}>Har kuni belgilangan vaqtda avtomatik yuboriladi</div>
+        </div>
+      </div>
+      {dailyEnabled && (
+        <div style={{ marginTop: 10 }}>
+          <label className="form-label">Yuborish vaqti (Toshkent)</label>
+          <input
+            className="form-input" type="time" style={{ maxWidth: 140 }}
+            value={dailyTime} onChange={e => setDailyTime(e.target.value)}
+          />
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18 }}>
+        <button className="btn-icon" onClick={() => setNewStudentEnabled(v => !v)} title={newStudentEnabled ? 'Nofaol qilish' : 'Faol qilish'}>
+          <FontAwesomeIcon icon={newStudentEnabled ? faToggleOn : faToggleOff} size="lg" />
+        </button>
+        <div>
+          <div style={{ fontWeight: 500 }}>Yangi talaba xabarnomasi</div>
+          <div className="text-muted" style={{ fontSize: 12 }}>Guruhga yangi talaba qo'shilganda darhol xabar boradi</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
+        <button className="button" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saqlanmoqda...' : 'Saqlash'}
+        </button>
+        <button className="button secondary" onClick={handleSendNow} disabled={sending || !chatId.trim()}>
+          <FontAwesomeIcon icon={faPaperPlane} /> {sending ? 'Yuborilmoqda...' : 'Hozir yuborish (sinov)'}
+        </button>
+      </div>
+      {lastSent && (
+        <p className="text-muted" style={{ fontSize: 12, marginTop: 10 }}>
+          Oxirgi kunlik statistika: {lastSent}
+        </p>
       )}
     </div>
   )

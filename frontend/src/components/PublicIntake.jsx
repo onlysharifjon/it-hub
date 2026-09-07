@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCircleCheck, faPaperPlane } from '@fortawesome/free-solid-svg-icons'
-import MinaretLogo from './MinaretLogo'
+import BrandLogo from './ui/BrandLogo'
 import { fetchPublicIntake, submitPublicIntake } from '../api'
 
 const COURSES = [
@@ -46,9 +46,10 @@ export default function PublicIntake({ slug }) {
   return (
     <div className="intake-page">
       <div className="intake-card">
+        {/* Ommaviy sahifa — akademiyaning tashqi yuzi. Bu yerda eng kuchli
+            aktiv: to'liq lokap, oq kartada, o'z brend rangida. */}
         <div className="intake-brand">
-          <MinaretLogo size={44} />
-          <span>Minar Academy</span>
+          <BrandLogo variant="full" height={38} />
         </div>
 
         {state === 'loading' && <div className="muted center py-8">Yuklanmoqda...</div>}

@@ -8,6 +8,7 @@ import AuditLogPanel from './AuditLogPanel'
 import AddLessonModal from './AddLessonModal'
 import ProgressBar from './ProgressBar'
 import { fetchLessons, createLesson, updateLesson, deleteLesson, reorderLessons } from '../api'
+import useConfirm from './ui/useConfirm'
 
 const CATEGORY_LABELS = {
   foundation: 'Foundation',
@@ -16,6 +17,7 @@ const CATEGORY_LABELS = {
 }
 
 export default function Lessons({ category, currentUser }) {
+  const [confirmUI, ask] = useConfirm()
   const [lessons, setLessons] = useState([])
   const [selectedId, setSelectedId] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -23,7 +25,7 @@ export default function Lessons({ category, currentUser }) {
   const [showAdd, setShowAdd] = useState(false)
   const [showAudit, setShowAudit] = useState(false)
 
-  const isMetodist = currentUser?.role === 'metodist' || currentUser?.role === 'admin'
+  const isMetodist = currentUser?.role === 'support_teacher' || currentUser?.role === 'admin'
 
   useEffect(() => {
     load()
@@ -64,11 +66,18 @@ export default function Lessons({ category, currentUser }) {
     toast.success("Dars qo'shildi")
   }
 
-  async function handleDelete(id) {
-    await deleteLesson(id)
-    const remaining = lessons.filter(l => l.id !== id)
+  async function handleDelete(lesson) {
+    const ok = await ask({
+      title: 'Darsni o\'chirish',
+      message: `"${lesson.title}" darsi o'chirilsinmi?`,
+      detail: "Dars rejasi, qo'llanma va uy vazifasi matni ham o'chadi.",
+      confirmLabel: "Ha, o'chirish",
+    })
+    if (!ok) return
+    await deleteLesson(lesson.id)
+    const remaining = lessons.filter(l => l.id !== lesson.id)
     setLessons(remaining)
-    if (selectedId === id) setSelectedId(remaining[0]?.id ?? null)
+    if (selectedId === lesson.id) setSelectedId(remaining[0]?.id ?? null)
     toast.success("O'chirildi")
   }
 
@@ -96,6 +105,7 @@ export default function Lessons({ category, currentUser }) {
 
   return (
     <div className="lessons-page">
+      {confirmUI}
       <div className="lessons-header">
         <div>
           <p className="eyebrow">O'quv metodikasi</p>
@@ -118,7 +128,7 @@ export default function Lessons({ category, currentUser }) {
             <div className="panel-head-actions">
               {loading && <span className="tag">Yuklanmoqda...</span>}
               {isMetodist && (
-                <button className="button primary small" onClick={() => setShowAdd(true)}>
+                <button className="button small" onClick={() => setShowAdd(true)}>
                   <FontAwesomeIcon icon={faPlus} /> Dars
                 </button>
               )}

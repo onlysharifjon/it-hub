@@ -5,11 +5,13 @@ import {
   faCommentDots, faCheck, faPhoneSlash, faRotateLeft,
 } from '@fortawesome/free-solid-svg-icons'
 import { fetchFeedbacks, updateFeedbackStatus } from '../api'
+import Badge from './ui/Badge'
+import { EmptyState, CardSkeleton } from './ui/States'
 
 const STATUS_META = {
-  new:       { label: 'Yangi',                 color: '#dc2626', bg: '#fee2e2' },
-  resolved:  { label: 'Hal qilindi',           color: '#16a34a', bg: '#dcfce7' },
-  no_answer: { label: 'Ota-onasi javob bermadi', color: '#d97706', bg: '#fef3c7' },
+  new:       { label: 'Yangi',                   variant: 'danger'  },
+  resolved:  { label: 'Hal qilindi',             variant: 'success' },
+  no_answer: { label: 'Ota-onasi javob bermadi', variant: 'warning' },
 }
 
 const TABS = [
@@ -53,15 +55,17 @@ export default function FeedbackInbox({ currentUser }) {
   return (
     <div className="page">
       <div className="page-header">
-        <h1><FontAwesomeIcon icon={faCommentDots} className="page-icon" /> O'quvchi izohlari</h1>
+        <div className="page-header-text">
+          <h1><FontAwesomeIcon icon={faCommentDots} className="page-icon" /> O'quvchi izohlari</h1>
+          <p className="page-subtitle">Mobil ilovadan kelgan murojaatlar — javob berilishi kerak</p>
+        </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+      <div className="tab-bar">
         {TABS.map(t => (
           <button
             key={t.key}
-            className={`button ${tab === t.key ? 'primary' : 'secondary'}`}
-            style={{ padding: '6px 14px', fontSize: 13 }}
+            className={`tab-btn${tab === t.key ? ' active' : ''}`}
             onClick={() => setTab(t.key)}
           >
             {t.label}
@@ -69,61 +73,57 @@ export default function FeedbackInbox({ currentUser }) {
         ))}
       </div>
 
-      {loading && <p className="muted">Yuklanmoqda...</p>}
+      {loading && <CardSkeleton count={3} height={132} />}
       {!loading && items.length === 0 && (
-        <p className="muted">
-          {tab === 'new' ? "Yangi izohlar yo'q — hammasi ko'rib chiqilgan 🎉" : "Izohlar topilmadi"}
-        </p>
+        <EmptyState
+          icon={faCommentDots}
+          title={tab === 'new' ? "Yangi izohlar yo'q" : 'Izohlar topilmadi'}
+          description={tab === 'new'
+            ? "Hammasi ko'rib chiqilgan — yangi murojaat kelganda shu yerda paydo bo'ladi."
+            : 'Boshqa holatni tanlab ko\'ring.'}
+        />
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="fb-list">
         {items.map(f => {
           const meta = STATUS_META[f.status] || STATUS_META.new
           const busy = savingId === f.id
           return (
-            <div key={f.id} style={{
-              padding: 16, background: 'var(--surface)',
-              border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+            <article key={f.id} className={`fb-card is-${f.status}`}>
+              <header className="fb-head">
                 <strong>{f.student_name || 'Talaba'}</strong>
-                {f.group_name && <span className="muted" style={{ fontSize: 13 }}>· {f.group_name}</span>}
-                <span style={{
-                  fontSize: 11, fontWeight: 700, padding: '2px 10px', borderRadius: 20,
-                  color: meta.color, background: meta.bg, marginLeft: 'auto',
-                }}>
-                  {meta.label}
-                </span>
-              </div>
-              <p style={{ margin: '0 0 10px', whiteSpace: 'pre-wrap' }}>{f.comment}</p>
-              <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
+                {f.group_name && <span className="muted-sm">· {f.group_name}</span>}
+                <Badge variant={meta.variant} size="sm" className="fb-status">{meta.label}</Badge>
+              </header>
+
+              <p className="fb-comment">{f.comment}</p>
+
+              <div className="fb-meta">
                 {f.teacher_name && <>O'qituvchi: {f.teacher_name} · </>}
                 {fmtDate(f.created_at)}
                 {f.status !== 'new' && f.status_updated_by_name && (
                   <> · Belgiladi: {f.status_updated_by_name} ({fmtDate(f.status_updated_at)})</>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+
+              <footer className="fb-actions">
                 {f.status !== 'resolved' && (
-                  <button className="button primary" style={{ padding: '6px 12px', fontSize: 13 }}
-                    disabled={busy} onClick={() => setStatus(f, 'resolved')}>
+                  <button className="button small" disabled={busy} onClick={() => setStatus(f, 'resolved')}>
                     <FontAwesomeIcon icon={faCheck} /> Hal qilindi
                   </button>
                 )}
                 {f.status !== 'no_answer' && (
-                  <button className="button secondary" style={{ padding: '6px 12px', fontSize: 13 }}
-                    disabled={busy} onClick={() => setStatus(f, 'no_answer')}>
-                    <FontAwesomeIcon icon={faPhoneSlash} /> Telefonga javob bermadi
+                  <button className="button small secondary" disabled={busy} onClick={() => setStatus(f, 'no_answer')}>
+                    <FontAwesomeIcon icon={faPhoneSlash} /> Javob bermadi
                   </button>
                 )}
                 {f.status !== 'new' && (
-                  <button className="button secondary" style={{ padding: '6px 12px', fontSize: 13 }}
-                    disabled={busy} onClick={() => setStatus(f, 'new')}>
+                  <button className="button small secondary" disabled={busy} onClick={() => setStatus(f, 'new')}>
                     <FontAwesomeIcon icon={faRotateLeft} /> Yangiga qaytarish
                   </button>
                 )}
-              </div>
-            </div>
+              </footer>
+            </article>
           )
         })}
       </div>

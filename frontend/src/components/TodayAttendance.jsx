@@ -7,6 +7,7 @@ import {
   faUmbrellaBeach, faPlus, faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import { fetchTodayGroups, fetchAttendance, saveAttendance, fetchHolidays, createHoliday, deleteHoliday, tashkentToday } from '../api'
+import useConfirm from './ui/useConfirm'
 
 const TODAY_STR = tashkentToday()
 const DAY_NAMES = ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba']
@@ -17,7 +18,8 @@ function formatDateLabel(dateStr) {
 }
 
 export default function TodayAttendance({ currentUser }) {
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'metodist'
+  const [confirmUI, ask] = useConfirm()
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'support_teacher'
   const isSuperAdmin = currentUser?.role === 'admin'
 
   const [selectedDate, setSelectedDate] = useState(TODAY_STR)
@@ -62,7 +64,13 @@ export default function TodayAttendance({ currentUser }) {
   }
 
   async function handleHolidayDelete(id) {
-    if (!confirm("Dam olish kunini o'chirishni tasdiqlaysizmi?")) return
+    const ok = await ask({
+      title: 'Dam olish kunini o\'chirish',
+      message: "Bu dam olish kuni o'chirilsinmi?",
+      detail: "O'sha kun yana odatdagi dars kuni sifatida hisoblanadi.",
+      confirmLabel: "Ha, o'chirish",
+    })
+    if (!ok) return
     try {
       await deleteHoliday(id)
       toast.success("O'chirildi")
@@ -128,17 +136,18 @@ export default function TodayAttendance({ currentUser }) {
 
     return (
       <div className="page">
+        {confirmUI}
         <div className="page-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <button className="btn-sm" onClick={() => setActiveGroup(null)}>
+          <div className="detail-title">
+            <button className="btn-sm" onClick={() => setActiveGroup(null)} aria-label="Orqaga">
               <FontAwesomeIcon icon={faArrowLeft} /> Orqaga
             </button>
-            <h1 style={{ margin: 0 }}>
+            <h1>
               <FontAwesomeIcon icon={faCalendarCheck} className="page-icon" />
               {activeGroup.name}
             </h1>
           </div>
-          <div style={{ fontSize: 13, color: '#737373' }}>{formatDateLabel(selectedDate)}</div>
+          <div className="muted-sm">{formatDateLabel(selectedDate)}</div>
         </div>
 
         {attLoading ? (
@@ -148,14 +157,14 @@ export default function TodayAttendance({ currentUser }) {
             <div className="toolbar" style={{ marginBottom: '1rem', gap: 8 }}>
               <span className="text-muted" style={{ fontSize: 13 }}>Barchasi:</span>
               <button className="button secondary small" onClick={() => markAll(true)}>
-                <FontAwesomeIcon icon={faCheck} style={{ color: '#22c55e' }} /> Keldi
+                <FontAwesomeIcon icon={faCheck} style={{ color: 'var(--success)' }} /> Keldi
               </button>
               <button className="button secondary small" onClick={() => markAll(false)}>
-                <FontAwesomeIcon icon={faXmark} style={{ color: '#ef4444' }} /> Kelmadi
+                <FontAwesomeIcon icon={faXmark} style={{ color: 'var(--danger)' }} /> Kelmadi
               </button>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, fontSize: 13 }}>
-                <span style={{ color: '#22c55e', fontWeight: 600 }}>✓ {presentCount} keldi</span>
-                <span style={{ color: '#ef4444', fontWeight: 600 }}>✗ {absentCount} kelmadi</span>
+                <span style={{ color: 'var(--success)', fontWeight: 600 }}>✓ {presentCount} keldi</span>
+                <span style={{ color: 'var(--danger)', fontWeight: 600 }}>✗ {absentCount} kelmadi</span>
               </div>
             </div>
 
@@ -188,7 +197,7 @@ export default function TodayAttendance({ currentUser }) {
 
             {students.length > 0 && (
               <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
-                <button className="button primary" onClick={handleSave} disabled={saving}>
+                <button className="button" onClick={handleSave} disabled={saving}>
                   <FontAwesomeIcon icon={faCalendarCheck} />
                   {saving ? ' Saqlanmoqda...' : ' Davomatni saqlash'}
                 </button>
@@ -203,11 +212,15 @@ export default function TodayAttendance({ currentUser }) {
   // ── Groups list ───────────────────────────────────────────────────────────
   return (
     <div className="page">
+      {confirmUI}
       <div className="page-header">
-        <h1>
-          <FontAwesomeIcon icon={faCalendarCheck} className="page-icon" />
-          {isAdmin ? 'Davomat' : 'Bugungi darslar'}
-        </h1>
+        <div className="page-header-text">
+          <h1>
+            <FontAwesomeIcon icon={faCalendarCheck} className="page-icon" />
+            {isAdmin ? 'Davomat' : 'Bugungi darslar'}
+          </h1>
+          <p className="page-subtitle">Bugun darsi bor guruhlar — bosib yo'qlama qiling</p>
+        </div>
       </div>
 
       {/* Date picker — admin sees any date, teacher fixed to today */}
@@ -243,7 +256,7 @@ export default function TodayAttendance({ currentUser }) {
         <div style={{
           display: 'flex', alignItems: 'center', gap: 10,
           padding: '12px 16px', marginBottom: 16, borderRadius: 10,
-          background: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d',
+          background: 'var(--warning-bg)', color: 'var(--warning-text)', border: '1px solid var(--warning)',
           fontWeight: 600, fontSize: 14,
         }}>
           <FontAwesomeIcon icon={faUmbrellaBeach} style={{ fontSize: 20 }} />
@@ -288,8 +301,7 @@ export default function TodayAttendance({ currentUser }) {
                 {g.schedule && <span>{g.schedule}{g.lesson_time ? ` — soat ${g.lesson_time}` : ''}</span>}
               </div>
               <button
-                className={`button ${g.attendance_taken ? 'secondary' : 'primary'} small`}
-                style={{ width: '100%', marginTop: 10 }}
+                className="button secondary small block td-card-cta"
                 onClick={() => openGroupAttendance(g)}
               >
                 <FontAwesomeIcon icon={faCalendarCheck} />
@@ -324,7 +336,7 @@ export default function TodayAttendance({ currentUser }) {
                     onChange={e => setHForm(p => ({ ...p, end_date: e.target.value }))} />
                 </div>
               </div>
-              <button className="button primary" style={{ marginTop: 10 }} onClick={handleHolidaySave} disabled={hSaving}>
+              <button className="button" style={{ marginTop: 10 }} onClick={handleHolidaySave} disabled={hSaving}>
                 <FontAwesomeIcon icon={faPlus} /> {hSaving ? 'Saqlanmoqda...' : "Qo'shish"}
               </button>
 
@@ -332,7 +344,7 @@ export default function TodayAttendance({ currentUser }) {
                 <div style={{ marginTop: 16 }}>
                   <label>Belgilangan kunlar ({selectedDate.slice(0, 4)})</label>
                   {holidays.map(h => (
-                    <div key={h.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 8, background: 'var(--bg-secondary, #f5f5f5)', marginBottom: 6 }}>
+                    <div key={h.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 8, background: 'var(--bg-secondary, var(--surface-2))', marginBottom: 6 }}>
                       <div>
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{h.name}</div>
                         <div className="text-muted" style={{ fontSize: 12 }}>

@@ -53,3 +53,6 @@ backend/deleted_users_backup/
 
 # Claude agent skill cache
 .agents/
+
+# Baza nusxalari — jonli shaxsiy maʼlumotlar, gitga tushmasin
+backend/backups/

@@ -8,40 +8,13 @@ import {
 import {
   fetchUsers, createUser, updateUser, blockUser, unblockUser, deleteUserPermanent, broadcastToStaff,
 } from '../api'
-
-const ROLE_LABELS = {
-  admin: 'Admin', metodist: 'Metodist', teacher: "O'qituvchi",
-  hunter: 'Hunter', call_center: 'Call Center', sales: 'Sales', audit: 'Audit',
-}
-const ROLE_COLORS = {
-  admin: '#2563eb', metodist: '#7c3aed', teacher: '#374151',
-  hunter: '#ea580c', call_center: '#0d9488', sales: '#16a34a', audit: '#b91c1c',
-}
-
-function statusLabel(u) {
-  if (u.blocked_at) return 'blocked'
-  if (u.expires_at && new Date(u.expires_at) < new Date()) return 'expired'
-  if (!u.is_active) return 'inactive'
-  return 'active'
-}
+import Badge from './ui/Badge'
+import DataTable, { RowActions } from './ui/DataTable'
+import { ROLE_LABELS, ROLE_OPTIONS, roleColor, USER_STATUS, userStatus } from '../constants/domain'
 
 function StatusBadge({ user }) {
-  const s = statusLabel(user)
-  const map = {
-    active:   { label: 'Faol',        color: '#16a34a', bg: '#dcfce7' },
-    blocked:  { label: 'Bloklangan',  color: '#dc2626', bg: '#fee2e2' },
-    expired:  { label: 'Muddati o\'tgan', color: '#d97706', bg: '#fef3c7' },
-    inactive: { label: 'Nofaol',      color: '#6b7280', bg: '#f3f4f6' },
-  }
-  const { label, color, bg } = map[s] || map.inactive
-  return (
-    <span style={{
-      fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20,
-      color, background: bg, whiteSpace: 'nowrap',
-    }}>
-      {label}
-    </span>
-  )
+  const { label, variant } = USER_STATUS[userStatus(user)] || USER_STATUS.inactive
+  return <Badge variant={variant} size="sm">{label}</Badge>
 }
 
 const emptyForm = { username: '', full_name: '', password: '', role: 'teacher', expires_at: '', telegram_chat_id: '' }
@@ -133,10 +106,11 @@ export default function Users() {
       }
       if (modal === 'create') {
         if (!form.username.trim()) { toast.error('Username kerak'); setSaving(false); return }
-        if (form.password.length < 6) { toast.error("Parol kamida 6 ta belgi"); setSaving(false); return }
+        if (form.password.length < 8) { toast.error("Parol kamida 8 ta belgi"); setSaving(false); return }
         await createUser({ ...payload, username: form.username, password: form.password })
         toast.success('Foydalanuvchi yaratildi')
       } else {
+        if (form.password && form.password.length < 8) { toast.error("Parol kamida 8 ta belgi"); setSaving(false); return }
         const p = { ...payload }
         if (form.password) p.password = form.password
         await updateUser(editId, p)
@@ -206,15 +180,64 @@ export default function Users() {
     (u.full_name || '').toLowerCase().includes(search.toLowerCase())
   )
 
+  const userColumns = [
+    {
+      key: 'full_name', header: 'Ism', sortable: true,
+      render: u => <strong>{u.full_name || '—'}</strong>,
+    },
+    { key: 'username', header: 'Username', sortable: true, render: u => <span className="text-muted">{u.username}</span> },
+    {
+      key: 'role', header: 'Rol', sortable: true,
+      sortValue: u => ROLE_LABELS[u.role] || u.role,
+      render: u => <Badge size="sm" color={roleColor(u.role)}>{ROLE_LABELS[u.role] || u.role}</Badge>,
+    },
+    {
+      key: 'status', header: 'Holat', sortable: true,
+      sortValue: u => userStatus(u),
+      render: u => <StatusBadge user={u} />,
+    },
+    {
+      key: 'expires_at', header: 'Muddati', sortable: true,
+      sortValue: u => u.expires_at || '9999',
+      render: u => (
+        <span className="muted-sm">
+          {u.expires_at ? new Date(u.expires_at).toLocaleDateString('uz-UZ') : '∞'}
+        </span>
+      ),
+    },
+    {
+      key: 'actions', header: '', align: 'right', className: 'actions',
+      render: u => (
+        <RowActions>
+          <button className="btn-icon" onClick={() => openEdit(u)} title="Tahrirlash" aria-label="Tahrirlash">
+            <FontAwesomeIcon icon={faPen} />
+          </button>
+          {u.blocked_at ? (
+            <button className="btn-icon success" onClick={() => handleUnblock(u)} title="Blokni olib tashlash" aria-label="Blokni olib tashlash">
+              <FontAwesomeIcon icon={faLockOpen} />
+            </button>
+          ) : (
+            <button className="btn-icon danger" onClick={() => openBlock(u)} title="Bloklash" aria-label="Bloklash">
+              <FontAwesomeIcon icon={faLock} />
+            </button>
+          )}
+          <button className="btn-icon danger" onClick={() => openDelete(u)} title="Butunlay o'chirish" aria-label="Butunlay o'chirish">
+            <FontAwesomeIcon icon={faTrash} />
+          </button>
+        </RowActions>
+      ),
+    },
+  ]
+
   return (
     <div className="page">
       <div className="page-header">
         <h1><FontAwesomeIcon icon={faUserShield} className="page-icon" /> Foydalanuvchilar</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="header-actions">
           <button className="button secondary" onClick={() => { setBroadcastText(''); setBroadcastModal(true) }}>
             <FontAwesomeIcon icon={faPaperPlane} /> Telegram orqali xabar
           </button>
-          <button className="button primary" onClick={openCreate}>
+          <button className="button" onClick={openCreate}>
             <FontAwesomeIcon icon={faPlus} /> Yangi foydalanuvchi
           </button>
         </div>
@@ -232,68 +255,23 @@ export default function Users() {
         </div>
       </div>
 
-      {loading ? (
-        <div className="muted center py-8">Yuklanmoqda...</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Ism</th>
-                <th>Username</th>
-                <th>Rol</th>
-                <th>Holat</th>
-                <th>Muddati</th>
-                <th style={{ textAlign: 'right' }}>Amallar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((u, i) => (
-                <tr key={u.id}>
-                  <td className="text-muted">{i + 1}</td>
-                  <td style={{ fontWeight: 500 }}>{u.full_name || '—'}</td>
-                  <td className="text-muted">{u.username}</td>
-                  <td>
-                    <span style={{
-                      fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20,
-                      color: '#fff', background: ROLE_COLORS[u.role] || '#6b7280',
-                    }}>
-                      {ROLE_LABELS[u.role] || u.role}
-                    </span>
-                  </td>
-                  <td><StatusBadge user={u} /></td>
-                  <td className="text-muted" style={{ fontSize: 12 }}>
-                    {u.expires_at ? new Date(u.expires_at).toLocaleDateString('uz-UZ') : '∞'}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                      <button className="button small secondary" onClick={() => openEdit(u)} title="Tahrirlash">
-                        <FontAwesomeIcon icon={faPen} />
-                      </button>
-                      {u.blocked_at ? (
-                        <button className="button small secondary" onClick={() => handleUnblock(u)} title="Blokni olib tashlash">
-                          <FontAwesomeIcon icon={faLockOpen} style={{ color: '#16a34a' }} />
-                        </button>
-                      ) : (
-                        <button className="button small secondary" onClick={() => openBlock(u)} title="Bloklash">
-                          <FontAwesomeIcon icon={faLock} style={{ color: '#ef4444' }} />
-                        </button>
-                      )}
-                      <button className="button small secondary" onClick={() => openDelete(u)} title="Butunlay o'chirish">
-                        <FontAwesomeIcon icon={faTrash} style={{ color: '#dc2626' }} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr><td colSpan={7} className="muted center">Foydalanuvchilar yo'q</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={userColumns}
+        rows={filtered}
+        loading={loading}
+        clientPageSize={25}
+        densityToggle densityKey="users"
+        empty={{
+          icon: faUserShield,
+          title: search ? 'Hech narsa topilmadi' : "Foydalanuvchilar yo'q",
+          description: search ? "Qidiruv so'zini o'zgartirib ko'ring." : 'Xodim hisoblarini shu yerdan yarating.',
+          action: !search && (
+            <button className="button" onClick={openCreate}>
+              <FontAwesomeIcon icon={faPlus} /> Yangi foydalanuvchi
+            </button>
+          ),
+        }}
+      />
 
       {/* ── Create / Edit Modal ── */}
       {modal && (
@@ -324,19 +302,15 @@ export default function Users() {
                 <label className="form-label">{modal === 'create' ? 'Parol *' : "Yangi parol (o'zgartirish uchun)"}</label>
                 <input className="form-input" type="password" value={form.password}
                   onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                  placeholder={modal === 'create' ? 'Kamida 6 ta belgi' : "Bo'sh qoldiring — o'zgarmaydi"} />
+                  placeholder={modal === 'create' ? 'Kamida 8 ta belgi' : "Bo'sh qoldiring — o'zgarmaydi (kamida 8 ta belgi)"} />
               </div>
               <div className="form-group">
                 <label className="form-label">Rol</label>
                 <select className="form-input" value={form.role}
                   onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-                  <option value="teacher">O'qituvchi</option>
-                  <option value="metodist">Metodist</option>
-                  <option value="hunter">Hunter</option>
-                  <option value="sales">Sales</option>
-                  <option value="call_center">Call Center</option>
-                  <option value="audit">Audit</option>
-                  <option value="admin">Admin</option>
+                  {ROLE_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
                 </select>
               </div>
               <div className="form-group">
@@ -357,7 +331,7 @@ export default function Users() {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setModal(null)}>Bekor</button>
-              <button className="button primary" onClick={handleSave} disabled={saving}>
+              <button className="button" onClick={handleSave} disabled={saving}>
                 {saving ? 'Saqlanmoqda...' : 'Saqlash'}
               </button>
             </div>
@@ -376,7 +350,7 @@ export default function Users() {
               </button>
             </div>
             <div className="modal-body">
-              <p style={{ fontSize: 13, color: '#4b5563', marginBottom: 16 }}>
+              <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 16 }}>
                 <strong>{blockModal.full_name || blockModal.username}</strong> akkauntini bloklayapsiz.
                 Foydalanuvchi tizimga kira olmaydi.
               </p>
@@ -416,10 +390,10 @@ export default function Users() {
               </button>
             </div>
             <div className="modal-body">
-              <p style={{ fontSize: 13, color: '#dc2626', fontWeight: 600, marginBottom: 8 }}>
+              <p style={{ fontSize: 13, color: 'var(--danger-text)', fontWeight: 600, marginBottom: 8 }}>
                 Diqqat! Bu amalni orqaga qaytarib bo'lmaydi.
               </p>
-              <p style={{ fontSize: 13, color: '#4b5563', marginBottom: 16 }}>
+              <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 16 }}>
                 <strong>{deleteModal.full_name || deleteModal.username}</strong> ({deleteModal.username}) akkaunti
                 bazadan butunlay o'chiriladi. Unga bog'liq barcha yozuvlar (to'lov, lid, chegirma va h.k.) o'chirilmaydi,
                 lekin ularga tegishli "kim qildi" ma'lumoti serverda backup faylga saqlanadi.
@@ -458,7 +432,7 @@ export default function Users() {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setBroadcastModal(false)}>Bekor</button>
-              <button className="button primary" onClick={handleBroadcast} disabled={broadcasting}>
+              <button className="button" onClick={handleBroadcast} disabled={broadcasting}>
                 {broadcasting ? 'Yuborilmoqda...' : 'Yuborish'}
               </button>
             </div>

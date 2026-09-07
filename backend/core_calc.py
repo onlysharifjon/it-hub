@@ -13,7 +13,7 @@ from typing import Optional
 from sqlalchemy import extract, func
 from sqlalchemy.orm import Session
 
-from . import models
+from . import models, tz
 
 ZERO = Decimal("0")
 
@@ -36,6 +36,7 @@ def apply_special_discounts(price: Decimal, discounts: list, group_id: int,
 
     - free_month: month/year mos kelsa oy to'liq bepul (0).
     - monthly:    har oy amount so'm ayiriladi (butun kurs davomida).
+    - one_time:   month/year mos kelsa faqat o'sha oy uchun amount so'm ayiriladi.
     group_id NULL bo'lgan chegirma barcha guruhlarga tegishli — lekin talaba
     bir nechta guruhda bo'lsa, bu funksiya har guruh uchun alohida chaqirilgani
     sababli, `apply_global=False` berib faqat BITTA guruh uchun qo'llash kerak
@@ -55,6 +56,9 @@ def apply_special_discounts(price: Decimal, discounts: list, group_id: int,
                 return ZERO
         elif d.kind == "monthly":
             off += Decimal(str(d.amount or 0))
+        elif d.kind == "one_time":
+            if month is not None and year is not None and d.month == month and d.year == year:
+                off += Decimal(str(d.amount or 0))
     return max(ZERO, price - off)
 
 
@@ -167,9 +171,15 @@ def student_month_owed(db: Session, student_id: int, group_id: int,
         if month is not None and year is not None:
             if (g.start_date.year, g.start_date.month) > (year, month):
                 return ZERO  # guruh so'ralgan oyda hali boshlanmagan edi
-        elif g.start_date.date() > date.today():
+        elif g.start_date.date() > tz.today():
             return ZERO  # guruh hali boshlanmagan — talaba hali qarzdor emas
     member = next((m for m in g.members if m.student_id == student_id), None)
+    if member and member.joined_at:
+        if month is not None and year is not None:
+            if (member.joined_at.year, member.joined_at.month) > (year, month):
+                return ZERO  # talaba so'ralgan oyda hali shu guruhga qo'shilmagan edi
+        elif member.joined_at.date() > tz.today():
+            return ZERO  # talaba hali shu guruhga qo'shilmagan — qarzdor emas
     if member and member.tariff:
         price = Decimal(str(member.tariff.price))
     elif g.course_price and Decimal(str(g.course_price)) > 0:

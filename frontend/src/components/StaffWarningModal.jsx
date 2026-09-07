@@ -100,7 +100,7 @@ export default function StaffWarningModal({ staffList, codes, initialStaffId, on
         </div>
         <div className="modal-footer">
           <button className="button secondary" onClick={onClose}>Bekor</button>
-          <button className="button primary" onClick={handleSave} disabled={saving}>
+          <button className="button" onClick={handleSave} disabled={saving}>
             {saving ? 'Saqlanmoqda...' : 'Berish'}
           </button>
         </div>

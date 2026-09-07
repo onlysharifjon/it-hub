@@ -1,11 +1,7 @@
 ﻿import { useEffect, useState } from 'react'
 import { Toaster } from 'react-hot-toast'
-import MinaretLogo from './components/MinaretLogo'
-import MinarWatermark from './components/MinarWatermark'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars } from '@fortawesome/free-solid-svg-icons'
-import { ThemeProvider } from './ThemeContext'
 import Sidebar from './components/Sidebar'
+import Topbar from './components/Topbar'
 import Login from './components/Login'
 import Lessons from './components/Lessons'
 import Students from './components/Students'
@@ -20,10 +16,13 @@ import Finance from './components/Finance'
 import TodayAttendance from './components/TodayAttendance'
 import Users from './components/Users'
 import TeacherSalaries from './components/TeacherSalaries'
+import Salary from './components/Salary'
 import TeacherDashboard from './components/TeacherDashboard'
 import Expenses from './components/Expenses'
 import Leads from './components/Leads'
-import Discounts from './components/Discounts'
+import Tree from './components/Tree'
+import WorkCenter from './components/WorkCenter'
+import TeamActivity from './components/TeamActivity'
 import Special from './components/Special'
 import Academic from './components/Academic'
 import FeedbackInbox from './components/FeedbackInbox'
@@ -40,6 +39,63 @@ import { fetchMe, login as apiLogin, setToken } from './api'
 function readHash() {
   const raw = window.location.hash.replace('#', '').trim()
   return raw || 'lessons'
+}
+
+// Har bir sahifa qaysi rollar uchun ochiq — Sidebar.jsx dagi navigatsiya
+// tugmalarining ko'rinish shartlariga mos (bir joyda saqlanadi). Bu yerda
+// yo'q sahifa — cheklovsiz (masalan profil/parol o'zgartirish kabi umumiy
+// sahifalar bo'lsa). Maqsad: ruxsati yo'q sahifaga hash orqali (eski link,
+// bookmark, qo'lda yozish) kirib, backend 403 "Ruxsat yo'q" bilan urilib
+// qolishning oldini olish — buning o'rniga rolga mos boshlang'ich sahifaga
+// qaytariladi.
+const PAGE_ACCESS = {
+  lessons:          ['admin', 'support_teacher', 'teacher'],
+  students:         ['admin', 'support_teacher', 'hunter', 'sales', 'call_center'],
+  student_detail:   ['admin', 'support_teacher', 'hunter', 'sales', 'call_center'],
+  groups:           ['admin', 'support_teacher', 'hunter', 'sales', 'call_center'],
+  // group_detail — LMS rollariga QO'SHIMCHA teacher ham kiradi (o'z guruhi, GroupDetail/backend o'zi tekshiradi)
+  group_detail:     ['admin', 'support_teacher', 'hunter', 'sales', 'call_center', 'teacher'],
+  payments:         ['admin', 'hunter'],
+  dashboard:        ['admin'],
+  teacher_salaries: ['admin'],
+  salary:           ['admin'],
+  expenses:         ['admin', 'hunter'],
+  tariffs:          ['admin'],
+  courses:          ['admin'],
+  finance:          ['admin'],
+  special:          ['admin'],
+  users:            ['admin'],
+  bot_admin:        ['admin'],
+  teacher_dashboard: ['teacher'],
+  today_attendance: ['admin', 'support_teacher', 'teacher', 'hunter', 'sales', 'call_center'],
+  leads:            ['admin', 'hunter', 'sales', 'call_center'],
+  tree:             ['admin', 'hunter', 'sales', 'call_center'],
+  work_center:      ['admin', 'hunter', 'call_center'],
+  team_activity:    ['admin'],
+  notifications:    ['admin', 'hunter', 'sales', 'call_center'],
+  chatbot:          ['admin', 'hunter'],
+  parents:          ['admin', 'hunter'],
+  feedbacks:        ['admin', 'call_center'],
+  academic:         ['admin', 'support_teacher', 'teacher'],
+  employees:        ['admin', 'audit'],
+  audit_warnings:   ['admin', 'audit'],
+  my_warnings:      ['support_teacher', 'teacher', 'hunter', 'sales', 'call_center'],
+}
+
+const DEFAULT_PAGE_BY_ROLE = {
+  admin:           'lessons',
+  support_teacher: 'lessons',
+  teacher:         'teacher_dashboard',
+  hunter:          'payments',
+  sales:           'leads',
+  call_center:     'leads',
+  audit:           'employees',
+}
+
+function pageAllowedForRole(page, role) {
+  const allowed = PAGE_ACCESS[page]
+  if (!allowed) return true   // ro'yxatda yo'q sahifa — cheklanmagan
+  return allowed.includes(role)
 }
 
 // Ommaviy (auth talab qilmaydigan) qabul formasi: #intake/<slug>
@@ -78,6 +134,10 @@ function App() {
   const [selectedGroup, setSelectedGroup] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('selectedGroup')) || null } catch { return null }
   })
+  // Guruh qaysi sahifadan ochilgani — "Orqaga" o'sha sahifaga qaytarishi uchun
+  // (masalan o'qituvchi "Mening guruhlarim"dan ochsa, admin-only "Guruhlar"ga
+  // emas, "Mening guruhlarim"ga qaytishi kerak).
+  const [groupDetailOrigin, setGroupDetailOrigin] = useState(() => sessionStorage.getItem('groupDetailOrigin') || 'groups')
   const [selectedStudent, setSelectedStudent] = useState(() => {
     try { return JSON.parse(sessionStorage.getItem('selectedStudent')) || null } catch { return null }
   })
@@ -102,6 +162,16 @@ function App() {
       fetchMe().then(setCurrentUser).catch(() => handleLogout())
     }
   }, [isAuthed])
+
+  // Rolga ruxsat etilmagan sahifaga (eski hash/bookmark, qo'lda yozilgan
+  // link) tushib qolinsa — backend 403 "Ruxsat yo'q" bilan urilib, bo'sh/
+  // xato holatda qolish o'rniga, rolga mos boshlang'ich sahifaga qaytaradi.
+  useEffect(() => {
+    if (!currentUser) return
+    if (!pageAllowedForRole(activePage, currentUser.role)) {
+      handleNavigate(DEFAULT_PAGE_BY_ROLE[currentUser.role] || 'lessons')
+    }
+  }, [currentUser, activePage])
 
   async function handleLogin({ username, password }) {
     try {
@@ -132,27 +202,25 @@ function App() {
   // Ommaviy qabul formasi — auth talab qilinmaydi
   if (intakeSlug) {
     return (
-      <ThemeProvider>
+      <>
         <Toaster position="top-right" />
         <PublicIntake slug={intakeSlug} />
-      </ThemeProvider>
+      </>
     )
   }
 
   if (!isAuthed) {
     return (
-      <ThemeProvider>
-        <div className="app-shell login-mode">
-          <Toaster position="top-right" />
-          <Login onSuccess={handleLogin} />
-        </div>
-      </ThemeProvider>
+      <div className="app-shell login-mode">
+        <Toaster position="top-right" />
+        <Login onSuccess={handleLogin} />
+      </div>
     )
   }
 
   return (
-    <ThemeProvider>
     <div className="app-shell">
+      <a href="#main-content" className="skip-link">Asosiy kontentga o'tish</a>
       <Toaster position="top-right" />
 
       {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
@@ -161,26 +229,26 @@ function App() {
         selectedCategory={selectedCategory}
         onSelectCategory={setSelectedCategory}
         currentUser={currentUser}
-        onAvatarUpdate={setCurrentUser}
-        onLogout={handleLogout}
         activePage={activePage}
         onNavigate={handleNavigate}
         isOpen={sidebarOpen}
       />
 
       <ScrollToTop />
-      <main className="content">
-        <div className="content-watermark">
-          <MinarWatermark size={380} />
-        </div>
-        <div className="mobile-topbar">
-          <button className="menu-toggle" onClick={() => setSidebarOpen(o => !o)} aria-label="Menu">
-            <FontAwesomeIcon icon={faBars} />
-          </button>
-          <span className="mobile-brand">Minar LMS</span>
-        </div>
+      <main className="content" id="main-content">
+        <Topbar
+          currentUser={currentUser}
+          onNavigate={handleNavigate}
+          onAvatarUpdate={setCurrentUser}
+          onLogout={handleLogout}
+          onToggleMenu={() => setSidebarOpen(o => !o)}
+        />
 
-        <div className="page-anim" key={activePage}>
+        {/* `data-module` — sahifaning semantik rangini beradi (styles.css
+            dagi [data-module] qoidalari). Sarlavha ikonkasi va sahifaga xos
+            urg'ular shu bitta atributdan rang oladi; hech bir sahifa o'z
+            rangini qo'lda yozmaydi. */}
+        <div className="page-anim" data-module={activePage} key={activePage}>
           {activePage === 'lessons' && (
             <Lessons category={selectedCategory} currentUser={currentUser} />
           )}
@@ -211,18 +279,22 @@ function App() {
           {activePage === 'groups' && (
             <Groups onOpenGroup={g => {
               sessionStorage.setItem('selectedGroup', JSON.stringify(g))
+              sessionStorage.setItem('groupDetailOrigin', 'groups')
               setSelectedGroup(g)
+              setGroupDetailOrigin('groups')
               window.location.hash = 'group_detail'
               setActivePage('group_detail')
             }} />
           )}
           {activePage === 'group_detail' && selectedGroup && (
-            <GroupDetail group={selectedGroup} onBack={() => handleNavigate('groups')} currentUser={currentUser} />
+            <GroupDetail group={selectedGroup} onBack={() => handleNavigate(groupDetailOrigin)} currentUser={currentUser} />
           )}
           {activePage === 'group_detail' && !selectedGroup && (
             <Groups onOpenGroup={g => {
               sessionStorage.setItem('selectedGroup', JSON.stringify(g))
+              sessionStorage.setItem('groupDetailOrigin', 'groups')
               setSelectedGroup(g)
+              setGroupDetailOrigin('groups')
               window.location.hash = 'group_detail'
               setActivePage('group_detail')
             }} />
@@ -230,14 +302,17 @@ function App() {
           {activePage === 'payments' && <Payments currentUser={currentUser} />}
           {activePage === 'dashboard' && <Dashboard onNavigate={handleNavigate} />}
           {activePage === 'teacher_salaries' && <TeacherSalaries />}
-          {activePage === 'expenses' && <Expenses />}
+          {activePage === 'salary' && <Salary />}
+          {activePage === 'expenses' && <Expenses currentUser={currentUser} />}
           {activePage === 'tariffs' && <Tariffs />}
           {activePage === 'courses' && <Courses />}
-          {activePage === 'finance' && <Finance />}
+          {activePage === 'finance' && <Finance onNavigate={handleNavigate} />}
           {activePage === 'teacher_dashboard' && (
             <TeacherDashboard currentUser={currentUser} onOpenGroup={g => {
               sessionStorage.setItem('selectedGroup', JSON.stringify(g))
+              sessionStorage.setItem('groupDetailOrigin', 'teacher_dashboard')
               setSelectedGroup(g)
+              setGroupDetailOrigin('teacher_dashboard')
               window.location.hash = 'group_detail'
               setActivePage('group_detail')
             }} />
@@ -245,13 +320,17 @@ function App() {
           {activePage === 'today_attendance' && (
             <TodayAttendance currentUser={currentUser} onOpenGroup={g => {
               sessionStorage.setItem('selectedGroup', JSON.stringify(g))
+              sessionStorage.setItem('groupDetailOrigin', 'today_attendance')
               setSelectedGroup(g)
+              setGroupDetailOrigin('today_attendance')
               window.location.hash = 'group_detail'
               setActivePage('group_detail')
             }} />
           )}
           {activePage === 'leads' && <Leads currentUser={currentUser} />}
-          {activePage === 'discounts' && <Discounts />}
+          {activePage === 'tree' && <Tree currentUser={currentUser} />}
+          {activePage === 'work_center' && <WorkCenter currentUser={currentUser} />}
+          {activePage === 'team_activity' && <TeamActivity />}
           {activePage === 'special' && <Special />}
           {activePage === 'academic' && <Academic currentUser={currentUser} />}
           {activePage === 'feedbacks' && <FeedbackInbox currentUser={currentUser} />}
@@ -266,7 +345,6 @@ function App() {
         </div>
       </main>
     </div>
-    </ThemeProvider>
   )
 }
 

@@ -2,6 +2,7 @@ import calendar
 import html
 import json
 import os
+import re
 from uuid import uuid4
 from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal
@@ -20,26 +21,22 @@ from jose import JWTError, jwt
 from sqlalchemy import func, extract
 from sqlalchemy.orm import Session, selectinload, joinedload
 
-from . import models, schemas, core_calc, bot_client
+from . import models, schemas, core_calc, bot_client, work_center, tz
 from .database import get_db
 from .models import UserRole
 
 load_dotenv()
 
-# ── Vaqt zonasi: bazadagi barcha datetime'lar UTC (datetime.utcnow()) sifatida
-# saqlanadi (JWT va boshqa ichki hisob-kitoblar shunga tayanadi — o'zgarmaydi),
-# lekin API javoblarida Toshkent (+05:00) offset bilan chiqariladi — frontend
-# hech qanday qo'shimcha konversiyasiz to'g'ri mahalliy vaqtni ko'rsatadi.
-TASHKENT_TZ = timezone(timedelta(hours=5))
-
-
-def _tashkent_isoformat(dt: datetime) -> str:
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(TASHKENT_TZ).isoformat()
-
-
-_fastapi_encoders.ENCODERS_BY_TYPE[datetime] = _tashkent_isoformat
+# ── Vaqt zonasi ──────────────────────────────────────────────────────────────
+# Bazadagi barcha datetime'lar naive UTC (`tz.utcnow()`) sifatida saqlanadi —
+# JWT va ichki taqqoslashlar shunga tayanadi, bu o'zgarmaydi. Foydalanuvchiga
+# ko'rinadigan hamma narsa Toshkent (+05:00):
+#   * API javoblari — quyidagi global encoder offset qo'shadi;
+#   * "bugun"/"shu oy" — `tz.today()` va `tz.now()` (`date.today()` EMAS,
+#     u serverda UTC bo'lgani uchun 00:00–05:00 orasida kechagi kunni beradi);
+#   * sana filtrlari — `tz.day_bounds()` / `tz.month_bounds()`.
+# Batafsil: backend/tz.py
+_fastapi_encoders.ENCODERS_BY_TYPE[datetime] = tz.isoformat
 
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
 ALGORITHM = "HS256"
@@ -266,6 +263,7 @@ from .parent.notifications import notify_parents_of_student
 app.include_router(parent_router)
 
 # Facebook Lead Ads webhook (Make.com -> /leads/facebook) — alohida paketda
+from .phone_utils import normalize_phone, dedup_key, is_placeholder_phone, format_phone
 from .facebook_leads import router as facebook_leads_router
 app.include_router(facebook_leads_router)
 
@@ -401,7 +399,7 @@ def require_crm_access(user: models.User = Depends(require_auth)) -> models.User
     allowed = (UserRole.hunter.value, UserRole.sales.value,
                UserRole.call_center.value, UserRole.admin.value)
     if user.role not in allowed:
-        raise HTTPException(status_code=403, detail="Ruxsat yo'q")
+        raise HTTPException(status_code=403, detail="Bu amal faqat hunter/sales/call_center/admin uchun")
     return user
 
 
@@ -420,7 +418,7 @@ def require_lms_write(user: models.User = Depends(require_auth)) -> models.User:
     allowed = (UserRole.metodist.value, UserRole.hunter.value,
                UserRole.sales.value, UserRole.call_center.value, UserRole.admin.value)
     if user.role not in allowed:
-        raise HTTPException(status_code=403, detail="Ruxsat yo'q")
+        raise HTTPException(status_code=403, detail="Bu amal faqat metodist/hunter/sales/call_center/admin uchun")
     return user
 
 
@@ -429,7 +427,7 @@ def require_feedback_viewer(user: models.User = Depends(require_auth)) -> models
     allowed = (UserRole.admin.value, UserRole.metodist.value, UserRole.teacher.value,
                UserRole.hunter.value, UserRole.call_center.value)
     if user.role not in allowed:
-        raise HTTPException(status_code=403, detail="Ruxsat yo'q")
+        raise HTTPException(status_code=403, detail="Bu amal faqat metodist/teacher/hunter/call_center/admin uchun")
     return user
 
 
@@ -686,6 +684,8 @@ def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends
         user.blocked_contact = payload.blocked_contact
     if payload.telegram_chat_id is not None:
         user.telegram_chat_id = payload.telegram_chat_id
+    if payload.salary is not None:
+        user.salary = payload.salary
     write_audit(db, entity_type="user", entity_id=user.id, action="update",
                 changed_by_id=actor.id, old_value=old, new_value={"role": user.role, "is_active": user.is_active})
     db.commit()
@@ -897,9 +897,9 @@ def list_audit_logs(
 ):
     q = db.query(models.AuditLog).order_by(models.AuditLog.changed_at.desc())
     if date_from:
-        q = q.filter(models.AuditLog.changed_at >= datetime(date_from.year, date_from.month, date_from.day))
+        q = q.filter(models.AuditLog.changed_at >= tz.day_bounds(date_from)[0])
     if date_to:
-        q = q.filter(models.AuditLog.changed_at < datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1))
+        q = q.filter(models.AuditLog.changed_at < tz.day_bounds(date_to)[1])
     total = q.count()
     logs = q.offset((page - 1) * page_size).limit(page_size).all()
     return {
@@ -1033,9 +1033,9 @@ def _student_owed_total(db: Session, s: models.Student, month: int = None, year:
             if month is not None and year is not None:
                 if (g.start_date.year, g.start_date.month) > (year, month):
                     continue  # guruh so'ralgan oyda hali boshlanmagan edi
-            elif g.start_date.date() > date.today():
+            elif g.start_date.date() > tz.today():
                 continue  # guruh hali boshlanmagan — talaba hali qarzdor emas
-        if m.tariff and m.tariff.price:
+        if m.tariff:
             price = Decimal(str(m.tariff.price))
         elif g.course_price and Decimal(str(g.course_price)) > 0:
             price = Decimal(str(g.course_price))
@@ -1160,9 +1160,9 @@ def list_students(
             models.Student.mother_phone.ilike(f"%{search}%")
         )
     if date_from:
-        q = q.filter(models.Student.created_at >= datetime(date_from.year, date_from.month, date_from.day))
+        q = q.filter(models.Student.created_at >= tz.day_bounds(date_from)[0])
     if date_to:
-        q = q.filter(models.Student.created_at < datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1))
+        q = q.filter(models.Student.created_at < tz.day_bounds(date_to)[1])
     q = q.order_by(models.Student.full_name)
 
     if payment:
@@ -1321,6 +1321,7 @@ def _group_detail(g: models.Group, db: Session = None) -> schemas.GroupDetail:
 def list_groups(
     is_active: Optional[bool] = Query(None),
     search: Optional[str] = Query(None),
+    schedule: Optional[str] = Query(None),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     page: int = Query(1, ge=1),
@@ -1333,18 +1334,25 @@ def list_groups(
         q = q.filter(models.Group.is_active == is_active)
     if search:
         q = q.filter(models.Group.name.ilike(f"%{search}%"))
+    if schedule:
+        q = q.filter(models.Group.schedule == schedule)
     if date_from:
         q = q.filter(models.Group.start_date >= datetime(date_from.year, date_from.month, date_from.day))
     if date_to:
         q = q.filter(models.Group.start_date < datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1))
     total = q.count()
+    order_by = (
+        (func.coalesce(models.Group.lesson_time, '99:99'), models.Group.name)
+        if schedule else
+        (models.Group.name,)
+    )
     groups = (
         q.options(
             joinedload(models.Group.teacher),
             joinedload(models.Group.course),
             selectinload(models.Group.members),
         )
-        .order_by(models.Group.name)
+        .order_by(*order_by)
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
@@ -1436,10 +1444,12 @@ def add_student_to_group(group_id: int, payload: schemas.AddStudentToGroup, db: 
     if exists:
         raise HTTPException(status_code=400, detail="Talaba bu guruhda allaqachon mavjud")
     tariff_id = payload.tariff_id
+    tariff_name = None
     if tariff_id:
         tariff = db.query(models.Tariff).filter(models.Tariff.id == tariff_id).first()
         if not tariff:
             raise HTTPException(status_code=404, detail="Tarif topilmadi")
+        tariff_name = tariff.name
     elif g.course_price and g.course_price > 0:
         # Auto-assign a tariff matching the group's course_price
         matched = db.query(models.Tariff).filter(
@@ -1447,11 +1457,13 @@ def add_student_to_group(group_id: int, payload: schemas.AddStudentToGroup, db: 
             models.Tariff.is_active == True,
         ).first()
         tariff_id = matched.id if matched else None
+        tariff_name = matched.name if matched else None
     gs = models.GroupStudent(group_id=group_id, student_id=payload.student_id, tariff_id=tariff_id)
     db.add(gs)
     if s.is_demo:
         s.is_demo = False
     db.commit()
+    notify_investor_new_student(s.full_name, g.name, tariff_name)
     return {"message": "Talaba guruhga qo'shildi"}
 
 
@@ -1608,9 +1620,9 @@ def list_payments(
     if year:
         q = q.filter(models.Payment.year == year)
     if date_from:
-        q = q.filter(models.Payment.paid_at >= datetime(date_from.year, date_from.month, date_from.day))
+        q = q.filter(models.Payment.paid_at >= tz.day_bounds(date_from)[0])
     if date_to:
-        q = q.filter(models.Payment.paid_at < datetime(date_to.year, date_to.month, date_to.day) + timedelta(days=1))
+        q = q.filter(models.Payment.paid_at < tz.day_bounds(date_to)[1])
     total = q.count()
     payments = q.order_by(models.Payment.paid_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     return {
@@ -1751,12 +1763,20 @@ def delete_payment(payment_id: int, db: Session = Depends(get_db), actor: models
 
 def _group_salary(db: Session, group: models.Group, month: int, year: int):
     """
-    O'qituvchi maoshini hisoblaydi — 2 query (N+1 o'rniga).
-    Formula: teacher_pay_per_student × talaba_kelgan_darslar_soni
+    O'qituvchi maoshini hisoblaydi — bitta manba (`_teacher_salary_breakdown`
+    bilan bir xil formula): 50 000 so'm / shu oyda o'tilgan darslar soni ×
+    talaba kelgan darslar soni. Qaytaradi: (jami summa, talabalar ro'yxati,
+    shu oyda o'tilgan darslar soni).
     """
-    pay_per = Decimal(str(group.teacher_pay_per_student or 0))
-    if pay_per == 0:
-        return Decimal(0), []
+    lessons_held = db.query(
+        func.count(func.distinct(models.Attendance.lesson_date))
+    ).filter(
+        models.Attendance.group_id == group.id,
+        extract('month', models.Attendance.lesson_date) == month,
+        extract('year', models.Attendance.lesson_date) == year,
+    ).scalar() or 0
+    if lessons_held <= 0:
+        return Decimal(0), [], 0
 
     # 1-query: guruh a'zolari va ismlari
     member_rows = (
@@ -1766,7 +1786,7 @@ def _group_salary(db: Session, group: models.Group, month: int, year: int):
         .all()
     )
     if not member_rows:
-        return Decimal(0), []
+        return Decimal(0), [], lessons_held
 
     student_ids = [r.student_id for r in member_rows]
     name_map    = {r.student_id: r.full_name for r in member_rows}
@@ -1789,11 +1809,12 @@ def _group_salary(db: Session, group: models.Group, month: int, year: int):
     )
     attended_map = {r.student_id: r.cnt for r in att_rows}
 
+    per_lesson = TEACHER_STUDENT_BONUS_UNIT / Decimal(lessons_held)
     total    = Decimal(0)
     students = []
     for sid, sname in name_map.items():
         attended = attended_map.get(sid, 0)
-        share    = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
+        share    = (per_lesson * Decimal(str(attended))).quantize(Decimal('1'))
         total   += share
         students.append({
             "student_id":   sid,
@@ -1801,21 +1822,37 @@ def _group_salary(db: Session, group: models.Group, month: int, year: int):
             "attended":     attended,
             "salary_share": float(share),
         })
-    return total, students
+    return total, students, lessons_held
 
 
 def _batch_salary_by_month(db: Session, groups: list, year: int) -> dict:
     """
-    Barcha guruhlar uchun 12 oylik maoshni 1 query da hisoblaydi.
+    Barcha guruhlar uchun 12 oylik maoshni ("talaba ulushi" formulasi bilan,
+    `_teacher_salary_breakdown` bilan bir xil) 2 query da hisoblaydi.
     Qaytaradi: {month: total_salary}
     """
-    active = [g for g in groups if (g.teacher_pay_per_student or 0) > 0]
+    taught = [g for g in groups if g.teacher_id]
     result = {m: Decimal(0) for m in range(1, 13)}
-    if not active:
+    if not taught:
         return result
 
-    group_pay   = {g.id: Decimal(str(g.teacher_pay_per_student)) for g in active}
-    group_ids   = list(group_pay.keys())
+    group_ids = [g.id for g in taught]
+
+    # Har (oy, guruh) uchun shu oyda o'tilgan darslar soni
+    held_rows = (
+        db.query(
+            extract('month', models.Attendance.lesson_date).label('mon'),
+            models.Attendance.group_id,
+            func.count(func.distinct(models.Attendance.lesson_date)).label('cnt'),
+        )
+        .filter(
+            models.Attendance.group_id.in_(group_ids),
+            extract('year', models.Attendance.lesson_date) == year,
+        )
+        .group_by(extract('month', models.Attendance.lesson_date), models.Attendance.group_id)
+        .all()
+    )
+    held_map = {(int(r.mon), r.group_id): r.cnt for r in held_rows}
 
     rows = (
         db.query(
@@ -1837,12 +1874,77 @@ def _batch_salary_by_month(db: Session, groups: list, year: int) -> dict:
         .all()
     )
     for row in rows:
-        pay = group_pay.get(row.group_id, Decimal(0))
-        result[int(row.mon)] += (pay * Decimal(str(row.cnt))).quantize(Decimal('1'))
+        held = held_map.get((int(row.mon), row.group_id), 0)
+        if held <= 0:
+            continue
+        per_lesson = TEACHER_STUDENT_BONUS_UNIT / Decimal(held)
+        result[int(row.mon)] += (per_lesson * Decimal(str(row.cnt))).quantize(Decimal('1'))
     return result
 
 
 # ── Statistics endpoints ──────────────────────────────────────────────────────
+
+@app.get("/stats/student-growth")
+def stats_student_growth(
+    year: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """
+    Oylik o'quvchi o'sishi — dashboard uchun.
+
+    Nima uchun alohida endpoint: /stats/overview faqat JORIY holatni beradi
+    ("hozir 240 talaba bor"), lekin boshqaruv uchun muhim savol — "o'sayapmizmi
+    yoki qisqaryapmizmi". Buni frontendda hisoblash uchun butun talaba bazasini
+    yuklab olish kerak bo'lardi; bu yerda esa bitta guruhlangan so'rov.
+
+    Har oy uchun:
+      • joined   — shu oyda ro'yxatdan o'tgan talabalar
+      • archived — shu oyda arxivlanganlar (chiqib ketganlar)
+      • active   — oy oxiriga qadar faol bo'lgan talabalar (kumulyativ)
+    """
+    sel_year = year or datetime.utcnow().year
+
+    rows = (
+        db.query(
+            func.strftime('%m', models.Student.created_at).label('m'),
+            func.count(models.Student.id),
+        )
+        .filter(func.strftime('%Y', models.Student.created_at) == str(sel_year))
+        .group_by('m')
+        .all()
+    )
+    joined_by_month = {int(m): c for m, c in rows if m}
+
+    # Arxivlanganlar: arxiv sanasi alohida saqlanmaydi, shuning uchun faqat
+    # umumiy arxiv soni beriladi — oylik taqsimotni soxta ko'rsatmaymiz.
+    archived_total = (
+        db.query(func.count(models.Student.id))
+        .filter(models.Student.is_archived == True)
+        .scalar()
+    ) or 0
+
+    # Yil boshigacha bo'lgan talabalar — kumulyativ hisobning boshlanish nuqtasi
+    before = (
+        db.query(func.count(models.Student.id))
+        .filter(func.strftime('%Y', models.Student.created_at) < str(sel_year))
+        .scalar()
+    ) or 0
+
+    months = []
+    running = before
+    for m in range(1, 13):
+        joined = joined_by_month.get(m, 0)
+        running += joined
+        months.append({"month": m, "joined": joined, "cumulative": running})
+
+    return {
+        "year": sel_year,
+        "starting_total": before,
+        "archived_total": archived_total,
+        "months": months,
+    }
+
 
 @app.get("/stats/overview", response_model=schemas.StatsOverview)
 def stats_overview(
@@ -1894,6 +1996,26 @@ def stats_overview(
     last_income = pay_map.get((prev_month, prev_year), (Decimal(0), 0))[0]
     change_pct  = float((this_income - last_income) / last_income * 100) if last_income else 0.0
 
+    # Joriy oy davomat foizi — belgilangan (present/absent) yozuvlardan nechtasi
+    # "keldi". Belgilanmagan (is_present IS NULL) kunlar hisobga olinmaydi, aks
+    # holda hali o'tmagan darslar foizni sun'iy ravishda pasaytirardi.
+    att_marked = db.query(func.count(models.Attendance.id)).filter(
+        extract('month', models.Attendance.lesson_date) == cur_month,
+        extract('year', models.Attendance.lesson_date) == cur_year,
+        models.Attendance.is_present.isnot(None),
+    ).scalar() or 0
+    att_present = db.query(func.count(models.Attendance.id)).filter(
+        extract('month', models.Attendance.lesson_date) == cur_month,
+        extract('year', models.Attendance.lesson_date) == cur_year,
+        models.Attendance.is_present.is_(True),
+    ).scalar() or 0
+    attendance_rate = round(att_present / att_marked * 100, 1) if att_marked else 0.0
+
+    total_teachers = db.query(func.count(models.User.id)).filter(
+        models.User.role == UserRole.teacher.value,
+        models.User.is_active == True,
+    ).scalar() or 0
+
     cur_teacher_salary = salary_cur_year[cur_month]
     cur_external       = exp_map.get((cur_month, cur_year), Decimal(0))
     cur_total_exp      = cur_teacher_salary + cur_external
@@ -1929,6 +2051,8 @@ def stats_overview(
         external_expenses=cur_external,
         total_expenses=cur_total_exp,
         net_profit=cur_net_profit,
+        attendance_rate=attendance_rate,
+        total_teachers=total_teachers,
         monthly_history=history,
     )
 
@@ -1944,24 +2068,20 @@ def teacher_salaries_breakdown(
 ):
     """
     Per-teacher salary breakdown based on attendance.
-    Formula: teacher_pay_per_student × attended_lessons  (per-lesson rate per student)
+    Formula: 50 000 so'm / shu oyda o'tilgan darslar soni × talaba kelgan
+    darslar soni (`_group_salary` / `_teacher_salary_breakdown` bilan bir xil).
     """
     groups = db.query(models.Group).filter(models.Group.is_active == True).all()
     teachers: dict = {}
     grand_total = Decimal(0)
 
     for g in groups:
-        group_salary, student_details = _group_salary(db, g, month, year)
+        group_salary, student_details, total_lessons_held = _group_salary(db, g, month, year)
         if group_salary == 0 and not student_details:
             continue
 
-        total_lessons_held = db.query(
-            func.count(func.distinct(models.Attendance.lesson_date))
-        ).filter(
-            models.Attendance.group_id == g.id,
-            extract('month', models.Attendance.lesson_date) == month,
-            extract('year', models.Attendance.lesson_date) == year,
-        ).scalar() or 0
+        per_lesson = (TEACHER_STUDENT_BONUS_UNIT / Decimal(total_lessons_held)).quantize(Decimal('1')) \
+            if total_lessons_held else Decimal(0)
 
         grand_total += group_salary
         tid = g.teacher_id  # may be None
@@ -1980,7 +2100,7 @@ def teacher_salaries_breakdown(
             "group_id": g.id,
             "group_name": g.name,
             "stage": g.stage or "foundation",
-            "teacher_pay_per_student": float(g.teacher_pay_per_student or 0),
+            "per_lesson": float(per_lesson),
             "total_lessons_held": total_lessons_held,
             "students": student_details,
             "total_attended": sum(s["attended"] for s in student_details),
@@ -2017,14 +2137,19 @@ def teacher_my_dashboard(
     Teacher sees their own groups + estimated salary for the given month.
     Admin/metodist can also call this for any teacher_id (optional query param).
     """
-    sel_month = month or date.today().month
-    sel_year  = year  or date.today().year
+    _today = tz.today()
+    sel_month = month or _today.month
+    sel_year  = year  or _today.year
 
+    # Faol va yopiq (masalan, 100% tugagan/arxivlangan) guruhlar — hammasi
+    # ko'rinadi, aks holda kurs tugab guruh yopilgach o'qituvchi hisobidan
+    # butunlay yo'qolib qolardi (jumladan sertifikat generatsiyasi uchun ham
+    # kerak). Faol guruhlar avval, keyin yopilganlari ko'rsatiladi.
     groups = (
         db.query(models.Group)
         .options(selectinload(models.Group.members))
-        .filter(models.Group.teacher_id == actor.id, models.Group.is_active == True)
-        .order_by(models.Group.name)
+        .filter(models.Group.teacher_id == actor.id)
+        .order_by(models.Group.is_active.desc(), models.Group.name)
         .all()
     )
     if not groups:
@@ -2102,7 +2227,8 @@ def teacher_my_dashboard(
         total_less = schemas.STAGE_TOTAL_LESSONS.get(stage, 24)
         completed  = completed_map.get(g.id, 0)
         pct        = round(completed / total_less * 100, 1) if total_less > 0 else 0.0
-        pay_per    = Decimal(str(g.teacher_pay_per_student or 0))
+        held      = month_lessons_map.get(g.id, 0)
+        per_lesson = (TEACHER_STUDENT_BONUS_UNIT / Decimal(held)) if held > 0 else Decimal(0)
 
         group_salary    = Decimal(0)
         student_salaries = []
@@ -2110,7 +2236,7 @@ def teacher_my_dashboard(
 
         for mem in g.members:
             attended = g_att.get(mem.student_id, 0)
-            share    = (pay_per * Decimal(str(attended))).quantize(Decimal('1'))
+            share    = (per_lesson * Decimal(str(attended))).quantize(Decimal('1'))
             group_salary += share
             student_salaries.append({
                 "student_id":   mem.student_id,
@@ -2125,6 +2251,7 @@ def teacher_my_dashboard(
         groups_out.append({
             "id":                      g.id,
             "name":                    g.name,
+            "is_active":               g.is_active,
             "stage":                   stage,
             "schedule":                g.schedule or "",
             "lesson_time":             g.lesson_time or "",
@@ -2133,7 +2260,7 @@ def teacher_my_dashboard(
             "total_lessons":           total_less,
             "completed_lessons":       completed,
             "progress_pct":            pct,
-            "teacher_pay_per_student": float(pay_per),
+            "per_lesson":              float(per_lesson.quantize(Decimal('1'))),
             "month_salary":            float(group_salary),
             "month_lessons_held":      month_lessons_map.get(g.id, 0),
             "student_salaries":        student_salaries,
@@ -2151,6 +2278,46 @@ def teacher_my_dashboard(
     }
 
 
+@app.get("/teacher/certificates")
+def teacher_my_certificate_groups(
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_auth),
+):
+    """O'qituvchining barcha guruhlari (faol va yopiq) va har birida
+    tayyorlangan sertifikatlar soni — "Sertifikatlar" bo'limida ro'yxat
+    ko'rsatish uchun (qaysi guruh uchun sertifikat tayyor, qaysi biriga
+    hali generatsiya qilinmagan)."""
+    groups = (
+        db.query(models.Group)
+        .filter(models.Group.teacher_id == actor.id)
+        .order_by(models.Group.is_active.desc(), models.Group.name)
+        .all()
+    )
+    if not groups:
+        return []
+    group_ids = [g.id for g in groups]
+    cert_counts = dict(
+        db.query(models.GroupCertificate.group_id, func.count(models.GroupCertificate.id))
+        .filter(models.GroupCertificate.group_id.in_(group_ids))
+        .group_by(models.GroupCertificate.group_id)
+        .all()
+    )
+    member_counts = dict(
+        db.query(models.GroupStudent.group_id, func.count(models.GroupStudent.id))
+        .filter(models.GroupStudent.group_id.in_(group_ids))
+        .group_by(models.GroupStudent.group_id)
+        .all()
+    )
+    return [
+        {
+            "id": g.id, "name": g.name, "stage": g.stage, "is_active": g.is_active,
+            "student_count": member_counts.get(g.id, 0),
+            "certificate_count": cert_counts.get(g.id, 0),
+        }
+        for g in groups
+    ]
+
+
 # ── Expenses endpoints ────────────────────────────────────────────────────────
 
 @app.get("/expenses", response_model=List[schemas.ExpenseRead])
@@ -2158,7 +2325,7 @@ def list_expenses(
     month: Optional[int] = Query(None),
     year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_admin),
+    _: models.User = Depends(require_hunter),
 ):
     q = db.query(models.Expense)
     if month is not None:
@@ -2168,13 +2335,40 @@ def list_expenses(
     return q.order_by(models.Expense.year.desc(), models.Expense.month.desc(), models.Expense.id.desc()).all()
 
 
+@app.get("/expenses/staff-options", response_model=List[schemas.StaffOption])
+def list_expense_staff_options(db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
+    """"Oylik" turidagi xarajat qo'shishda xodim tanlagich — hunter/admin uchun."""
+    return (
+        db.query(models.User)
+        .filter(models.User.is_active.is_(True))
+        .order_by(models.User.full_name, models.User.username)
+        .all()
+    )
+
+
+def _validate_salary_expense(db: Session, category: Optional[str], staff_id: Optional[int]) -> None:
+    if category != 'salary':
+        return
+    if not staff_id:
+        raise HTTPException(status_code=400, detail="Oylik xarajati uchun xodim tanlang")
+    staff = db.query(models.User).filter(models.User.id == staff_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Xodim topilmadi")
+
+
 @app.post("/expenses", response_model=schemas.ExpenseRead, status_code=201)
 def create_expense(payload: schemas.ExpenseCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_hunter)):
-    exp = models.Expense(**payload.dict())
+    """Xarajat qo'shish — hunter/admin. Tahrirlash va o'chirish faqat adminda
+    qoladi (kiritilgan xarajatni keyin o'zgartirish audit talab qiladi)."""
+    data = payload.dict()
+    _validate_salary_expense(db, data.get('category'), data.get('staff_id'))
+    if data.get('category') != 'salary':
+        data['staff_id'] = None
+    exp = models.Expense(**data)
     db.add(exp)
     db.flush()
     write_audit(db, entity_type="expense", entity_id=exp.id, action="create",
-                changed_by_id=actor.id, new_value=payload.dict())
+                changed_by_id=actor.id, new_value=data)
     db.commit()
     db.refresh(exp)
     return exp
@@ -2186,6 +2380,11 @@ def update_expense(expense_id: int, payload: schemas.ExpenseUpdate, db: Session 
     if not exp:
         raise HTTPException(status_code=404, detail="Xarajat topilmadi")
     changes = payload.dict(exclude_unset=True)
+    new_category = changes.get('category', exp.category)
+    new_staff_id = changes.get('staff_id', exp.staff_id)
+    _validate_salary_expense(db, new_category, new_staff_id)
+    if new_category != 'salary':
+        changes['staff_id'] = None
     old = {k: str(getattr(exp, k)) for k in changes}
     for k, v in changes.items():
         setattr(exp, k, v)
@@ -2206,6 +2405,495 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db), actor: models
                 old_value={"name": exp.name, "amount": str(exp.amount), "month": exp.month, "year": exp.year})
     db.delete(exp)
     db.commit()
+
+
+# ── Salary (xodimlar oyligi) ──────────────────────────────────────────────────
+
+TEACHER_BASE_SALARY = Decimal('5000000')       # FIX oylik
+TEACHER_STUDENT_BONUS_UNIT = Decimal('50000')  # talaba shu oydagi BARCHA darsga qatnasa oladigan to'liq ulush
+
+
+def _teacher_salary_breakdown(db: Session, month: int, year: int) -> dict:
+    """Har bir o'qituvchi uchun shu oydagi "talaba ulushi" haqqoniy taqsimoti,
+    guruh darajasida hisoblanadi:
+
+        lessons_held  = guruhda shu oyda haqiqatda o'tilgan (Attendance
+                         yozuvi mavjud) noyob dars sanalari soni
+        per_lesson    = 50 000 / lessons_held
+        talaba ulushi = per_lesson × (talaba shu guruhda qatnashgan darslar soni)
+
+    Guruhning o'qituvchisi (Group.teacher_id) shu guruhdagi barcha talabalar
+    ulushini oladi. Talaba oy ichida bir guruhdan (demak bir o'qituvchidan)
+    ikkinchisiga o'tkazilgan bo'lsa, har ikki guruh o'z ulushini alohida
+    hisoblaydi — shuning uchun ikkala o'qituvchi ham o'z darslariga mos
+    ulushini oladi (hech kim "yutib olmaydi"). Talaba oy oxirida arxivga
+    o'tkazilgan bo'lsa ham, shu oydagi haqiqiy davomat asosida hisoblanadi.
+
+    Qaytaradi: {teacher_id: {"total": Decimal, "items": [ {...}, ... ]}}
+    """
+    groups = (
+        db.query(models.Group)
+        .filter(models.Group.teacher_id.isnot(None))
+        .all()
+    )
+    if not groups:
+        return {}
+    group_ids = [g.id for g in groups]
+    teacher_by_group = {g.id: g.teacher_id for g in groups}
+    name_by_group = {g.id: g.name for g in groups}
+
+    lesson_date_rows = (
+        db.query(models.Attendance.group_id, models.Attendance.lesson_date)
+        .filter(
+            models.Attendance.group_id.in_(group_ids),
+            extract('month', models.Attendance.lesson_date) == month,
+            extract('year', models.Attendance.lesson_date) == year,
+        )
+        .distinct()
+        .all()
+    )
+    lessons_held: dict = {}
+    for gid, _ld in lesson_date_rows:
+        lessons_held[gid] = lessons_held.get(gid, 0) + 1
+
+    att_rows = (
+        db.query(
+            models.Attendance.group_id,
+            models.Attendance.student_id,
+            models.Student.full_name,
+            func.count(models.Attendance.id).label('cnt'),
+        )
+        .join(models.Student, models.Student.id == models.Attendance.student_id)
+        .filter(
+            models.Attendance.group_id.in_(group_ids),
+            models.Attendance.is_present.is_(True),
+            extract('month', models.Attendance.lesson_date) == month,
+            extract('year', models.Attendance.lesson_date) == year,
+        )
+        .group_by(models.Attendance.group_id, models.Attendance.student_id, models.Student.full_name)
+        .all()
+    )
+
+    breakdown: dict = {}
+    for gid, sid, sname, attended in att_rows:
+        held = lessons_held.get(gid, 0)
+        if held <= 0 or not attended:
+            continue
+        teacher_id = teacher_by_group.get(gid)
+        if teacher_id is None:
+            continue
+        per_lesson = TEACHER_STUDENT_BONUS_UNIT / Decimal(held)
+        share = (per_lesson * Decimal(attended)).quantize(Decimal('1'))
+        entry = breakdown.setdefault(teacher_id, {"total": Decimal('0'), "items": []})
+        entry["total"] += share
+        entry["items"].append({
+            "group_id": gid, "group_name": name_by_group.get(gid, ''),
+            "student_id": sid, "student_name": sname,
+            "lessons_held": held, "attended": attended,
+            "per_lesson": per_lesson, "share": share,
+        })
+    return breakdown
+
+
+def _teacher_auto_salary(db: Session, teacher_id: int, month: int, year: int,
+                          breakdown_map: Optional[dict] = None) -> tuple:
+    if breakdown_map is None:
+        breakdown_map = _teacher_salary_breakdown(db, month, year)
+    entry = breakdown_map.get(teacher_id)
+    total = entry["total"] if entry else Decimal('0')
+    student_count = len({it["student_id"] for it in entry["items"]}) if entry else 0
+    salary = TEACHER_BASE_SALARY + total
+    return salary, student_count
+
+
+def _salary_row_for(db: Session, u: models.User, month: int, year: int,
+                     paid: Decimal, override: Optional[models.SalaryOverride],
+                     breakdown_map: Optional[dict] = None) -> schemas.SalaryStaffRow:
+    is_internship = bool(override and override.is_internship)
+    if u.role == UserRole.teacher.value:
+        auto_salary, student_count = _teacher_auto_salary(db, u.id, month, year, breakdown_map)
+    else:
+        auto_salary = None
+        student_count = None
+    base_salary = auto_salary if auto_salary is not None else (u.salary or Decimal('0'))
+    if override is not None:
+        salary = Decimal('0') if is_internship else override.amount
+        is_auto = False
+    else:
+        salary = base_salary
+        is_auto = (u.role == UserRole.teacher.value)
+    return schemas.SalaryStaffRow(
+        staff_id=u.id, full_name=u.full_name or u.username, role=u.role,
+        salary=salary, paid=paid, remaining=salary - paid,
+        auto=is_auto, student_count=student_count, auto_salary=auto_salary,
+        is_internship=is_internship, has_override=override is not None,
+    )
+
+
+@app.get("/salary", response_model=schemas.SalaryOverview)
+def salary_overview(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """Har bir xodimning belgilangan oyligi va shu oyda "oylik" turida
+    to'langan xarajatlar (hunter kiritgan) yig'indisi — superadmin ko'radi."""
+    staff = (
+        db.query(models.User)
+        .filter(models.User.is_active.is_(True))
+        .order_by(models.User.full_name, models.User.username)
+        .all()
+    )
+    paid_rows = (
+        db.query(models.Expense.staff_id, func.sum(models.Expense.amount).label('total'))
+        .filter(
+            models.Expense.category == 'salary',
+            models.Expense.staff_id.isnot(None),
+            models.Expense.month == month,
+            models.Expense.year == year,
+        )
+        .group_by(models.Expense.staff_id)
+        .all()
+    )
+    paid_map = {r.staff_id: r.total for r in paid_rows}
+    override_map = {
+        o.staff_id: o
+        for o in db.query(models.SalaryOverride).filter(
+            models.SalaryOverride.month == month, models.SalaryOverride.year == year,
+        ).all()
+    }
+
+    breakdown_map = _teacher_salary_breakdown(db, month, year)
+    rows = []
+    total_salary = Decimal('0')
+    total_paid = Decimal('0')
+    for u in staff:
+        row = _salary_row_for(db, u, month, year, paid_map.get(u.id) or Decimal('0'),
+                               override_map.get(u.id), breakdown_map)
+        total_salary += row.salary
+        total_paid += row.paid
+        rows.append(row)
+    return schemas.SalaryOverview(month=month, year=year, rows=rows,
+                                   total_salary=total_salary, total_paid=total_paid)
+
+
+@app.get("/salary/me", response_model=schemas.SalaryStaffRow)
+def my_salary(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_auth),
+):
+    """O'z oyligini ko'rish — har qanday tizimga kirgan xodim uchun (masalan,
+    o'qituvchi o'z hisobida FIX + talaba boshiga hisoblangan oyligini ko'radi)."""
+    paid = (
+        db.query(func.sum(models.Expense.amount))
+        .filter(
+            models.Expense.category == 'salary',
+            models.Expense.staff_id == actor.id,
+            models.Expense.month == month,
+            models.Expense.year == year,
+        )
+        .scalar()
+    ) or Decimal('0')
+    override = db.query(models.SalaryOverride).filter(
+        models.SalaryOverride.staff_id == actor.id,
+        models.SalaryOverride.month == month,
+        models.SalaryOverride.year == year,
+    ).first()
+    return _salary_row_for(db, actor, month, year, paid, override)
+
+
+@app.get("/salary/{user_id}/breakdown", response_model=schemas.SalaryBreakdown)
+def salary_breakdown(
+    user_id: int,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_auth),
+):
+    """O'qituvchining shu oydagi "talaba ulushi" formulasi bo'yicha to'liq
+    tafsiloti — har bir guruh/talaba uchun necha dars o'tilgani, talaba
+    nechtasiga qatnashgani va shundan qancha ulush chiqqani. Superadmin
+    istalgan o'qituvchi uchun, o'qituvchining o'zi esa faqat o'zi uchun
+    ko'ra oladi."""
+    if actor.role != UserRole.admin.value and actor.id != user_id:
+        raise HTTPException(status_code=403, detail="Faqat o'zingizning breakdown'ingizni ko'rishingiz mumkin")
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Xodim topilmadi")
+
+    breakdown_map = _teacher_salary_breakdown(db, month, year)
+    entry = breakdown_map.get(user_id)
+    items = entry["items"] if entry else []
+    total = entry["total"] if entry else Decimal('0')
+    items_sorted = sorted(items, key=lambda it: (it["group_name"], it["student_name"]))
+    return schemas.SalaryBreakdown(
+        staff_id=user_id, month=month, year=year,
+        base_salary=TEACHER_BASE_SALARY if user.role == UserRole.teacher.value else Decimal('0'),
+        per_student_total=total,
+        student_bonus_unit=TEACHER_STUDENT_BONUS_UNIT,
+        items=[schemas.SalaryBreakdownItem(**it) for it in items_sorted],
+        total=(TEACHER_BASE_SALARY if user.role == UserRole.teacher.value else Decimal('0')) + total,
+    )
+
+
+@app.put("/salary/{user_id}", response_model=schemas.SalaryStaffRow)
+def set_staff_salary(
+    user_id: int,
+    payload: schemas.SalarySetRequest,
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = Query(None, ge=2020),
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_admin),
+):
+    """Xodimning oyligini o'rnatish/o'zgartirish — faqat admin.
+
+    O'qituvchi (role=teacher) oyligi avtomatik hisoblanadi (FIX 5 mln +
+    talaba ulushi); admin buni shu oy (month/year) uchun qo'lda override
+    qilishi mumkin — boshqa oylar formulaga ko'ra hisoblanishda davom etadi.
+    Boshqa rollar uchun — oddiy belgilangan oylik (month/year e'tiborga
+    olinmaydi).
+
+    `is_internship=true` (har qanday rol uchun, month/year majburiy) — shu
+    oy uchun xodimni "stajirovka" deb belgilaydi: darsga/ishga hech qanday
+    cheklovsiz, lekin o'sha oy uchun oylik 0 bo'ladi. Bekor qilish uchun
+    DELETE /salary/{user_id}/override chaqiriladi (formulaga/asosiy oylikka
+    qaytaradi)."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Xodim topilmadi")
+
+    if payload.is_internship:
+        if month is None or year is None:
+            raise HTTPException(status_code=400, detail="Stajirovka belgilash uchun oy/yil kerak")
+        override = db.query(models.SalaryOverride).filter(
+            models.SalaryOverride.staff_id == user.id,
+            models.SalaryOverride.month == month,
+            models.SalaryOverride.year == year,
+        ).first()
+        old_val = {"amount": str(override.amount), "is_internship": override.is_internship} if override else None
+        if override:
+            override.amount = Decimal('0')
+            override.is_internship = True
+            override.set_by_id = actor.id
+        else:
+            override = models.SalaryOverride(
+                staff_id=user.id, month=month, year=year,
+                amount=Decimal('0'), is_internship=True, set_by_id=actor.id,
+            )
+            db.add(override)
+        write_audit(db, entity_type="salary_override", entity_id=user.id, action="update",
+                    changed_by_id=actor.id,
+                    old_value=old_val,
+                    new_value={"amount": "0", "is_internship": True, "month": month, "year": year})
+        db.commit()
+        return _salary_row_for(db, user, month, year, Decimal('0'), override)
+
+    if user.role == UserRole.teacher.value:
+        if month is None or year is None:
+            raise HTTPException(status_code=400, detail="O'qituvchi oyligini override qilish uchun oy/yil kerak")
+        override = db.query(models.SalaryOverride).filter(
+            models.SalaryOverride.staff_id == user.id,
+            models.SalaryOverride.month == month,
+            models.SalaryOverride.year == year,
+        ).first()
+        old_val = {"amount": str(override.amount), "is_internship": override.is_internship} if override else None
+        if override:
+            override.amount = payload.salary
+            override.is_internship = False
+            override.set_by_id = actor.id
+        else:
+            override = models.SalaryOverride(
+                staff_id=user.id, month=month, year=year,
+                amount=payload.salary, is_internship=False, set_by_id=actor.id,
+            )
+            db.add(override)
+        write_audit(db, entity_type="salary_override", entity_id=user.id, action="update",
+                    changed_by_id=actor.id,
+                    old_value=old_val,
+                    new_value={"amount": str(payload.salary), "is_internship": False, "month": month, "year": year})
+        db.commit()
+        return _salary_row_for(db, user, month, year, Decimal('0'), override)
+
+    old_salary = user.salary
+    user.salary = payload.salary
+    write_audit(db, entity_type="user_salary", entity_id=user.id, action="update",
+                changed_by_id=actor.id,
+                old_value={"salary": str(old_salary) if old_salary is not None else None},
+                new_value={"salary": str(payload.salary)})
+    # Agar shu oy uchun avval "stajirovka" (yoki boshqa override) belgilangan
+    # bo'lsa — asosiy oylik qo'lda tahrirlanganda bekor qilinadi, aks holda
+    # override doim ustunlik qilib, yangi qiymat ko'rinmay qoladi.
+    if month is not None and year is not None:
+        stale_override = db.query(models.SalaryOverride).filter(
+            models.SalaryOverride.staff_id == user.id,
+            models.SalaryOverride.month == month,
+            models.SalaryOverride.year == year,
+        ).first()
+        if stale_override:
+            db.delete(stale_override)
+    db.commit()
+    db.refresh(user)
+    return schemas.SalaryStaffRow(
+        staff_id=user.id, full_name=user.full_name or user.username, role=user.role,
+        salary=user.salary or Decimal('0'), paid=Decimal('0'), remaining=user.salary or Decimal('0'),
+    )
+
+
+@app.delete("/salary/{user_id}/override", status_code=204)
+def clear_teacher_salary_override(
+    user_id: int,
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_admin),
+):
+    """Xodimning (o'qituvchi yoki boshqa rol) shu oy uchun qo'lda override
+    qilingan oyligini (jumladan "stajirovka" belgisini) bekor qiladi —
+    keyingi o'qishda yana formula/asosiy oylik bo'yicha hisoblanadi
+    ("Recalculate")."""
+    override = db.query(models.SalaryOverride).filter(
+        models.SalaryOverride.staff_id == user_id,
+        models.SalaryOverride.month == month,
+        models.SalaryOverride.year == year,
+    ).first()
+    if not override:
+        return
+    write_audit(db, entity_type="salary_override", entity_id=user_id, action="delete",
+                changed_by_id=actor.id,
+                old_value={"amount": str(override.amount), "month": month, "year": year})
+    db.delete(override)
+    db.commit()
+
+
+# ── Group certificates (guruh sertifikatlari, dizaynli shablon) ──────────────
+# Eslatma: `models.Certificate` (talaba profilidagi PDF-fayl havolali
+# sertifikat, /certificates endpointlari) dan farqli, alohida funksiya.
+
+def _certificate_access_check(actor: models.User, group: models.Group) -> None:
+    if actor.role in (UserRole.admin.value, UserRole.hunter.value):
+        return
+    if actor.role == UserRole.teacher.value and group.teacher_id == actor.id:
+        return
+    raise HTTPException(status_code=403, detail="Sertifikatlarga kirish huquqi yo'q")
+
+
+@app.get("/groups/{group_id}/certificates", response_model=List[schemas.GroupCertificateOut])
+def list_group_certificates(
+    group_id: int,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_auth),
+):
+    """Guruh uchun avval generatsiya qilingan sertifikatlarni qaytaradi
+    (bo'lmasa — bo'sh ro'yxat; sahifa ochilganda oldingi holatni tiklash
+    uchun ishlatiladi)."""
+    group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Guruh topilmadi")
+    _certificate_access_check(actor, group)
+    return (
+        db.query(models.GroupCertificate)
+        .filter(models.GroupCertificate.group_id == group_id)
+        .all()
+    )
+
+
+@app.post("/groups/{group_id}/certificates/generate", response_model=List[schemas.GroupCertificateOut])
+def generate_group_certificates(
+    group_id: int,
+    payload: schemas.GroupCertificateGenerateRequest,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_auth),
+):
+    """Guruhdagi (yoki tanlangan) o'quvchilar uchun sertifikat yozuvlarini
+    yaratadi — admin, hunter yoki shu guruhning o'qituvchisi chaqira oladi.
+    Allaqachon mavjud (group, student) yozuvi bo'lsa, o'zgartirilmay
+    qaytariladi — "qayta generatsiya" avvalgi tahrirlarni yo'qotmaydi."""
+    group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Guruh topilmadi")
+    _certificate_access_check(actor, group)
+
+    member_rows = (
+        db.query(models.GroupStudent, models.Student)
+        .join(models.Student, models.Student.id == models.GroupStudent.student_id)
+        .filter(models.GroupStudent.group_id == group_id)
+        .all()
+    )
+    target_ids = set(payload.student_ids) if payload.student_ids is not None else None
+    year = tz.today().year
+
+    existing_rows = (
+        db.query(models.GroupCertificate)
+        .filter(models.GroupCertificate.group_id == group_id)
+        .all()
+    )
+    existing_by_student = {c.student_id: c for c in existing_rows}
+
+    result = []
+    for gs, student in member_rows:
+        if target_ids is not None and student.id not in target_ids:
+            continue
+        existing = existing_by_student.get(student.id)
+        if existing:
+            result.append(existing)
+            continue
+        cert = models.GroupCertificate(
+            group_id=group_id, student_id=student.id,
+            cert_number=f"MIN-{year}-{group_id}-{student.id}",
+            student_name=student.full_name,
+            course_label=payload.course_label,
+            issue_date=payload.issue_date,
+            signer_name=payload.signer_name,
+            signer_title=payload.signer_title,
+            created_by_id=actor.id,
+        )
+        db.add(cert)
+        db.flush()
+        result.append(cert)
+    db.commit()
+    for c in result:
+        db.refresh(c)
+    return result
+
+
+@app.put("/groups/{group_id}/certificates", response_model=List[schemas.GroupCertificateOut])
+def save_group_certificates(
+    group_id: int,
+    payload: schemas.GroupCertificateBulkUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_auth),
+):
+    """Sertifikat ustida to'g'ridan-to'g'ri qilingan tahrirlarni (ism, sana,
+    imzo, raqam) saqlaydi — admin, hunter yoki shu guruhning o'qituvchisi."""
+    group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Guruh topilmadi")
+    _certificate_access_check(actor, group)
+
+    ids = [it.id for it in payload.items]
+    certs = (
+        db.query(models.GroupCertificate)
+        .filter(models.GroupCertificate.id.in_(ids), models.GroupCertificate.group_id == group_id)
+        .all()
+    )
+    cert_map = {c.id: c for c in certs}
+    for it in payload.items:
+        c = cert_map.get(it.id)
+        if not c:
+            continue
+        if it.student_name is not None: c.student_name = it.student_name
+        if it.cert_number is not None: c.cert_number = it.cert_number
+        if it.course_label is not None: c.course_label = it.course_label
+        if it.issue_date is not None: c.issue_date = it.issue_date
+        if it.signer_name is not None: c.signer_name = it.signer_name
+        if it.signer_title is not None: c.signer_title = it.signer_title
+    db.commit()
+    for c in certs:
+        db.refresh(c)
+    return certs
 
 
 MONTHS_UZ = ['','Yanvar','Fevral','Mart','Aprel','May','Iyun',
@@ -2419,14 +3107,16 @@ _DAY_WORDS = {
 }
 
 
-def _schedule_has_today(schedule: str, today_wd: int) -> bool:
+def _schedule_has_today(schedule: str, today_wd: int, ref_date: date = None) -> bool:
     if not schedule:
         return False
     s = schedule.lower()
     if 'toq' in s:
-        return today_wd in (0, 2, 4)   # Du, Chor, Ju
+        # "Toq kunlar" — oyning toq sanalari (1, 3, 5, ...), hafta kuni emas.
+        return bool(ref_date) and ref_date.day % 2 == 1
     if 'juft' in s:
-        return today_wd in (1, 3, 5)   # Se, Pay, Shan
+        # "Juft kunlar" — oyning juft sanalari (2, 4, 6, ...), hafta kuni emas.
+        return bool(ref_date) and ref_date.day % 2 == 0
     import re
     tokens = re.split(r'[\s,\-/]+', s)
     return any(_DAY_WORDS.get(t) == today_wd for t in tokens)
@@ -2439,11 +3129,13 @@ def today_groups(
     actor: models.User = Depends(require_auth),
 ):
     """
-    Groups for quick attendance.
-    - Admin/metodist/hunter: ALL active groups, any date (default today).
+    Groups for quick attendance — faqat shu kunga (target_date yoki bugun)
+    jadvali mos keladigan guruhlar (Toq/Juft kunlar oyning sanasi bo'yicha,
+    boshqa jadvallar hafta kuni bo'yicha).
+    - Admin/metodist/hunter: barcha faol guruhlar, lekin shu kunga mos keladigan.
     - Teacher: only their groups scheduled for today.
     """
-    ref_date = target_date or date.today()
+    ref_date = target_date or tz.today()
     ref_wd = ref_date.weekday()
     is_admin_or_metodist = actor.role in (UserRole.admin.value, UserRole.metodist.value,
                                           UserRole.hunter.value, UserRole.sales.value)
@@ -2473,7 +3165,7 @@ def today_groups(
 
     result = []
     for g in groups:
-        if not is_admin_or_metodist and not _schedule_has_today(g.schedule, ref_wd):
+        if not _schedule_has_today(g.schedule, ref_wd, ref_date):
             continue
         taken = taken_map.get(g.id, 0)
         result.append({
@@ -2489,25 +3181,121 @@ def today_groups(
             "date": str(ref_date),
         })
 
+    result.sort(key=lambda r: (r['lesson_time'] or '99:99', r['name']))
     return result
 
 
 # ── Finance: monthly summary ───────────────────────────────────────────────────
 
-@app.get("/finance/monthly")
-def finance_monthly(
+def _month_offsets(month: int, year: int, count: int):
+    """So'ralgan oydan orqaga `count` ta (month, year) juftligi — eskisidan yangisiga."""
+    out = []
+    m, y = month, year
+    for _ in range(count):
+        out.append((m, y))
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    return list(reversed(out))
+
+
+def _attach_unpaid_streaks(db: Session, data: dict, lookback: int = 6) -> None:
+    """Har bir to'lamagan o'quvchiga "necha oydan beri to'lov yo'q" belgisini qo'shadi.
+
+    Bu aynan TO'LOV YOZUVI yo'qligini sanaydi (majburiyat qayta hisoblanmaydi —
+    o'tgan oylar uchun tarif/ta'til/chegirmani qayta yurgizish qimmat bo'lardi).
+    Shuning uchun UI'da ham "to'lov yo'q" deb yoziladi, "qarzdor" deb emas.
+    """
+    month, year = data["month"], data["year"]
+    periods = _month_offsets(month, year, lookback)          # eskisidan yangisiga
+    pairs = [(m, y) for m, y in periods]
+
+    targets = []   # (group_id, student_id)
+    for g in data["groups"]:
+        for st in g.get("unpaid_students", []):
+            targets.append((g["group_id"], st["student_id"]))
+    if not targets:
+        return
+
+    student_ids = {sid for _, sid in targets}
+    # Qo'pol prefiltr (yillar bo'yicha) — aniq (oy, yil) mosligi quyida,
+    # to'plam a'zoligi orqali tekshiriladi.
+    rows = db.query(
+        models.Payment.group_id, models.Payment.student_id,
+        models.Payment.month, models.Payment.year,
+    ).filter(
+        models.Payment.student_id.in_(student_ids),
+        models.Payment.year.in_({y for _, y in pairs}),
+    ).all()
+    wanted = set(pairs)
+    paid = {(gid, sid, m, y) for gid, sid, m, y in rows if (m, y) in wanted}
+
+    for g in data["groups"]:
+        for st in g.get("unpaid_students", []):
+            streak = 0
+            for m, y in reversed(periods):        # joriy oydan orqaga
+                if (g["group_id"], st["student_id"], m, y) in paid:
+                    break
+                streak += 1
+            st["months_without_payment"] = streak
+
+
+@app.get("/finance/trend")
+def finance_trend(
     month: int = Query(..., ge=1, le=12),
     year: int = Query(..., ge=2020),
+    months: int = Query(6, ge=2, le=12),
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin),
 ):
+    """Yig'ilish darajasi trendi — jami va har bir guruh kesimida.
+
+    Nima uchun alohida endpoint: `/finance/monthly` har bir chaqiruvda barcha
+    o'quvchilar tafsilotini qaytaradi (~250-450 ms). 6 oylik trend uchun uni
+    6 marta chaqirish sekin ham, ortiqcha ham — bu yerda faqat yig'ma raqamlar
+    hisoblanadi, formula esa `_finance_month` bilan bir xil.
     """
-    Monthly finance summary.
-    Income formula: owed = tariff_price (full monthly price, attendance-independent).
-    Students pay for the month regardless of how many lessons they attended.
-    Teacher salary is attendance-based (handled separately).
+    series = []
+    per_group: dict[int, dict] = {}
+
+    for m, y in _month_offsets(month, year, months):
+        snap = _finance_month(db, m, y, with_students=False)
+        exp, act = snap["total_expected"], snap["total_actual"]
+        series.append({
+            "month": m, "year": y,
+            "expected": exp,
+            "actual": act,
+            "deficit": snap["total_deficit"],
+            "collection_pct": round(act / exp * 100, 1) if exp > 0 else None,
+            "unpaid_count": sum(g["unpaid_count"] for g in snap["groups"]),
+        })
+        for g in snap["groups"]:
+            entry = per_group.setdefault(g["group_id"], {
+                "group_id": g["group_id"], "group_name": g["group_name"], "points": [],
+            })
+            entry["group_name"] = g["group_name"]
+            entry["points"].append({
+                "month": m, "year": y,
+                "expected": g["expected"], "actual": g["actual"],
+                "collection_pct": round(g["actual"] / g["expected"] * 100, 1) if g["expected"] > 0 else None,
+            })
+
+    return {"months": series, "groups": list(per_group.values())}
+
+
+def _finance_month(db: Session, month: int, year: int, *, with_students: bool = True) -> dict:
+    """Bir oylik moliyaviy kesim.
+
+    Tushum formulasi: owed = to'liq oylik tarif (davomatga bog'liq emas) —
+    ta'til va special chegirmalar hisobga olinadi. O'qituvchi maoshi alohida,
+    davomat asosida hisoblanadi.
+
+    `with_students=False` — faqat yig'ma raqamlar (trend uchun): o'quvchilar
+    ro'yxati qaytarilmaydi, chunki 6 oylik trendda u yuzlab ortiqcha qator
+    bo'lardi. Formula ikkala rejimda ham AYNAN bir xil — shuning uchun bitta
+    funksiyada turibdi.
     """
-    groups = db.query(models.Group).filter(models.Group.is_active == True).all()
+    groups = db.query(models.Group).filter(models.Group.is_active == True).all()  # noqa: E712
     result = []
     total_expected = Decimal(0)
     total_actual = Decimal(0)
@@ -2519,14 +3307,12 @@ def finance_monthly(
         # faqat expected/owed 0 bo'ladi.
         group_started = not (g.start_date and (g.start_date.year, g.start_date.month) > (year, month))
 
-        # Actual payments for this group this month
         actual = db.query(func.sum(models.Payment.amount)).filter(
             models.Payment.group_id == g.id,
             models.Payment.month == month,
             models.Payment.year == year,
         ).scalar() or Decimal(0)
 
-        # Total lessons held for this group this month (informational)
         total_lessons_held = db.query(
             func.count(func.distinct(models.Attendance.lesson_date))
         ).filter(
@@ -2537,16 +3323,18 @@ def finance_monthly(
 
         expected = Decimal(0)
         student_details = []
+        unpaid_count = 0
 
         for m in g.members:
-            # Count lessons student attended this month (informational only)
-            attended = db.query(func.count(models.Attendance.id)).filter(
-                models.Attendance.group_id == g.id,
-                models.Attendance.student_id == m.student_id,
-                models.Attendance.is_present == True,
-                extract('month', models.Attendance.lesson_date) == month,
-                extract('year', models.Attendance.lesson_date) == year,
-            ).scalar() or 0
+            attended = 0
+            if with_students:
+                attended = db.query(func.count(models.Attendance.id)).filter(
+                    models.Attendance.group_id == g.id,
+                    models.Attendance.student_id == m.student_id,
+                    models.Attendance.is_present == True,  # noqa: E712
+                    extract('month', models.Attendance.lesson_date) == month,
+                    extract('year', models.Attendance.lesson_date) == year,
+                ).scalar() or 0
 
             if not group_started:
                 price = Decimal(0)
@@ -2555,7 +3343,6 @@ def finance_monthly(
                 price = Decimal(str(m.tariff.price))
                 tariff_name = m.tariff.name
             elif g.course_price and Decimal(str(g.course_price)) > 0:
-                # Fallback: use group's course_price if student has no individual tariff
                 price = Decimal(str(g.course_price))
                 tariff_name = "Guruh narxi"
             else:
@@ -2582,39 +3369,42 @@ def finance_monthly(
                 advance = core_calc.advance_amount_for_month(m.student, month, year)
                 is_paid = (paid_amount + advance) >= owed
                 expected += owed
+                if not is_paid:
+                    unpaid_count += 1
             else:
                 owed = Decimal(0)
                 tariff_price = 0.0
-                is_paid = None  # no obligation
+                is_paid = None  # majburiyat yo'q
 
-            student_details.append({
-                "student_id": m.student_id,
-                "student_name": m.student.full_name,
-                "phone": m.student.phone1,
-                "tariff_name": tariff_name,
-                "tariff_price": tariff_price,
-                "attended": attended,
-                "total_lessons_held": total_lessons_held,
-                "owed": float(owed),
-                "is_paid": is_paid,
-            })
-
-        # Unpaid = has tariff, hasn't fully paid
-        unpaid_students = [s for s in student_details if s["is_paid"] is False]
+            if with_students:
+                student_details.append({
+                    "student_id": m.student_id,
+                    "student_name": m.student.full_name,
+                    "phone": m.student.phone1,
+                    "tariff_name": tariff_name,
+                    "tariff_price": tariff_price,
+                    "attended": attended,
+                    "total_lessons_held": total_lessons_held,
+                    "owed": float(owed),
+                    "is_paid": is_paid,
+                })
 
         total_expected += expected
         total_actual += actual
-        result.append({
+
+        row = {
             "group_id": g.id,
             "group_name": g.name,
             "student_count": len(g.members),
             "expected": float(expected),
             "actual": float(actual),
             "deficit": float(expected - actual),
-            "unpaid_count": len(unpaid_students),
-            "unpaid_students": unpaid_students,
-            "all_students": student_details,
-        })
+            "unpaid_count": unpaid_count,
+        }
+        if with_students:
+            row["unpaid_students"] = [s for s in student_details if s["is_paid"] is False]
+            row["all_students"] = student_details
+        result.append(row)
 
     return {
         "month": month,
@@ -2626,7 +3416,18 @@ def finance_monthly(
     }
 
 
-# ── Attendance ─────────────────────────────────────────────────────────────────
+@app.get("/finance/monthly")
+def finance_monthly(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """Oylik moliyaviy kesim — o'quvchilar tafsiloti bilan."""
+    data = _finance_month(db, month, year, with_students=True)
+    _attach_unpaid_streaks(db, data)
+    return data
+
 
 @app.get("/groups/{group_id}/camera-attendance")
 def group_camera_attendance(
@@ -2876,7 +3677,7 @@ def list_visits(
     if student_id:
         q = q.filter(models.StudentVisit.student_id == student_id)
     else:
-        d = visit_date or date.today()
+        d = visit_date or tz.today()
         start = datetime(d.year, d.month, d.day)
         q = q.filter(models.StudentVisit.created_at >= start,
                      models.StudentVisit.created_at < start + timedelta(days=1))
@@ -2896,7 +3697,7 @@ def create_visit(
 
     v = models.StudentVisit(student_id=s.id, kind=payload.kind, noted_by_id=actor.id)
 
-    time_str = (datetime.utcnow() + timedelta(hours=5)).strftime("%H:%M")  # Toshkent vaqti
+    time_str = tz.now().strftime("%H:%M")
     if payload.kind == "arrived":
         caption = f"✅ <b>{s.full_name}</b> o'quv markazga keldi\n🕐 {time_str}"
     else:
@@ -2991,17 +3792,22 @@ def create_special_discount(
             raise HTTPException(status_code=400, detail="Bepul oy uchun oy va yil kiritilishi kerak")
     if payload.kind == "monthly" and not payload.amount:
         raise HTTPException(status_code=400, detail="Oylik chegirma uchun summa kiritilishi kerak")
+    if payload.kind == "one_time":
+        if not payload.amount:
+            raise HTTPException(status_code=400, detail="Bir martalik chegirma uchun summa kiritilishi kerak")
+        if not payload.month or not payload.year:
+            raise HTTPException(status_code=400, detail="Bir martalik chegirma uchun oy va yil kiritilishi kerak")
 
     # Bir xil talaba/guruh/turga ikkinchi marta aktiv chegirma qo'shilib
     # ketmasligi uchun (aks holda ikkalasi ham qo'llanadi — narx ikki marta
-    # kamayadi). free_month uchun oy/yil ham solishtiriladi.
+    # kamayadi). free_month/one_time uchun oy/yil ham solishtiriladi.
     dup_q = db.query(models.SpecialDiscount).filter(
         models.SpecialDiscount.student_id == payload.student_id,
         models.SpecialDiscount.group_id == payload.group_id,
         models.SpecialDiscount.kind == payload.kind,
         models.SpecialDiscount.is_active == True,  # noqa: E712
     )
-    if payload.kind == "free_month":
+    if payload.kind in ("free_month", "one_time"):
         dup_q = dup_q.filter(models.SpecialDiscount.month == payload.month,
                               models.SpecialDiscount.year == payload.year)
     if dup_q.first():
@@ -3011,9 +3817,9 @@ def create_special_discount(
         student_id=payload.student_id,
         group_id=payload.group_id,
         kind=payload.kind,
-        amount=payload.amount if payload.kind == "monthly" else None,
-        month=payload.month if payload.kind == "free_month" else None,
-        year=payload.year if payload.kind == "free_month" else None,
+        amount=payload.amount if payload.kind in ("monthly", "one_time") else None,
+        month=payload.month if payload.kind in ("free_month", "one_time") else None,
+        year=payload.year if payload.kind in ("free_month", "one_time") else None,
         reason=payload.reason,
         created_by_id=actor.id,
     )
@@ -3254,6 +4060,124 @@ def notify_student_telegram(student: models.Student, caption: str):
     return send_telegram_message(student.telegram_user_id, caption)
 
 
+# ── Investorlar guruhi: kunlik statistika + yangi talaba xabarnomasi ──────────
+# Sozlamalar bot.db'dagi umumiy BotSetting (key/value) jadvalida saqlanadi —
+# /bot/settings/{key} orqali (require_admin, ya'ni superadmin) CRM'dan boshqariladi.
+
+def _investor_setting(key: str, default: str = "") -> str:
+    db = bot_client.BotSessionLocal()
+    try:
+        row = db.query(bot_client.BotSetting).filter(bot_client.BotSetting.key == key).first()
+        return row.value if row and row.value is not None else default
+    finally:
+        db.close()
+
+
+def _investor_setting_set(key: str, value: str) -> None:
+    db = bot_client.BotSessionLocal()
+    try:
+        row = db.query(bot_client.BotSetting).filter(bot_client.BotSetting.key == key).first()
+        if row is None:
+            db.add(bot_client.BotSetting(key=key, value=value))
+        else:
+            row.value = value
+        db.commit()
+    finally:
+        db.close()
+
+
+def notify_investor_new_student(student_full_name: str, group_name: str, tariff_name: Optional[str] = None) -> None:
+    """Guruhga yangi talaba qo'shilganda investorlar guruhiga xabar yuboradi (sozlamada yoqilgan bo'lsa)."""
+    if _investor_setting("investor_new_student_enabled") != "1":
+        return
+    chat_id = _investor_setting("investor_chat_id")
+    if not chat_id:
+        return
+    lines = [
+        "🎓 <b>Yangi talaba qo'shildi</b>",
+        f"👤 {student_full_name}",
+        f"📚 Guruh: {group_name}",
+    ]
+    if tariff_name:
+        lines.append(f"💳 Tarif: {tariff_name}")
+    send_telegram_message(chat_id, "\n".join(lines))
+
+
+def build_investor_daily_stats_message() -> str:
+    """Investorlar uchun kunlik statistika matnini tuzadi (asosiy CRM bazasidan)."""
+    from .database import SessionLocal
+    db = SessionLocal()
+    try:
+        now = tz.now()
+        today = now.date()
+
+        total_students = db.query(func.count(models.Student.id)).scalar() or 0
+        active_students = db.query(func.count(models.Student.id)).filter(models.Student.is_active == True).scalar() or 0
+        active_groups = db.query(func.count(models.Group.id)).filter(models.Group.is_active == True).scalar() or 0
+        new_leads_today = (
+            db.query(func.count(models.Lead.id))
+            .filter(func.date(models.Lead.created_at) == today)
+            .scalar() or 0
+        )
+        new_students_today = (
+            db.query(func.count(models.GroupStudent.id))
+            .filter(func.date(models.GroupStudent.joined_at) == today)
+            .scalar() or 0
+        )
+        today_income = (
+            db.query(func.sum(models.Payment.amount))
+            .filter(func.date(models.Payment.paid_at) == today)
+            .scalar() or Decimal(0)
+        )
+        month_income = (
+            db.query(func.sum(models.Payment.amount))
+            .filter(models.Payment.month == now.month, models.Payment.year == now.year)
+            .scalar() or Decimal(0)
+        )
+
+        lines = [
+            f"📊 <b>Kunlik statistika — {today.strftime('%d.%m.%Y')}</b>",
+            "",
+            f"👥 Jami talabalar: {total_students} (faol: {active_students})",
+            f"🏫 Faol guruhlar: {active_groups}",
+            f"🆕 Bugungi yangi lidlar: {new_leads_today}",
+            f"🎓 Bugun qo'shilgan talabalar: {new_students_today}",
+            "",
+            f"💰 Bugungi tushum: {today_income:,.0f} so'm",
+            f"💵 {MONTHS_UZ[now.month]} oyi tushumi: {month_income:,.0f} so'm",
+        ]
+        return "\n".join(lines)
+    finally:
+        db.close()
+
+
+def _investor_scheduler_loop() -> None:
+    """Har daqiqada tekshiradi: kunlik statistika yoqilgan va belgilangan vaqt yetgan
+    bo'lsa, bugun hali yuborilmagan bo'lsa — yuboradi. pm2 fork rejimida (bitta
+    process) ishlaydi, shuning uchun oddiy background thread yetarli."""
+    import time
+    while True:
+        try:
+            if _investor_setting("investor_daily_stats_enabled") == "1":
+                chat_id = _investor_setting("investor_chat_id")
+                target_time = _investor_setting("investor_daily_stats_time", "09:00")
+                now = tz.now()
+                today_str = now.strftime("%Y-%m-%d")
+                if (chat_id and now.strftime("%H:%M") >= target_time
+                        and _investor_setting("investor_daily_stats_last_sent") != today_str):
+                    send_telegram_message(chat_id, build_investor_daily_stats_message())
+                    _investor_setting_set("investor_daily_stats_last_sent", today_str)
+        except Exception:
+            pass
+        time.sleep(60)
+
+
+@app.on_event("startup")
+def start_investor_scheduler() -> None:
+    import threading
+    threading.Thread(target=_investor_scheduler_loop, daemon=True).start()
+
+
 def _homework_read(hw: models.Homework) -> schemas.HomeworkRead:
     return schemas.HomeworkRead(
         id=hw.id, group_id=hw.group_id,
@@ -3323,7 +4247,7 @@ def create_homework(
 ):
     """Uy vazifasini saqlaydi va guruh Telegram chatiga yuboradi."""
     group = _check_group_access(db, group_id, actor)
-    lesson_date = payload.lesson_date or date.today()
+    lesson_date = payload.lesson_date or tz.today()
 
     hw = models.Homework(
         group_id=group_id,
@@ -3460,7 +4384,7 @@ def create_grade(payload: schemas.GradeCreate, db: Session = Depends(get_db), ac
     g = models.Grade(
         student_id=payload.student_id, group_id=payload.group_id,
         subject=payload.subject, score=payload.score, max_score=payload.max_score,
-        exam_type=payload.exam_type, exam_date=payload.exam_date or date.today(),
+        exam_type=payload.exam_type, exam_date=payload.exam_date or tz.today(),
         comment=payload.comment, created_by_id=actor.id,
     )
     db.add(g)
@@ -3869,13 +4793,20 @@ def _teacher_coin_budget(db: Session, teacher_id: int) -> int:
 
 
 def _coins_spent_this_month(db: Session, teacher_id: int, now: Optional[datetime] = None) -> int:
-    now = now or datetime.utcnow()
+    """Toshkent oyi ichida sarflangan tangalar.
+
+    `created_at` naive UTC saqlanadi, shuning uchun `extract("month", ...)`
+    to'g'ridan-to'g'ri ishlatilmaydi — oy boshidagi birinchi 5 soatlik
+    tranzaksiyalar oldingi oyga tushib qolardi.
+    """
+    now = now or tz.now()
+    start_utc, end_utc = tz.month_bounds(now.year, now.month)
     return int(
         db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0))
         .filter(
             models.CoinTransaction.teacher_id == teacher_id,
-            extract("month", models.CoinTransaction.created_at) == now.month,
-            extract("year", models.CoinTransaction.created_at) == now.year,
+            models.CoinTransaction.created_at >= start_utc,
+            models.CoinTransaction.created_at < end_utc,
         )
         .scalar()
     )
@@ -3894,7 +4825,7 @@ def _coin_tx_read(t: models.CoinTransaction) -> schemas.CoinTransactionRead:
 
 @app.get("/coins/summary", response_model=schemas.CoinSummary)
 def coin_summary(db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
-    now = datetime.utcnow()
+    now = tz.now()                      # oy/yil Toshkent taqvimi bo'yicha
     spent = _coins_spent_this_month(db, actor.id, now)
     if actor.role == UserRole.teacher.value:
         budget = _teacher_coin_budget(db, actor.id)
@@ -4039,7 +4970,28 @@ def coin_totals(db: Session = Depends(get_db), actor: models.User = Depends(requ
 #  LEADS  (Hunter & Call Center CRM)
 # ═══════════════════════════════════════════════════════
 
-def _lead_read(lead: models.Lead) -> schemas.LeadRead:
+def _next_reminder_map(db: Session, lead_ids: list) -> dict:
+    """Har bir lid uchun eng yaqin bajarilmagan eslatma (lead_id -> (body, due_at))."""
+    if not lead_ids:
+        return {}
+    rows = (
+        db.query(models.Reminder.lead_id, models.Reminder.body, models.Reminder.due_at)
+        .filter(models.Reminder.lead_id.in_(lead_ids), models.Reminder.status == "pending")
+        .order_by(models.Reminder.lead_id, models.Reminder.due_at.asc())
+        .all()
+    )
+    out = {}
+    for lead_id, body, due_at in rows:
+        if lead_id not in out:
+            out[lead_id] = (body, due_at)
+    return out
+
+
+def _next_reminder_for(db: Session, lead_id: int):
+    return _next_reminder_map(db, [lead_id]).get(lead_id)
+
+
+def _lead_read(lead: models.Lead, reminder: Optional[tuple] = None) -> schemas.LeadRead:
     st = lead.stage
     src = lead.source
     return schemas.LeadRead(
@@ -4068,8 +5020,17 @@ def _lead_read(lead: models.Lead) -> schemas.LeadRead:
         created_by_id=lead.created_by_id,
         created_by_name=lead.created_by.full_name or lead.created_by.username if lead.created_by else None,
         updated_by_name=lead.updated_by.full_name or lead.updated_by.username if lead.updated_by else None,
+        referred_by_id=lead.referred_by_id,
+        referred_by_name=(lead.referred_by.full_name or lead.referred_by.username) if lead.referred_by else None,
+        phone_display=format_phone(lead.phone),
+        is_overdue=bool(
+            lead.callback_at and lead.callback_at < datetime.utcnow()
+            and (st.kind if st else "lead") == "lead"
+        ),
         created_at=lead.created_at,
         updated_at=lead.updated_at,
+        next_reminder_body=reminder[0] if reminder else None,
+        next_reminder_due_at=reminder[1] if reminder else None,
     )
 
 
@@ -4108,8 +5069,13 @@ def _crm_recipient_ids(db, exclude_id=None):
 # 2026-07-26'dan boshlab: superadmin/call_center/hunter qo'lda kiritgan lidlar
 # Facebook orqali kelgan deb hisoblanadi (manba avtomatik Facebook'ga o'rnatiladi,
 # shu orqali Mirsaidga referral sifatida bog'lanadi).
-_FORCE_FB_ROLES = {UserRole.admin.value, UserRole.call_center.value, UserRole.hunter.value}
-_FORCE_FB_SINCE = datetime(2026, 7, 26)
+def _default_source(db) -> Optional[models.LeadSource]:
+    """Manba tanlanmaganda ishlatiladigan manba (lead_sources.is_default)."""
+    return (
+        db.query(models.LeadSource)
+        .filter(models.LeadSource.is_active == True, models.LeadSource.is_default == True)  # noqa: E712
+        .order_by(models.LeadSource.id.asc()).first()
+    )
 
 
 def _facebook_source(db) -> Optional[models.LeadSource]:
@@ -4120,12 +5086,18 @@ def _current_period() -> str:
     return datetime.utcnow().strftime("%Y-%m")
 
 
-def _bump_referral_stat(db, referrer_id: Optional[int], *, leads_delta: int = 0, paid_delta: int = 0) -> None:
-    """Manba egasi (masalan Facebook/Instagram'ni yurituvchi sales) uchun
-    joriy oy statistikasini oshiradi — tarix saqlanishi uchun har oy alohida qator."""
+def _bump_referral_stat(db, referrer_id: Optional[int], *, leads_delta: int = 0,
+                        paid_delta: int = 0, period: Optional[str] = None) -> None:
+    """Manba egasi (masalan Facebook/Instagram'ni yurituvchi sales) uchun oylik
+    statistikani o'zgartiradi — tarix saqlanishi uchun har oy alohida qator.
+
+    `period` berilmasa joriy oy. Hisobni qaytarishda (paid_delta manfiy) u
+    dastlab hisoblangan oy bo'lishi kerak, aks holda o'tgan oy qatorida
+    ortiqcha son qolib ketadi.
+    """
     if not referrer_id:
         return
-    period = _current_period()
+    period = period or _current_period()
     stat = (
         db.query(models.LeadReferralStat)
         .filter(models.LeadReferralStat.referrer_id == referrer_id, models.LeadReferralStat.period == period)
@@ -4138,9 +5110,24 @@ def _bump_referral_stat(db, referrer_id: Optional[int], *, leads_delta: int = 0,
         )
         db.add(stat)
         db.flush()
-    stat.leads_count += leads_delta
-    stat.paid_count += paid_delta
+    stat.leads_count = max(0, stat.leads_count + leads_delta)
+    stat.paid_count = max(0, stat.paid_count + paid_delta)
     stat.updated_at = datetime.utcnow()
+
+
+def _revoke_referral_credit(db, lead: models.Lead) -> None:
+    """Lid "To'landi"dan chiqarilsa yoki o'chirilsa — referral to'lov hisobini qaytarish.
+
+    Ilgari `_bump_referral_stat` faqat oshirar edi: lid o'chirilsa ham, bosqichdan
+    qaytarilsa ham `paid_count` joyida qolib, statistika haqiqatdan uzilib ketardi.
+    """
+    if not lead.referral_credited_at:
+        return
+    _bump_referral_stat(
+        db, lead.referred_by_id, paid_delta=-1,
+        period=lead.referral_credited_at.strftime("%Y-%m"),
+    )
+    lead.referral_credited_at = None
 
 
 def _slugify(name: str) -> str:
@@ -4158,10 +5145,30 @@ def _default_stage(db) -> Optional[models.LeadStage]:
     )
 
 
+def _normalize_phone(phone: Optional[str]) -> str:
+    """Solishtirish uchun kalit — mantiq phone_utils'da (facebook_leads ham shuni ishlatadi)."""
+    return normalize_phone(phone)
+
+
+def _find_duplicate_lead(db: Session, phone: Optional[str], exclude_id: Optional[int] = None) -> Optional[models.Lead]:
+    """Shu telefonli mavjud lid (formatlash farqi hisobga olinmaydi).
+
+    `phone_key` indeksi bo'yicha izlaydi — butun jadvalni o'qimaydi.
+    """
+    key = dedup_key(phone)
+    if not key:
+        return None
+    q = db.query(models.Lead).filter(models.Lead.phone_key == key)
+    if exclude_id is not None:
+        q = q.filter(models.Lead.id != exclude_id)
+    return q.order_by(models.Lead.created_at.desc()).first()
+
+
 _LEAD_LOAD = (
     joinedload(models.Lead.created_by),
     joinedload(models.Lead.updated_by),
     joinedload(models.Lead.claimed_by),
+    joinedload(models.Lead.referred_by),
     joinedload(models.Lead.stage),
     joinedload(models.Lead.source),
     joinedload(models.Lead.interested_group),
@@ -4184,9 +5191,12 @@ def list_leads(
     source_id: Optional[int] = Query(None),
     pool: bool = Query(False),               # faqat umumiy havza (band qilinmagan)
     today: bool = Query(False),              # faqat bugun kelishi/qo'ng'iroq qilinishi kerak bo'lganlar
+    overdue: bool = Query(False),            # vaqti o'tib ketgan, hali yopilmagan lidlar
     search: Optional[str] = Query(None),
     referred_by_id: Optional[int] = Query(None),
     bucket: Optional[str] = Query(None),     # referral funnel qutisi: canceled|waiting|comming|payed|target
+    limit: Optional[int] = Query(None, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
     actor: models.User = Depends(require_crm_access),
     db: Session = Depends(get_db),
 ):
@@ -4215,18 +5225,32 @@ def list_leads(
     if bucket and bucket in _FUNNEL_BUCKET_STATUSES:
         q = q.filter(models.Lead.status.in_(_FUNNEL_BUCKET_STATUSES[bucket]))
     if today:
-        now_tashkent = datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(TASHKENT_TZ)
-        day_start_tashkent = now_tashkent.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_start_utc = day_start_tashkent.astimezone(timezone.utc).replace(tzinfo=None)
-        day_end_utc = day_start_utc + timedelta(days=1)
+        day_start_utc, day_end_utc = tz.day_bounds(tz.today())
         q = q.filter(models.Lead.callback_at >= day_start_utc, models.Lead.callback_at < day_end_utc)
+    if overdue:
+        # Vaqti belgilangan, o'tib ketgan va hali yakunlanmagan (won/lost emas) lidlar.
+        # Bularni "Bugun" filtri ko'rsatmaydi — shuning uchun alohida ko'rinish.
+        open_stage_ids = [
+            sid for (sid,) in db.query(models.LeadStage.id)
+            .filter(models.LeadStage.kind == "lead").all()
+        ]
+        q = q.filter(models.Lead.callback_at < datetime.utcnow())
+        if open_stage_ids:
+            q = q.filter(models.Lead.stage_id.in_(open_stage_ids))
     if search:
         q = q.filter(
             models.Lead.full_name.ilike(f"%{search}%") |
             models.Lead.phone.ilike(f"%{search}%")
         )
-    leads = q.order_by(models.Lead.created_at.desc()).all()
-    return [_lead_read(l) for l in leads]
+    order = models.Lead.callback_at.asc() if overdue else models.Lead.created_at.desc()
+    q = q.order_by(order)
+    if limit is not None:
+        q = q.offset(offset).limit(limit)
+    elif offset:
+        q = q.offset(offset)
+    leads = q.all()
+    rmap = _next_reminder_map(db, [l.id for l in leads])
+    return [_lead_read(l, rmap.get(l.id)) for l in leads]
 
 
 @app.get("/leads/stats", response_model=schemas.LeadStatsRead)
@@ -4265,17 +5289,28 @@ def create_lead(
     actor: models.User = Depends(require_crm_access),
     db: Session = Depends(get_db),
 ):
+    dup = _find_duplicate_lead(db, payload.phone)
+    if dup:
+        raise HTTPException(
+            409,
+            f"Bu raqam bilan lid allaqachon mavjud: {dup.full_name} (#{dup.id})",
+        )
     stage = _default_stage(db)
     lead_data = payload.dict()
+    # Manba — xodim formada nimani tanlagan bo'lsa o'sha. Tanlanmagan bo'lsa
+    # sozlamalardagi "default" manba (bo'lmasa — manbasiz).
     source = None
-    if actor.role in _FORCE_FB_ROLES and datetime.utcnow() >= _FORCE_FB_SINCE:
-        source = _facebook_source(db)
+    if lead_data.get("source_id"):
+        source = db.query(models.LeadSource).filter(models.LeadSource.id == lead_data["source_id"]).first()
+        if not source:
+            raise HTTPException(400, "Bunday manba topilmadi")
+    else:
+        source = _default_source(db)
         if source:
             lead_data["source_id"] = source.id
-    if source is None and lead_data.get("source_id"):
-        source = db.query(models.LeadSource).filter(models.LeadSource.id == lead_data["source_id"]).first()
     lead = models.Lead(
         **lead_data,
+        phone_key=dedup_key(payload.phone),
         status=stage.slug if stage else models.LeadStatus.new.value,
         stage_id=stage.id if stage else None,
         created_by_id=actor.id,
@@ -4298,7 +5333,7 @@ def create_lead(
     db.commit()
     db.refresh(lead)
     db.refresh(lead, attribute_names=["created_by", "updated_by", "stage", "source"])
-    return _lead_read(lead)
+    return _lead_read(lead, _next_reminder_for(db, lead.id))
 
 
 @app.patch("/leads/{lead_id}/status", response_model=schemas.LeadRead)
@@ -4313,31 +5348,33 @@ def update_lead_status(
         raise HTTPException(404, "Lid topilmadi")
     old_name = lead.stage.name if lead.stage else lead.status
     old_kind = lead.stage.kind if lead.stage else None
-    new_slug = payload.status.value
-    lead.status = new_slug
-    # status ustunini stage bilan sinxronlaymiz
+    new_slug = payload.status
     stage = db.query(models.LeadStage).filter(models.LeadStage.slug == new_slug).first()
-    if stage:
-        lead.stage_id = stage.id
+    if not stage:
+        raise HTTPException(404, f"'{new_slug}' bosqichi topilmadi")
+    lead.status = new_slug
+    lead.stage_id = stage.id
     lead.callback_at = payload.callback_at
     if payload.notes is not None:
         lead.notes = payload.notes
     lead.updated_by_id = actor.id
     lead.updated_at = datetime.utcnow()
-    new_name = stage.name if stage else new_slug
+    new_name = stage.name
     if new_name != old_name:
         _log_lead_activity(
             db, lead_id=lead.id, action="stage_changed",
             description=f"Holat: {old_name} → {new_name}", author_id=actor.id,
             meta={"old": old_name, "new": new_name},
         )
-    if stage and stage.kind == "won" and old_kind != "won" and lead.referral_credited_at is None:
+    if stage.kind == "won" and old_kind != "won" and lead.referral_credited_at is None:
         lead.referral_credited_at = datetime.utcnow()
         _bump_referral_stat(db, lead.referred_by_id, paid_delta=1)
+    elif old_kind == "won" and stage.kind != "won":
+        _revoke_referral_credit(db, lead)
     db.commit()
     db.refresh(lead)
     db.refresh(lead, attribute_names=["created_by", "updated_by", "stage", "source"])
-    return _lead_read(lead)
+    return _lead_read(lead, _next_reminder_for(db, lead.id))
 
 
 @app.patch("/leads/{lead_id}/stage", response_model=schemas.LeadRead)
@@ -4374,10 +5411,201 @@ def move_lead_stage(
     if stage.kind == "won" and old_kind != "won" and lead.referral_credited_at is None:
         lead.referral_credited_at = datetime.utcnow()
         _bump_referral_stat(db, lead.referred_by_id, paid_delta=1)
+    elif old_kind == "won" and stage.kind != "won":
+        _revoke_referral_credit(db, lead)
     db.commit()
     db.refresh(lead)
     db.refresh(lead, attribute_names=["created_by", "updated_by", "stage", "source"])
-    return _lead_read(lead)
+    return _lead_read(lead, _next_reminder_for(db, lead.id))
+
+
+def _lead_write_guard(lead: models.Lead, actor: models.User) -> None:
+    """Sales faqat o'zi yaratgan yoki band qilgan lidni o'zgartira oladi."""
+    if actor.role != UserRole.sales.value:
+        return
+    if lead.created_by_id != actor.id and lead.claimed_by_id != actor.id:
+        raise HTTPException(403, "Faqat o'z lidingizni o'zgartira olasiz")
+
+
+# Tarixda ko'rsatiladigan maydon nomlari
+_LEAD_FIELD_LABELS = {
+    "full_name": "Ism", "phone": "Telefon", "course_interest": "Kurs",
+    "source_id": "Manba", "notes": "Izoh", "callback_at": "Kelish vaqti",
+    "date_of_birth": "Tug'ilgan sana", "parent_phone": "Ota-ona telefoni",
+    "parent2_phone": "Qo'shimcha telefon", "interested_group_id": "Guruh",
+}
+
+
+@app.patch("/leads/{lead_id}", response_model=schemas.LeadRead)
+def update_lead(
+    lead_id: int,
+    payload: schemas.LeadUpdate,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Lid ma'lumotlarini tahrirlash (ism, telefon, manba, izoh va h.k.).
+
+    Shu paytgacha bunday endpoint yo'q edi — telefon xato yozilsa lidni
+    o'chirib qaytadan qo'shishdan boshqa yo'l qolmasdi.
+    """
+    lead = db.query(models.Lead).options(*_LEAD_LOAD).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    _lead_write_guard(lead, actor)
+
+    changes = payload.dict(exclude_unset=True)
+    if "phone" in changes and changes["phone"]:
+        dup = _find_duplicate_lead(db, changes["phone"], exclude_id=lead.id)
+        if dup:
+            raise HTTPException(409, f"Bu raqam boshqa lidda bor: {dup.full_name} (#{dup.id})")
+    if changes.get("source_id"):
+        if not db.query(models.LeadSource).filter(models.LeadSource.id == changes["source_id"]).first():
+            raise HTTPException(400, "Bunday manba topilmadi")
+    if changes.get("interested_group_id"):
+        if not db.query(models.Group).filter(models.Group.id == changes["interested_group_id"]).first():
+            raise HTTPException(400, "Bunday guruh topilmadi")
+
+    touched = []
+    for field, val in changes.items():
+        if getattr(lead, field) == val:
+            continue
+        setattr(lead, field, val)
+        touched.append(_LEAD_FIELD_LABELS.get(field, field))
+    if "phone" in changes and changes["phone"]:
+        lead.phone_key = dedup_key(changes["phone"])
+    if not touched:
+        return _lead_read(lead, _next_reminder_for(db, lead.id))
+
+    lead.updated_by_id = actor.id
+    lead.updated_at = datetime.utcnow()
+    _log_lead_activity(
+        db, lead_id=lead.id, action="edited",
+        description="Tahrirlandi: " + ", ".join(touched), author_id=actor.id,
+    )
+    db.commit()
+    db.refresh(lead)
+    db.refresh(lead, attribute_names=["created_by", "updated_by", "claimed_by", "referred_by", "stage", "source", "interested_group"])
+    return _lead_read(lead, _next_reminder_for(db, lead.id))
+
+
+@app.post("/leads/{lead_id}/notes", response_model=schemas.LeadActivityRead, status_code=201)
+def add_lead_note(
+    lead_id: int,
+    payload: schemas.LeadNoteCreate,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Lidga sanasiz izoh qoldirish — tarixga yoziladi.
+
+    Ilgari izoh qoldirishning yagona yo'li eslatma yaratish edi, unda esa
+    sana majburiy — shuning uchun xodimlar deyarli hech narsa yozmagan.
+    """
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    _lead_write_guard(lead, actor)
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(400, "Izoh bo'sh")
+    act = models.LeadActivity(
+        lead_id=lead.id, action="note", description=body,
+        author_id=actor.id, created_at=datetime.utcnow(),
+    )
+    db.add(act)
+    lead.updated_by_id = actor.id
+    lead.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(act)
+    return schemas.LeadActivityRead(
+        id=act.id, action=act.action, description=act.description,
+        author_name=actor.full_name or actor.username, created_at=act.created_at,
+    )
+
+
+@app.post("/leads/{lead_id}/convert", response_model=schemas.StudentRead, status_code=201)
+def convert_lead_to_student(
+    lead_id: int,
+    payload: schemas.LeadConvert,
+    actor: models.User = Depends(require_call_center),
+    db: Session = Depends(get_db),
+):
+    """Lidni talabaga aylantirish va (ixtiyoriy) guruhga qo'shish.
+
+    Shu paytgacha "To'landi" bosqichi hech narsa qilmasdi — xodim Talabalar
+    bo'limiga o'tib hamma narsani qo'lda qaytadan kiritishi kerak edi.
+    """
+    lead = db.query(models.Lead).options(*_LEAD_LOAD).filter(models.Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(404, "Lid topilmadi")
+    if is_placeholder_phone(lead.phone):
+        raise HTTPException(400, "Lidda haqiqiy telefon raqami yo'q — avval raqamni kiriting")
+
+    key = dedup_key(lead.phone)
+    if key:
+        existing = next(
+            (st for st in db.query(models.Student).filter(models.Student.is_archived == False).all()  # noqa: E712
+             if dedup_key(st.phone1) == key),
+            None,
+        )
+        if existing:
+            raise HTTPException(409, f"Bu raqam bilan talaba allaqachon bor: {existing.full_name} (#{existing.id})")
+
+    group = None
+    if payload.group_id:
+        group = db.query(models.Group).filter(models.Group.id == payload.group_id).first()
+        if not group:
+            raise HTTPException(404, "Guruh topilmadi")
+
+    student = models.Student(
+        full_name=lead.full_name,
+        phone1=lead.phone,
+        father_name=payload.father_name,
+        father_phone=lead.parent_phone,
+        mother_name=payload.mother_name,
+        mother_phone=lead.parent2_phone,
+        notes=lead.notes,
+        is_active=True,
+        is_demo=payload.is_demo,
+        created_at=datetime.utcnow(),
+    )
+    db.add(student)
+    db.flush()
+
+    if group:
+        db.add(models.GroupStudent(
+            group_id=group.id, student_id=student.id,
+            tariff_id=payload.tariff_id, joined_at=datetime.utcnow(),
+        ))
+
+    write_audit(db, entity_type="student", entity_id=student.id, action="create",
+                changed_by_id=actor.id,
+                new_value={"full_name": student.full_name, "phone1": student.phone1,
+                           "from_lead_id": lead.id})
+
+    # Lidni "won" bosqichiga o'tkazamiz (bo'lsa) va tarixga yozamiz
+    won_stage = (
+        db.query(models.LeadStage)
+        .filter(models.LeadStage.kind == "won", models.LeadStage.is_archived == False)  # noqa: E712
+        .order_by(models.LeadStage.order.asc()).first()
+    )
+    old_kind = lead.stage.kind if lead.stage else None
+    if won_stage:
+        lead.stage_id = won_stage.id
+        lead.status = won_stage.slug
+        if old_kind != "won" and lead.referral_credited_at is None:
+            lead.referral_credited_at = datetime.utcnow()
+            _bump_referral_stat(db, lead.referred_by_id, paid_delta=1)
+    lead.updated_by_id = actor.id
+    lead.updated_at = datetime.utcnow()
+    _log_lead_activity(
+        db, lead_id=lead.id, action="converted",
+        description=(f"Talabaga aylantirildi (#{student.id})"
+                     + (f", guruh: {group.name}" if group else "")),
+        author_id=actor.id, meta={"student_id": student.id, "group_id": group.id if group else None},
+    )
+    db.commit()
+    db.refresh(student)
+    return _student_read(student)
 
 
 @app.get("/leads/{lead_id}/activities", response_model=List[schemas.LeadActivityRead])
@@ -4430,7 +5658,7 @@ def claim_lead(
     db.commit()
     db.refresh(lead)
     db.refresh(lead, attribute_names=["created_by", "updated_by", "claimed_by", "stage", "source", "interested_group"])
-    return _lead_read(lead)
+    return _lead_read(lead, _next_reminder_for(db, lead.id))
 
 
 @app.post("/leads/{lead_id}/release", response_model=schemas.LeadRead)
@@ -4458,7 +5686,7 @@ def release_lead(
     db.commit()
     db.refresh(lead)
     db.refresh(lead, attribute_names=["created_by", "updated_by", "claimed_by", "stage", "source", "interested_group"])
-    return _lead_read(lead)
+    return _lead_read(lead, _next_reminder_for(db, lead.id))
 
 
 @app.post("/leads/{lead_id}/share", response_model=schemas.LeadRead)
@@ -4492,7 +5720,7 @@ def share_lead(
     db.commit()
     db.refresh(lead)
     db.refresh(lead, attribute_names=["created_by", "updated_by", "claimed_by", "stage", "source", "interested_group"])
-    return _lead_read(lead)
+    return _lead_read(lead, _next_reminder_for(db, lead.id))
 
 
 @app.delete("/leads/{lead_id}", status_code=204)
@@ -4506,6 +5734,18 @@ def delete_lead(
         raise HTTPException(404, "Lid topilmadi")
     if actor.role == UserRole.sales.value and lead.created_by_id != actor.id:
         raise HTTPException(403, "Faqat o'z lidingizni o'chira olasiz")
+    # SQLite'da FK majburlanmagani uchun ondelete=CASCADE ishlamaydi —
+    # bog'liq yozuvlarni o'zimiz tozalaymiz, aks holda yetim qatorlar qoladi.
+    db.query(models.Reminder).filter(models.Reminder.lead_id == lead.id).delete(synchronize_session=False)
+    db.query(models.FacebookLead).filter(models.FacebookLead.lead_id == lead.id).update(
+        {"lead_id": None}, synchronize_session=False
+    )
+    # Statistika lid bilan birga qaytarilsin (aks holda "to'lagan"lar soni oshib qolaveradi)
+    _revoke_referral_credit(db, lead)
+    _bump_referral_stat(
+        db, lead.referred_by_id, leads_delta=-1,
+        period=lead.created_at.strftime("%Y-%m") if lead.created_at else None,
+    )
     db.delete(lead)
     db.commit()
 
@@ -4706,8 +5946,10 @@ def list_reminders(
         q = q.filter(models.Reminder.lead_id == lead_id)
     if status:
         q = q.filter(models.Reminder.status == status)
-    # Har kim o'ziga tegishli / o'zi yaratganini ko'radi; admin — hammasini
-    if mine and actor.role != UserRole.admin.value:
+    # Har kim o'ziga tegishli / o'zi yaratganini ko'radi; admin — hammasini.
+    # Ma'lum bir lid uchun (drawer/tarix) filtr qo'llanmaydi — o'sha lidga
+    # kirish huquqi bo'lgan har kim boshqalar yozgan izoh/eslatmalarni ham ko'rishi kerak.
+    if mine and not lead_id and actor.role != UserRole.admin.value:
         q = q.filter(
             (models.Reminder.assigned_to_id == actor.id) |
             (models.Reminder.created_by_id == actor.id)
@@ -4765,6 +6007,9 @@ def update_reminder(
         setattr(r, field, val)
     if data.get("status") == "done" and not r.done_at:
         r.done_at = datetime.utcnow()
+    # Muddat surilgan bo'lsa — bildirishnoma yangi vaqtda qaytadan yuborilsin
+    if "due_at" in data or "snoozed_until" in data:
+        r.notified_at = None
     r.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(r)
@@ -4783,6 +6028,150 @@ def delete_reminder(
         raise HTTPException(404, "Eslatma topilmadi")
     db.delete(r)
     db.commit()
+
+
+# ── Eslatma bildirishnomalari ────────────────────────────────────────────────
+# Shu paytgacha eslatmalar hech qachon "otmasdi": muddati kelganda hech kimga
+# xabar bormasdi, shuning uchun bazadagi eslatmalar muddati o'tgan holda
+# osilib qolgan edi. Quyidagi fon jarayoni har daqiqada tekshiradi.
+
+def _reminders_due_tick() -> None:
+    from .database import SessionLocal
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        due = (
+            db.query(models.Reminder)
+            .options(joinedload(models.Reminder.lead))
+            .filter(
+                models.Reminder.status == "pending",
+                models.Reminder.notified_at.is_(None),
+                func.coalesce(models.Reminder.snoozed_until, models.Reminder.due_at) <= now,
+            )
+            .limit(100)
+            .all()
+        )
+        for r in due:
+            target = r.assigned_to_id or r.created_by_id
+            lead_name = r.lead.full_name if r.lead else "lid"
+            if target:
+                db.add(models.Notification(
+                    user_id=target,
+                    notification_type="reminder_due",
+                    title="Eslatma vaqti keldi",
+                    body=f"{lead_name} · {r.body or r.kind}",
+                    link=f"/leads?lead={r.lead_id}",
+                    is_read=False, created_at=now,
+                ))
+            r.notified_at = now
+        if due:
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+_notif_prune_last: Optional[datetime] = None
+
+
+def _prune_notifications() -> None:
+    """Eski bildirishnomalarni tozalash — jadval cheksiz o'smasin.
+
+    O'qilganlari 14 kundan, o'qilmaganlari 90 kundan keyin o'chadi; egasi
+    o'chirilgan foydalanuvchiga tegishli yetim qatorlar ham tozalanadi.
+    """
+    from .database import SessionLocal
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        db.query(models.Notification).filter(
+            models.Notification.is_read == True,  # noqa: E712
+            models.Notification.created_at < now - timedelta(days=14),
+        ).delete(synchronize_session=False)
+        db.query(models.Notification).filter(
+            models.Notification.created_at < now - timedelta(days=90),
+        ).delete(synchronize_session=False)
+        alive_ids = [u[0] for u in db.query(models.User.id).all()]
+        if alive_ids:
+            db.query(models.Notification).filter(
+                ~models.Notification.user_id.in_(alive_ids)
+            ).delete(synchronize_session=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _reminder_scheduler_loop() -> None:
+    import time
+    global _notif_prune_last
+    while True:
+        _reminders_due_tick()
+        if _notif_prune_last is None or (datetime.utcnow() - _notif_prune_last) > timedelta(hours=24):
+            _prune_notifications()
+            _notif_prune_last = datetime.utcnow()
+        time.sleep(60)
+
+
+@app.on_event("startup")
+def start_reminder_scheduler() -> None:
+    import threading
+    threading.Thread(target=_reminder_scheduler_loop, daemon=True).start()
+
+
+@app.get("/leads/comment-stats", response_model=schemas.CommentStatsRead)
+def lead_comment_stats(
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Lidlarga yozilgan izohlar statistikasi — nechta, qachondan qachongacha,
+    qaysi oyda ko'proq yozilgan.
+
+    Manba — lid tarixidagi `note` yozuvlari (izohlar aynan shu yerda saqlanadi).
+    Ilgari bu yerda `Reminder.body` sanalardi, ya'ni butunlay boshqa jadval:
+    bazada 2 ta eslatma bo'lgani uchun panel doim deyarli bo'sh chiqardi.
+    """
+    is_note = models.LeadActivity.action == "note"
+    base = db.query(models.LeadActivity).filter(is_note)
+    total = base.count()
+    first_at = base.order_by(models.LeadActivity.created_at.asc()).with_entities(models.LeadActivity.created_at).first()
+    last_at = base.order_by(models.LeadActivity.created_at.desc()).with_entities(models.LeadActivity.created_at).first()
+
+    period_expr = func.strftime("%Y-%m", models.LeadActivity.created_at)
+    month_rows = (
+        db.query(period_expr, func.count(models.LeadActivity.id))
+        .filter(is_note)
+        .group_by(period_expr)
+        .order_by(period_expr)
+        .all()
+    )
+    months = [schemas.CommentMonthStat(period=p, count=c) for p, c in month_rows if p]
+    busiest = max(months, key=lambda m: m.count) if months else None
+
+    author_rows = (
+        db.query(models.User.id, models.User.full_name, models.User.username, func.count(models.LeadActivity.id))
+        .join(models.LeadActivity, models.LeadActivity.author_id == models.User.id)
+        .filter(is_note)
+        .group_by(models.User.id)
+        .order_by(func.count(models.LeadActivity.id).desc())
+        .limit(10)
+        .all()
+    )
+    by_author = [
+        schemas.CommentAuthorStat(author_name=(fn or un), count=c)
+        for _, fn, un, c in author_rows
+    ]
+
+    return schemas.CommentStatsRead(
+        total=total,
+        first_at=first_at[0] if first_at else None,
+        last_at=last_at[0] if last_at else None,
+        months=months,
+        busiest_month=busiest,
+        by_author=by_author,
+    )
 
 
 # ── Notifications ─────────────────────────────────────────────────────────────
@@ -4952,6 +6341,1072 @@ def _intake_read(f: models.IntakeForm) -> schemas.IntakeFormRead:
     )
 
 
+@app.get("/leads/conversion-tree", response_model=schemas.ConversionTreeRead)
+def lead_conversion_tree(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2000, le=2100),
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Lid oqimi daraxti — bosqichlar, o'tishlar va konversiya ko'rsatkichlari.
+
+    ── Sanalar semantikasi (MUHIM) ────────────────────────────────────────
+    Bu yerda uch xil sana aralashib ketishi mumkin edi, shuning uchun har biri
+    aniq belgilangan:
+
+      * KOGORTA — tanlangan OYDA YARATILGAN lidlar (`leads.created_at`).
+        Daraxtdagi barcha foizlar shu to'plamga nisbatan hisoblanadi.
+      * O'TISHLAR — shu kogorta lidlarining bosqich o'zgarishlari
+        (`lead_activities.action='stage_changed'`), VAQTIDAN QAT'I NAZAR.
+        Sababi: 30-avgustda kelgan lid 2-sentyabrda to'lashi mumkin —
+        o'tishni oy chegarasi bilan kesib tashlasak, konversiya kam ko'rinardi.
+      * TUSHUM — kogortadagi "won" lidlarga mos keluvchi talabalarning
+        HAQIQIY to'lovlari (`payments.amount`), to'lov sanasidan qat'i nazar.
+
+    Oy chegarasi Toshkent vaqtida olinadi (bazada vaqt naive UTC).
+
+    ── Lid → Talaba bog'lanishi ──────────────────────────────────────────
+    Bazada `leads.student_id` maydoni yo'q. Bog'lanish ikki manbadan tiklanadi:
+      1. `converted` faoliyat yozuvidagi `meta_json.student_id` (aniq manba);
+      2. u bo'lmasa — telefon raqami bo'yicha (`dedup_key`), ya'ni tizimning
+         o'zi dublikat izlashda ishlatadigan usul.
+    Ikkalasi ham topilmasa, lid "studentga o'tkazilmagan" deb belgilanadi —
+    bu menejment uchun haqiqiy signal, taxmin emas.
+    """
+    # ── Davr chegarasi (Toshkent oyi → naive UTC) ──
+    period_start, period_end = tz.month_bounds(year, month)
+
+    # ── Ruxsat: sales faqat o'z lidlarini ko'radi (mavjud qoidaning aynan o'zi) ──
+    is_sales = actor.role == UserRole.sales.value
+    can_see_operators = actor.role in (UserRole.admin.value, UserRole.hunter.value)
+
+    lead_q = db.query(models.Lead).filter(
+        models.Lead.created_at >= period_start,
+        models.Lead.created_at < period_end,
+    )
+    if is_sales:
+        lead_q = lead_q.filter(models.Lead.created_by_id == actor.id)
+    leads = lead_q.all()
+    lead_ids = [l.id for l in leads]
+    total = len(leads)
+
+    # ── Bosqichlar: arxivlangani ham kerak (tarixda uchraydi) ──
+    stages = db.query(models.LeadStage).order_by(models.LeadStage.order.asc()).all()
+    by_name = {s.name: s for s in stages}
+    by_id = {s.id: s for s in stages}
+
+    def stage_key(stage) -> str:
+        return f"s{stage.id}"
+
+    # Tarixda uchraydigan, lekin endi mavjud bo'lmagan bosqich nomlari uchun
+    # sun'iy tugun — ma'lumot yo'qolmasin.
+    ghost_order_base = (stages[-1].order + 10) if stages else 100
+    ghosts: dict = {}
+
+    def key_for_name(name: Optional[str]) -> Optional[str]:
+        if not name:
+            return None
+        st = by_name.get(name)
+        if st:
+            return stage_key(st)
+        if name not in ghosts:
+            ghosts[name] = {
+                "key": f"h:{name}", "id": None, "name": name, "slug": None,
+                "color": None, "kind": "unknown",
+                "order": ghost_order_base + len(ghosts),
+            }
+        return ghosts[name]["key"]
+
+    node_meta = {stage_key(s): {
+        "key": stage_key(s), "id": s.id, "name": s.name, "slug": s.slug,
+        "color": s.color, "kind": s.kind, "order": s.order,
+    } for s in stages}
+
+    if total == 0:
+        return schemas.ConversionTreeRead(
+            month=month, year=year, total_leads=0, won_leads=0, lost_leads=0,
+            open_leads=0, conversion_rate=0.0, revenue=0.0,
+            can_see_operators=can_see_operators,
+            scope="own" if is_sales else "all",
+        )
+
+    # ── Kogorta faoliyati ──
+    acts = (
+        db.query(models.LeadActivity)
+        .filter(
+            models.LeadActivity.lead_id.in_(lead_ids),
+            models.LeadActivity.action.in_(["stage_changed", "converted"]),
+        )
+        .order_by(models.LeadActivity.created_at.asc(), models.LeadActivity.id.asc())
+        .all()
+    )
+    moves_by_lead: dict = {}
+    converted_student: dict = {}
+    for a in acts:
+        if a.action == "converted":
+            try:
+                meta = json.loads(a.meta_json) if a.meta_json else {}
+            except (ValueError, TypeError):
+                meta = {}
+            if meta.get("student_id"):
+                converted_student[a.lead_id] = meta["student_id"]
+            continue
+        try:
+            meta = json.loads(a.meta_json) if a.meta_json else {}
+        except (ValueError, TypeError):
+            meta = {}
+        old, new = meta.get("old"), meta.get("new")
+        if not old or not new or old == new:
+            continue
+        moves_by_lead.setdefault(a.lead_id, []).append((old, new, a.created_at))
+
+    # ── Har bir lid yo'lini tiklaymiz ──
+    # Boshlang'ich bosqich alohida yozilmaydi, shuning uchun uni birinchi
+    # o'tishning "old" qiymatidan olamiz; o'tish bo'lmasa — joriy bosqichdan.
+    visited: dict = {}          # node_key -> set(lead_id)
+    trans: dict = {}            # (from_key,to_key) -> set(lead_id)
+    won_stage_ids = {s.id for s in stages if s.kind == "won"}
+    lost_stage_ids = {s.id for s in stages if s.kind == "lost"}
+    first_stage = next((s for s in stages if s.kind == "lead" and not s.is_archived), None)
+    first_key = stage_key(first_stage) if first_stage else None
+
+    won_keys = {stage_key(by_id[i]) for i in won_stage_ids if i in by_id}
+    won_ids, lost_ids, direct_ids = [], [], []
+    conv_days = []
+
+    for lead in leads:
+        moves = moves_by_lead.get(lead.id, [])
+        cur_stage = by_id.get(lead.stage_id)
+        if moves:
+            start_key = key_for_name(moves[0][0])
+        else:
+            start_key = stage_key(cur_stage) if cur_stage else first_key
+        touched = set()
+        if start_key:
+            visited.setdefault(start_key, set()).add(lead.id)
+            touched.add(start_key)
+        prev_key = start_key
+        for old, new, when in moves:
+            fk, tk = key_for_name(old), key_for_name(new)
+            if not fk or not tk:
+                continue
+            visited.setdefault(tk, set()).add(lead.id)
+            touched.add(fk); touched.add(tk)
+            trans.setdefault((fk, tk), set()).add(lead.id)
+            prev_key = tk
+        # Joriy bosqich tarixda umuman uchramagan bo'lsa ham hisobga olamiz.
+        if cur_stage:
+            visited.setdefault(stage_key(cur_stage), set()).add(lead.id)
+            touched.add(stage_key(cur_stage))
+
+        # "Won" — bosqichga YETIB BORGAN lidlar, joriy bosqichi bo'yicha emas.
+        # Aks holda daraxtda "To'landi: 2" turib, konversiya 0% ko'rinardi
+        # (lid to'lagandan keyin boshqa bosqichga ko'chirilgan bo'lsa).
+        if touched & won_keys:
+            won_ids.append(lead.id)
+            # Konversiya vaqti: yaratilgandan "won"ga birinchi o'tishgacha.
+            won_at = next(
+                (w for o, n, w in moves if (by_name.get(n).id if by_name.get(n) else None) in won_stage_ids),
+                None,
+            )
+            if won_at and lead.created_at:
+                days = (won_at - lead.created_at).total_seconds() / 86400.0
+                if days >= 0:
+                    conv_days.append(days)
+            # To'g'ridan-to'g'ri konversiya: bitta o'tishda birinchi bosqichdan "won"ga.
+            if len(moves) == 1 and start_key == first_key:
+                direct_ids.append(lead.id)
+        elif lead.stage_id in lost_stage_ids:
+            lost_ids.append(lead.id)
+
+    # ── Tushum: kogorta "won" lidlarini talabalarga bog'laymiz ──
+    student_of_lead: dict = dict(converted_student)
+    unresolved = [l for l in leads if l.id in set(won_ids) and l.id not in student_of_lead]
+    if unresolved:
+        students = db.query(models.Student.id, models.Student.phone1).all()
+        by_phone = {}
+        for sid, phone in students:
+            k = dedup_key(phone or "")
+            if k:
+                by_phone.setdefault(k, sid)
+        for l in unresolved:
+            k = dedup_key(l.phone or "")
+            if k and k in by_phone:
+                student_of_lead[l.id] = by_phone[k]
+
+    revenue_by_lead: dict = {}
+    if student_of_lead:
+        sids = list(set(student_of_lead.values()))
+        pay_rows = dict(
+            db.query(models.Payment.student_id, func.coalesce(func.sum(models.Payment.amount), 0))
+            .filter(models.Payment.student_id.in_(sids))
+            .group_by(models.Payment.student_id).all()
+        )
+        for lid, sid in student_of_lead.items():
+            revenue_by_lead[lid] = float(pay_rows.get(sid, 0) or 0)
+    revenue = float(sum(revenue_by_lead.values()))
+
+    won_set = set(won_ids)
+    students_created = len([lid for lid in won_ids if lid in student_of_lead])
+    missing_student_ids = [lid for lid in won_ids if lid not in student_of_lead]
+
+    # ── Tugunlar ──
+    all_meta = dict(node_meta)
+    all_meta.update({g["key"]: g for g in ghosts.values()})
+    nodes = []
+    for key, ids in visited.items():
+        m = all_meta.get(key)
+        if not m:
+            continue
+        nodes.append(schemas.TreeStageNode(
+            key=key, id=m["id"], name=m["name"], slug=m["slug"], color=m["color"],
+            kind=m["kind"], order=m["order"], count=len(ids),
+            percent=round(len(ids) / total * 100, 1),
+            lead_ids=sorted(ids),
+        ))
+    nodes.sort(key=lambda n: (n.order, n.name))
+    node_count = {n.key: n.count for n in nodes}
+
+    # ── O'tishlar ──
+    def transition_kind(fk: str, tk: str) -> str:
+        fm, tm = all_meta.get(fk, {}), all_meta.get(tk, {})
+        if tm.get("kind") == "lost":
+            return "lost"
+        if tm.get("kind") == "won":
+            return "won"
+        fo, to = fm.get("order", 0), tm.get("order", 0)
+        if to < fo:
+            return "back"
+        # Oraliqda tirik bosqich qolib ketgan bo'lsa — sakrash.
+        skipped = [s for s in stages
+                   if not s.is_archived and s.kind == "lead" and fo < s.order < to]
+        return "skip" if skipped else "normal"
+
+    transitions = []
+    for (fk, tk), ids in trans.items():
+        base = node_count.get(fk, 0)
+        transitions.append(schemas.TreeTransition(
+            from_key=fk, to_key=tk,
+            from_name=all_meta.get(fk, {}).get("name", "?"),
+            to_name=all_meta.get(tk, {}).get("name", "?"),
+            count=len(ids),
+            percent=round(len(ids) / base * 100, 1) if base else 0.0,
+            kind=transition_kind(fk, tk),
+            lead_ids=sorted(ids),
+        ))
+    transitions.sort(key=lambda t: t.count, reverse=True)
+
+    # ── Manba kesimi ──
+    src_names = {s.id: s.name for s in db.query(models.LeadSource).all()}
+    src_map: dict = {}
+    for l in leads:
+        e = src_map.setdefault(l.source_id, {"leads": [], "won": 0, "revenue": 0.0})
+        e["leads"].append(l.id)
+        if l.id in won_set:
+            e["won"] += 1
+            e["revenue"] += revenue_by_lead.get(l.id, 0.0)
+    sources = [
+        schemas.TreeSourceStat(
+            id=sid, name=src_names.get(sid, "Ko'rsatilmagan"),
+            leads=len(e["leads"]), won=e["won"],
+            conversion=round(e["won"] / len(e["leads"]) * 100, 1) if e["leads"] else 0.0,
+            revenue=e["revenue"], lead_ids=e["leads"],
+        )
+        for sid, e in src_map.items()
+    ]
+    sources.sort(key=lambda s: s.leads, reverse=True)
+
+    # ── Operator kesimi (faqat ruxsat bo'lsa) ──
+    operators = []
+    if can_see_operators:
+        user_names = {u.id: (u.full_name or u.username)
+                      for u in db.query(models.User).all()}
+        op_map: dict = {}
+        for l in leads:
+            owner = l.claimed_by_id or l.created_by_id
+            e = op_map.setdefault(owner, {"leads": 0, "won": 0, "revenue": 0.0})
+            e["leads"] += 1
+            if l.id in won_set:
+                e["won"] += 1
+                e["revenue"] += revenue_by_lead.get(l.id, 0.0)
+        operators = [
+            schemas.TreeOperatorStat(
+                id=uid, name=user_names.get(uid, "Noma'lum"),
+                leads=e["leads"], won=e["won"],
+                conversion=round(e["won"] / e["leads"] * 100, 1) if e["leads"] else 0.0,
+                revenue=e["revenue"],
+            )
+            for uid, e in op_map.items()
+        ]
+        operators.sort(key=lambda o: (o.won, o.leads), reverse=True)
+
+    # ── Xulosalar (qoidaga asoslangan, matn to'qilmaydi) ──
+    insights = []
+    lost_trans = [t for t in transitions if t.kind == "lost"]
+    if lost_trans:
+        worst = max(lost_trans, key=lambda t: t.count)
+        insights.append(schemas.TreeInsight(
+            kind="bottleneck", title="Eng katta yo'qotish",
+            detail=f"{worst.from_name} → {worst.to_name}",
+            value=f"{worst.count} ta lid · {worst.percent}%",
+            from_key=worst.from_key, to_key=worst.to_key,
+        ))
+    # Eng katta to'xtash: bosqichga yetgan, lekin undan chiqmagan lidlar.
+    stuck = []
+    for n in nodes:
+        if n.kind != "lead":
+            continue
+        out = sum(t.count for t in transitions if t.from_key == n.key)
+        if n.count and out < n.count:
+            stuck.append((n, n.count - out))
+    if stuck:
+        node, cnt = max(stuck, key=lambda x: x[1])
+        insights.append(schemas.TreeInsight(
+            kind="warning", title="Eng ko'p to'xtab qolgan bosqich",
+            detail=node.name, value=f"{cnt} ta lid shu bosqichda qolgan",
+            stage_key=node.key,
+        ))
+    if direct_ids:
+        insights.append(schemas.TreeInsight(
+            kind="success", title="To'g'ridan-to'g'ri konversiya",
+            detail="Oraliq bosqichlarsiz to'lovga o'tgan lidlar",
+            value=f"{len(direct_ids)} ta · {round(len(direct_ids) / total * 100, 1)}%",
+        ))
+    if missing_student_ids:
+        insights.append(schemas.TreeInsight(
+            kind="warning", title="Studentga o'tkazilmagan",
+            detail="To'landi bosqichida, lekin talaba kartasi yaratilmagan",
+            value=f"{len(missing_student_ids)} ta lid",
+        ))
+    best_src = max((s for s in sources if s.leads >= 5), key=lambda s: s.conversion, default=None)
+    if best_src and best_src.won:
+        insights.append(schemas.TreeInsight(
+            kind="info", title="Eng yaxshi manba",
+            detail=best_src.name,
+            value=f"{best_src.conversion}% konversiya · {best_src.leads} ta lid",
+        ))
+    overdue = sum(1 for l in leads
+                  if l.callback_at and l.callback_at < datetime.utcnow()
+                  and l.stage_id not in won_stage_ids and l.stage_id not in lost_stage_ids)
+    if overdue:
+        insights.append(schemas.TreeInsight(
+            kind="warning", title="Muddati o'tgan qayta aloqa",
+            detail="Kelish/qo'ng'iroq vaqti o'tib ketgan, hali yopilmagan lidlar",
+            value=f"{overdue} ta lid",
+        ))
+
+    conv_days.sort()
+    median = None
+    if conv_days:
+        mid = len(conv_days) // 2
+        median = conv_days[mid] if len(conv_days) % 2 else (conv_days[mid - 1] + conv_days[mid]) / 2
+
+    return schemas.ConversionTreeRead(
+        month=month, year=year,
+        total_leads=total, won_leads=len(won_ids), lost_leads=len(lost_ids),
+        open_leads=total - len(won_ids) - len(lost_ids),
+        conversion_rate=round(len(won_ids) / total * 100, 1) if total else 0.0,
+        revenue=revenue,
+        avg_conversion_days=round(sum(conv_days) / len(conv_days), 1) if conv_days else None,
+        median_conversion_days=round(median, 1) if median is not None else None,
+        avg_revenue_per_won=round(revenue / len(won_ids), 2) if won_ids else None,
+        direct_conversions=len(direct_ids), direct_conversion_ids=sorted(direct_ids),
+        students_created=students_created,
+        won_without_student=len(missing_student_ids),
+        won_without_student_ids=sorted(missing_student_ids),
+        stages=nodes, transitions=transitions, insights=insights,
+        sources=sources, operators=operators,
+        can_see_operators=can_see_operators,
+        scope="own" if is_sales else "all",
+    )
+
+
+@app.get("/leads/by-ids", response_model=List[schemas.LeadRead])
+def leads_by_ids(
+    ids: str = Query(..., description="Vergul bilan ajratilgan lid ID'lari"),
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Daraxtdagi tugun/o'tish bosilganda — aynan o'sha lidlarni qaytaradi.
+
+    Tugunda mingta lid bo'lishi mumkin, shuning uchun daraxt javobida faqat
+    ID'lar keladi; to'liq kartalar esa foydalanuvchi bosgandan keyin,
+    sahifalab olinadi.
+    """
+    try:
+        wanted = [int(x) for x in ids.split(",") if x.strip()][:200]
+    except ValueError:
+        raise HTTPException(400, "ID ro'yxati noto'g'ri")
+    if not wanted:
+        return []
+    q = db.query(models.Lead).options(*_LEAD_LOAD).filter(models.Lead.id.in_(wanted))
+    if actor.role == UserRole.sales.value:
+        q = q.filter(models.Lead.created_by_id == actor.id)
+    rows = q.all()
+    order = {lid: i for i, lid in enumerate(wanted)}
+    rows.sort(key=lambda l: order.get(l.id, 10**6))
+    return [_lead_read(l, _next_reminder_for(db, l.id)) for l in rows]
+
+
+# ── Ish markazi (Work Center) ───────────────────────────────────────────────
+
+OUTCOME_LABELS = {
+    "connected":     "Bog'landim",
+    "no_answer":     "Javob bermadi",
+    "phone_off":     "Telefon o'chiq",
+    "callback":      "Qayta qo'ng'iroq kerak",
+    "resolved":      "Muammo hal qilindi",
+    "will_pay":      "To'lov qiladi",
+    "wont_pay":      "To'lov qilmaydi",
+    "returns":       "Darsga qaytadi",
+    "not_returns":   "Darsga qaytmaydi",
+    "interested":    "Qiziqdi",
+    "rejected":      "Rad etdi",
+    "wrong_number":  "Noto'g'ri raqam",
+}
+# "Bog'landim" deb sanaladigan natijalar — connect rate shu asosda.
+CONNECTED_OUTCOMES = {"connected", "resolved", "will_pay", "wont_pay",
+                      "returns", "not_returns", "interested", "rejected"}
+NO_ANSWER_OUTCOMES = {"no_answer", "phone_off"}
+
+
+def _wc_local_now() -> datetime:
+    return tz.now()
+
+
+def _wc_day_bounds(d: date):
+    """Toshkent kunining naive UTC chegaralari."""
+    return tz.day_bounds(d)
+
+
+def _task_read(t, state, actor_names) -> schemas.WorkTaskRead:
+    """Nomzod vazifa + saqlangan holat → javob modeli."""
+    now_utc = datetime.utcnow()
+    status = state.status if state else "new"
+    due = t.due_at
+    if state and state.postponed_to:
+        due = state.postponed_to
+    return schemas.WorkTaskRead(
+        source_key=t.source_key,
+        task_type=t.task_type,
+        task_label=work_center.TASK_LABELS.get(t.task_type, t.task_type),
+        title=t.title, reason=t.reason, priority=t.priority,
+        status=status,
+        due_at=due,
+        overdue=bool(due and due < now_utc and status in ("new", "in_progress", "postponed")),
+        entity_type=t.entity_type, entity_id=t.entity_id,
+        phone=t.phone, phone2=t.phone2,
+        assigned_to_id=t.assigned_to_id,
+        assigned_to_name=actor_names.get(t.assigned_to_id),
+        meta=t.meta,
+        last_outcome=state.outcome if state else None,
+        last_note=state.note if state else None,
+        completed_at=state.completed_at if state else None,
+        postponed_to=state.postponed_to if state else None,
+        is_manual=bool(state.is_manual) if state else False,
+    )
+
+
+@app.get("/work-center", response_model=schemas.WorkCenterRead)
+def work_center_queue(
+    user_id: Optional[int] = Query(None, description="Admin boshqa xodim navbatini ko'rishi uchun"),
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Kunlik ish navbati — CRM ma'lumotidan avtomatik yig'iladi.
+
+    Vazifalar bazada saqlanmaydi: ular har so'rovda qayta hisoblanadi va
+    `work_tasks` jadvalidagi holat bilan birlashtiriladi (`source_key` orqali).
+    Shuning uchun "bir xil eslatma qayta-qayta chiqdi" holati bo'lishi mumkin
+    emas — kalit deterministik.
+    """
+    is_admin = actor.role == UserRole.admin.value
+    target = actor
+    if user_id and user_id != actor.id:
+        if not is_admin:
+            raise HTTPException(403, "Boshqa xodim navbatini ko'rish faqat admin uchun")
+        target = db.query(models.User).filter(models.User.id == user_id).first()
+        if not target:
+            raise HTTPException(404, "Xodim topilmadi")
+
+    now_local = _wc_local_now()
+    candidates = work_center.generate(db, now_local, _students_payment_map)
+
+    # Ko'rinish filtri — vazifa kimga tegishli.
+    visible = [t for t in candidates
+               if work_center.visible_to(t.assigned_to_id, target, t.entity_type)]
+
+    keys = [t.source_key for t in visible]
+    states = {}
+    if keys:
+        for row in db.query(models.WorkTask).filter(models.WorkTask.source_key.in_(keys)).all():
+            states[row.source_key] = row
+
+    # Qo'lda yaratilgan vazifalar (generator bilmaydi) — ular faqat jadvalda.
+    manual_q = db.query(models.WorkTask).filter(
+        models.WorkTask.is_manual == True,                       # noqa: E712
+        models.WorkTask.status.notin_(["cancelled"]),
+    )
+    if not is_admin or target.id != actor.id:
+        manual_q = manual_q.filter(models.WorkTask.assigned_to_id == target.id)
+    manual_rows = manual_q.all()
+
+    names = {u.id: (u.full_name or u.username) for u in db.query(models.User).all()}
+
+    items = [_task_read(t, states.get(t.source_key), names) for t in visible]
+    for row in manual_rows:
+        if row.source_key in states:
+            continue
+        now_utc = datetime.utcnow()
+        due = row.postponed_to or row.due_at
+        items.append(schemas.WorkTaskRead(
+            source_key=row.source_key, task_type=row.task_type,
+            task_label=work_center.TASK_LABELS.get(row.task_type, row.task_type),
+            title=row.title, reason=row.reason, priority=row.priority,
+            status=row.status, due_at=due,
+            overdue=bool(due and due < now_utc and row.status in ("new", "in_progress", "postponed")),
+            entity_type=row.entity_type, entity_id=row.entity_id,
+            assigned_to_id=row.assigned_to_id,
+            assigned_to_name=names.get(row.assigned_to_id),
+            last_outcome=row.outcome, last_note=row.note,
+            completed_at=row.completed_at, postponed_to=row.postponed_to,
+            is_manual=True,
+        ))
+
+    # Keyinga surilgan vazifa yangi vaqti kelgunicha navbatda ko'rinmaydi.
+    now_utc = datetime.utcnow()
+    open_items, done_items = [], []
+    for it in items:
+        if it.status == "completed":
+            done_items.append(it)
+        elif it.status == "cancelled":
+            continue
+        elif it.status == "skipped":
+            continue
+        elif it.status == "postponed" and it.postponed_to and it.postponed_to > now_utc:
+            continue
+        else:
+            open_items.append(it)
+
+    open_items.sort(key=lambda t: (
+        work_center.PRIORITY_ORDER.get(t.priority, 9),
+        not t.overdue,
+        t.due_at or datetime.max,
+    ))
+    done_items.sort(key=lambda t: t.completed_at or datetime.min, reverse=True)
+
+    # Bugungi qo'ng'iroq statistikasi
+    day_start, day_end = _wc_day_bounds(now_local.date())
+    calls = (
+        db.query(models.CallActivity)
+        .filter(models.CallActivity.user_id == target.id,
+                models.CallActivity.created_at >= day_start,
+                models.CallActivity.created_at < day_end).all()
+    )
+    daily = schemas.DailyCallStats(
+        calls=len(calls),
+        connected=sum(1 for c in calls if c.outcome in CONNECTED_OUTCOMES),
+        no_answer=sum(1 for c in calls if c.outcome in NO_ANSWER_OUTCOMES),
+        callbacks=sum(1 for c in calls if c.next_action == "callback"),
+        payment_calls=sum(1 for c in calls if c.task_type == work_center.PAYMENT_REMINDER),
+        absence_calls=sum(1 for c in calls if c.task_type == work_center.ABSENCE_FOLLOWUP),
+        completed_tasks=len([t for t in done_items
+                             if t.completed_at and day_start <= t.completed_at < day_end]),
+    )
+
+    return schemas.WorkCenterRead(
+        date=now_local.date().isoformat(),
+        kpi=schemas.WorkCenterKpi(
+            total=len(open_items) + len(done_items),
+            completed=len(done_items),
+            remaining=len(open_items),
+            critical=sum(1 for t in open_items if t.priority == "critical"),
+            overdue=sum(1 for t in open_items if t.overdue),
+        ),
+        tasks=open_items,
+        completed=done_items[:50],
+        daily=daily,
+        scope_user_id=target.id,
+        can_pick_user=is_admin,
+    )
+
+
+@app.post("/work-center/tasks", response_model=schemas.WorkTaskRead, status_code=201)
+def create_work_task(
+    payload: schemas.WorkTaskCreate,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Qo'lda vazifa yaratish (generator qamramaydigan ishlar uchun)."""
+    if payload.priority not in work_center.PRIORITY_ORDER:
+        raise HTTPException(400, "Noto'g'ri muhimlik darajasi")
+    assigned = payload.assigned_to_id or actor.id
+    if assigned != actor.id and actor.role != UserRole.admin.value:
+        raise HTTPException(403, "Boshqa xodimga vazifa biriktirish faqat admin uchun")
+
+    key = f"manual:{actor.id}:{int(datetime.utcnow().timestamp() * 1000)}"
+    row = models.WorkTask(
+        source_key=key, task_type=work_center.GENERAL_TASK,
+        assigned_to_id=assigned, created_by_id=actor.id,
+        entity_type=payload.entity_type, entity_id=payload.entity_id,
+        title=payload.title.strip(), reason=payload.reason,
+        priority=payload.priority, status="new",
+        due_at=payload.due_at, is_manual=True,
+        created_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    names = {u.id: (u.full_name or u.username) for u in db.query(models.User).all()}
+    return schemas.WorkTaskRead(
+        source_key=row.source_key, task_type=row.task_type,
+        task_label=work_center.TASK_LABELS[row.task_type],
+        title=row.title, reason=row.reason, priority=row.priority,
+        status=row.status, due_at=row.due_at,
+        entity_type=row.entity_type, entity_id=row.entity_id,
+        assigned_to_id=row.assigned_to_id, assigned_to_name=names.get(row.assigned_to_id),
+        is_manual=True,
+    )
+
+
+def _upsert_task_state(db, *, source_key, actor, status, note=None, outcome=None,
+                       postponed_to=None, task_type=None, title=None,
+                       entity_type=None, entity_id=None, priority=None):
+    """Vazifa holatini yozadi (yo'q bo'lsa yaratadi).
+
+    `source_key` unikal bo'lgani uchun bitta vazifa uchun bitta qator —
+    generator uni necha marta chiqarishidan qat'i nazar.
+    """
+    row = db.query(models.WorkTask).filter(models.WorkTask.source_key == source_key).first()
+    if not row:
+        row = models.WorkTask(
+            source_key=source_key,
+            task_type=task_type or work_center.GENERAL_TASK,
+            title=(title or source_key)[:200],
+            entity_type=entity_type, entity_id=entity_id,
+            priority=priority or "normal",
+            assigned_to_id=actor.id, created_by_id=actor.id,
+            status="new", created_at=datetime.utcnow(), is_manual=False,
+        )
+        db.add(row)
+    row.status = status
+    row.updated_at = datetime.utcnow()
+    if note is not None:
+        row.note = note
+    if outcome is not None:
+        row.outcome = outcome
+    if status == "completed":
+        row.completed_at = datetime.utcnow()
+        row.completed_by_id = actor.id
+        row.postponed_to = None
+    if status == "postponed":
+        row.postponed_to = postponed_to
+        row.completed_at = None
+    return row
+
+
+@app.patch("/work-center/tasks", response_model=schemas.WorkTaskRead)
+def update_work_task(
+    source_key: str = Query(..., max_length=160),
+    payload: schemas.WorkTaskUpdate = None,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Vazifa holatini o'zgartirish: bajarildi / o'tkazib yuborildi / surildi."""
+    allowed = {"new", "in_progress", "completed", "skipped", "postponed", "cancelled"}
+    if payload.status not in allowed:
+        raise HTTPException(400, "Noto'g'ri holat")
+    if payload.status == "postponed" and not payload.postponed_to:
+        raise HTTPException(400, "Keyinga surish uchun yangi vaqt kerak")
+
+    existing = db.query(models.WorkTask).filter(models.WorkTask.source_key == source_key).first()
+    if existing and existing.assigned_to_id and existing.assigned_to_id != actor.id \
+            and actor.role != UserRole.admin.value:
+        raise HTTPException(403, "Bu vazifa boshqa xodimga biriktirilgan")
+
+    row = _upsert_task_state(
+        db, source_key=source_key, actor=actor, status=payload.status,
+        note=payload.note, postponed_to=payload.postponed_to,
+        task_type=payload.task_type, title=payload.title,
+        entity_type=payload.entity_type, entity_id=payload.entity_id,
+        priority=payload.priority,
+    )
+    db.commit()
+    db.refresh(row)
+    names = {u.id: (u.full_name or u.username) for u in db.query(models.User).all()}
+    return schemas.WorkTaskRead(
+        source_key=row.source_key, task_type=row.task_type,
+        task_label=work_center.TASK_LABELS.get(row.task_type, row.task_type),
+        title=row.title, reason=row.reason, priority=row.priority,
+        status=row.status, due_at=row.postponed_to or row.due_at,
+        entity_type=row.entity_type, entity_id=row.entity_id,
+        assigned_to_id=row.assigned_to_id, assigned_to_name=names.get(row.assigned_to_id),
+        last_outcome=row.outcome, last_note=row.note,
+        completed_at=row.completed_at, postponed_to=row.postponed_to,
+        is_manual=bool(row.is_manual),
+    )
+
+
+# ── Qo'ng'iroq faoliyati ────────────────────────────────────────────────────
+
+def _call_read(c: models.CallActivity, names: dict) -> schemas.CallActivityRead:
+    return schemas.CallActivityRead(
+        id=c.id, user_id=c.user_id, user_name=names.get(c.user_id),
+        entity_type=c.entity_type, entity_id=c.entity_id, entity_name=c.entity_name,
+        phone=c.phone, task_type=c.task_type,
+        outcome=c.outcome, outcome_label=OUTCOME_LABELS.get(c.outcome, c.outcome),
+        note=c.note, next_action=c.next_action, next_action_at=c.next_action_at,
+        duration_sec=c.duration_sec, state_before=c.state_before, state_after=c.state_after,
+        payment_promise=c.payment_promise, promised_at=c.promised_at,
+        created_at=c.created_at, edited_at=c.edited_at,
+        edited_by_name=names.get(c.edited_by_id), original_note=c.original_note,
+    )
+
+
+@app.post("/activities/call", response_model=schemas.CallActivityRead, status_code=201)
+def log_call(
+    payload: schemas.CallActivityCreate,
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Qo'ng'iroq natijasini yozish.
+
+    MUHIM: bu yerda lid bosqichi AVTOMATIK o'zgartirilmaydi. Natija "Qiziqdi"
+    bo'lsa ham bosqichni tizim o'zi ko'chirmaydi — xodim buni ongli ravishda
+    lid kartasida qiladi. Sabab: qo'ng'iroq natijasi taxmin, bosqich esa
+    hisobot va maosh hisob-kitobiga ta'sir qiladigan rasmiy holat.
+
+    "Keyingi qadam: qayta qo'ng'iroq" tanlansa, mavjud ESLATMA tizimida
+    (`reminders`) yozuv yaratiladi — bu qo'shimcha ma'lumot, mavjud holatni
+    buzmaydi.
+    """
+    if payload.outcome not in OUTCOME_LABELS:
+        raise HTTPException(400, "Noma'lum qo'ng'iroq natijasi")
+    if payload.entity_type not in ("lead", "student"):
+        raise HTTPException(400, "entity_type 'lead' yoki 'student' bo'lishi kerak")
+
+    name = phone = state_before = None
+    lead = None
+    if payload.entity_type == "lead":
+        lead = db.query(models.Lead).options(joinedload(models.Lead.stage)) \
+                 .filter(models.Lead.id == payload.entity_id).first()
+        if not lead:
+            raise HTTPException(404, "Lid topilmadi")
+        if actor.role == UserRole.sales.value and lead.created_by_id != actor.id:
+            raise HTTPException(403, "Faqat o'z lidingiz bilan ishlay olasiz")
+        name, phone = lead.full_name, lead.phone
+        state_before = lead.stage.name if lead.stage else lead.status
+    else:
+        # Talabalar bo'yicha qo'ng'iroq — sales rolida bunday ish yo'q.
+        if actor.role == UserRole.sales.value:
+            raise HTTPException(403, "Ruxsat yo'q")
+        st = db.query(models.Student).filter(models.Student.id == payload.entity_id).first()
+        if not st:
+            raise HTTPException(404, "Talaba topilmadi")
+        name = st.full_name
+        phone = st.father_phone or st.mother_phone or st.phone1
+
+    call = models.CallActivity(
+        user_id=actor.id,
+        entity_type=payload.entity_type, entity_id=payload.entity_id,
+        entity_name=name, phone=phone,
+        source_key=payload.source_key, task_type=payload.task_type,
+        outcome=payload.outcome, note=(payload.note or "").strip() or None,
+        next_action=payload.next_action, next_action_at=payload.next_action_at,
+        duration_sec=payload.duration_sec,
+        state_before=state_before, state_after=state_before,
+        payment_promise=payload.payment_promise, promised_at=payload.promised_at,
+        created_at=datetime.utcnow(),
+    )
+    db.add(call)
+    db.flush()
+
+    # Lid tarixi ikkiga bo'linib ketmasin — mavjud timeline'ga ham yozamiz.
+    if lead is not None:
+        desc = f"Qo'ng'iroq: {OUTCOME_LABELS[payload.outcome]}"
+        if call.note:
+            desc += f" — {call.note}"
+        _log_lead_activity(
+            db, lead_id=lead.id, action="call", description=desc, author_id=actor.id,
+            meta={"outcome": payload.outcome, "call_id": call.id,
+                  "next_action": payload.next_action},
+        )
+        lead.updated_by_id = actor.id
+        lead.updated_at = datetime.utcnow()
+
+    # Keyingi qadam "qayta qo'ng'iroq" bo'lsa — eslatma yaratamiz (lid uchun).
+    if payload.next_action == "callback" and payload.next_action_at and lead is not None:
+        db.add(models.Reminder(
+            lead_id=lead.id, assigned_to_id=actor.id, created_by_id=actor.id,
+            due_at=payload.next_action_at, body=call.note, kind="call",
+            status="pending", created_at=datetime.utcnow(),
+        ))
+
+    if payload.complete_task and payload.source_key:
+        _upsert_task_state(
+            db, source_key=payload.source_key, actor=actor, status="completed",
+            note=call.note, outcome=payload.outcome,
+            task_type=payload.task_type, title=name,
+            entity_type=payload.entity_type, entity_id=payload.entity_id,
+        )
+
+    db.commit()
+    db.refresh(call)
+    names = {u.id: (u.full_name or u.username) for u in db.query(models.User).all()}
+    return _call_read(call, names)
+
+
+@app.get("/activities", response_model=schemas.CallActivityPage)
+def list_call_activities(
+    user_id: Optional[int] = None,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[int] = None,
+    task_type: Optional[str] = None,
+    outcome: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    q: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Qo'ng'iroqlar jurnali — serverda filtrlanadi va sahifalanadi.
+
+    Admin hammasini ko'radi; qolgan rollar faqat O'Z yozuvlarini
+    (`user_id` so'ralsa ham bekor qilinadi).
+    """
+    query = db.query(models.CallActivity)
+    if actor.role != UserRole.admin.value:
+        query = query.filter(models.CallActivity.user_id == actor.id)
+    elif user_id:
+        query = query.filter(models.CallActivity.user_id == user_id)
+
+    if entity_type:
+        query = query.filter(models.CallActivity.entity_type == entity_type)
+    if entity_id:
+        query = query.filter(models.CallActivity.entity_id == entity_id)
+    if task_type:
+        query = query.filter(models.CallActivity.task_type == task_type)
+    if outcome:
+        query = query.filter(models.CallActivity.outcome == outcome)
+    if date_from:
+        query = query.filter(models.CallActivity.created_at >= _wc_day_bounds(date_from)[0])
+    if date_to:
+        query = query.filter(models.CallActivity.created_at < _wc_day_bounds(date_to)[1])
+    if q:
+        like = f"%{q.strip()}%"
+        query = query.filter(
+            (models.CallActivity.entity_name.ilike(like)) |
+            (models.CallActivity.phone.ilike(like)) |
+            (models.CallActivity.note.ilike(like))
+        )
+
+    total = query.count()
+    rows = (query.order_by(models.CallActivity.created_at.desc())
+            .offset((page - 1) * per_page).limit(per_page).all())
+    names = {u.id: (u.full_name or u.username) for u in db.query(models.User).all()}
+    return schemas.CallActivityPage(
+        items=[_call_read(c, names) for c in rows],
+        total=total, page=page,
+        pages=max(1, (total + per_page - 1) // per_page),
+    )
+
+
+def _operator_stats(db, day_from, day_to, user_ids=None):
+    """Operatorlar kesimi — bitta so'rovdan yig'iladi."""
+    q = db.query(models.CallActivity).filter(
+        models.CallActivity.created_at >= day_from,
+        models.CallActivity.created_at < day_to,
+    )
+    if user_ids is not None:
+        q = q.filter(models.CallActivity.user_id.in_(user_ids))
+    calls = q.all()
+
+    agg = {}
+    for c in calls:
+        e = agg.setdefault(c.user_id, {
+            "calls": 0, "connected": 0, "no_answer": 0, "callbacks": 0,
+            "payment": 0, "absence": 0, "leads": set(),
+        })
+        e["calls"] += 1
+        if c.outcome in CONNECTED_OUTCOMES:
+            e["connected"] += 1
+        if c.outcome in NO_ANSWER_OUTCOMES:
+            e["no_answer"] += 1
+        if c.next_action == "callback":
+            e["callbacks"] += 1
+        if c.task_type == work_center.PAYMENT_REMINDER:
+            e["payment"] += 1
+        if c.task_type == work_center.ABSENCE_FOLLOWUP:
+            e["absence"] += 1
+        if c.entity_type == "lead":
+            e["leads"].add(c.entity_id)
+
+    done = dict(
+        db.query(models.WorkTask.completed_by_id, func.count(models.WorkTask.id))
+        .filter(models.WorkTask.status == "completed",
+                models.WorkTask.completed_at >= day_from,
+                models.WorkTask.completed_at < day_to)
+        .group_by(models.WorkTask.completed_by_id).all()
+    )
+    for uid, n in done.items():
+        if uid is None:
+            continue
+        agg.setdefault(uid, {"calls": 0, "connected": 0, "no_answer": 0,
+                             "callbacks": 0, "payment": 0, "absence": 0, "leads": set()})
+
+    users = {u.id: u for u in db.query(models.User).filter(
+        models.User.id.in_(list(agg) or [0])).all()}
+    out = []
+    for uid, e in agg.items():
+        u = users.get(uid)
+        out.append(schemas.OperatorStat(
+            id=uid, name=(u.full_name or u.username) if u else "Noma'lum",
+            role=u.role if u else None,
+            calls=e["calls"], connected=e["connected"], no_answer=e["no_answer"],
+            completed_tasks=done.get(uid, 0),
+            callbacks=e["callbacks"], payment_calls=e["payment"],
+            absence_calls=e["absence"], leads_handled=len(e["leads"]),
+            connect_rate=round(e["connected"] / e["calls"] * 100, 1) if e["calls"] else 0.0,
+        ))
+    out.sort(key=lambda o: (o.calls, o.completed_tasks), reverse=True)
+    return out
+
+
+@app.get("/activities/stats", response_model=schemas.TeamActivityRead)
+def team_activity_stats(
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Jamoa faoliyati — faqat admin uchun."""
+    today = _wc_local_now().date()
+    d_from = date_from or today
+    d_to = date_to or today
+    if d_to < d_from:
+        d_from, d_to = d_to, d_from
+    day_from = _wc_day_bounds(d_from)[0]
+    day_to = _wc_day_bounds(d_to)[1]
+
+    ops = _operator_stats(db, day_from, day_to)
+    total_calls = sum(o.calls for o in ops)
+    connected = sum(o.connected for o in ops)
+
+    insights = []
+    if ops:
+        best = max(ops, key=lambda o: (o.connect_rate, o.calls))
+        if best.calls >= 5:
+            insights.append(schemas.TreeInsight(
+                kind="success", title="Eng yuqori bog'lanish darajasi",
+                detail=best.name, value=f"{best.connect_rate}% ({best.calls} qo'ng'iroq)",
+            ))
+        busiest = max(ops, key=lambda o: o.calls)
+        if busiest.calls:
+            insights.append(schemas.TreeInsight(
+                kind="info", title="Eng ko'p qo'ng'iroq",
+                detail=busiest.name, value=f"{busiest.calls} ta",
+            ))
+    # Oldingi teng uzunlikdagi davr bilan taqqoslash
+    span = (d_to - d_from).days + 1
+    prev_from = _wc_day_bounds(d_from - timedelta(days=span))[0]
+    prev_calls = (
+        db.query(func.count(models.CallActivity.id))
+        .filter(models.CallActivity.created_at >= prev_from,
+                models.CallActivity.created_at < day_from).scalar() or 0
+    )
+    if prev_calls:
+        delta = round((total_calls - prev_calls) / prev_calls * 100, 1)
+        insights.append(schemas.TreeInsight(
+            kind="info" if delta >= 0 else "warning",
+            title="Oldingi davrga nisbatan",
+            detail=f"{prev_calls} → {total_calls} qo'ng'iroq",
+            value=f"{'+' if delta >= 0 else ''}{delta}%",
+        ))
+
+    overdue_tasks = (
+        db.query(func.count(models.Reminder.id))
+        .filter(models.Reminder.status == "pending",
+                func.coalesce(models.Reminder.snoozed_until, models.Reminder.due_at) < datetime.utcnow())
+        .scalar() or 0
+    )
+    if overdue_tasks:
+        insights.append(schemas.TreeInsight(
+            kind="warning", title="Kechikkan eslatmalar",
+            detail="Muddati o'tgan, hali bajarilmagan",
+            value=f"{overdue_tasks} ta",
+        ))
+
+    return schemas.TeamActivityRead(
+        date_from=d_from, date_to=d_to,
+        total_calls=total_calls, connected=connected,
+        no_answer=sum(o.no_answer for o in ops),
+        completed_tasks=sum(o.completed_tasks for o in ops),
+        callbacks=sum(o.callbacks for o in ops),
+        payment_calls=sum(o.payment_calls for o in ops),
+        absence_calls=sum(o.absence_calls for o in ops),
+        connect_rate=round(connected / total_calls * 100, 1) if total_calls else 0.0,
+        avg_calls_per_operator=round(total_calls / len(ops), 1) if ops else 0.0,
+        operators=ops, insights=insights,
+    )
+
+
+@app.get("/activities/operators/{operator_id}", response_model=schemas.OperatorDetailRead)
+def operator_activity_detail(
+    operator_id: int,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Bitta operatorning batafsil faoliyati — qo'ng'iroqlar va vazifalar."""
+    today = _wc_local_now().date()
+    d_from = date_from or today
+    d_to = date_to or today
+    if d_to < d_from:
+        d_from, d_to = d_to, d_from
+    day_from = _wc_day_bounds(d_from)[0]
+    day_to = _wc_day_bounds(d_to)[1]
+
+    u = db.query(models.User).filter(models.User.id == operator_id).first()
+    if not u:
+        raise HTTPException(404, "Xodim topilmadi")
+
+    stats = _operator_stats(db, day_from, day_to, user_ids=[operator_id])
+    stat = stats[0] if stats else schemas.OperatorStat(
+        id=operator_id, name=u.full_name or u.username, role=u.role)
+
+    names = {x.id: (x.full_name or x.username) for x in db.query(models.User).all()}
+    calls = (
+        db.query(models.CallActivity)
+        .filter(models.CallActivity.user_id == operator_id,
+                models.CallActivity.created_at >= day_from,
+                models.CallActivity.created_at < day_to)
+        .order_by(models.CallActivity.created_at.desc()).limit(500).all()
+    )
+    tasks = (
+        db.query(models.WorkTask)
+        .filter(models.WorkTask.completed_by_id == operator_id,
+                models.WorkTask.completed_at >= day_from,
+                models.WorkTask.completed_at < day_to)
+        .order_by(models.WorkTask.completed_at.desc()).limit(200).all()
+    )
+    return schemas.OperatorDetailRead(
+        operator=stat, date_from=d_from, date_to=d_to,
+        calls=[_call_read(c, names) for c in calls],
+        tasks=[schemas.WorkTaskRead(
+            source_key=t.source_key, task_type=t.task_type,
+            task_label=work_center.TASK_LABELS.get(t.task_type, t.task_type),
+            title=t.title, reason=t.reason, priority=t.priority, status=t.status,
+            due_at=t.due_at, entity_type=t.entity_type, entity_id=t.entity_id,
+            assigned_to_id=t.assigned_to_id, assigned_to_name=names.get(t.assigned_to_id),
+            last_outcome=t.outcome, last_note=t.note,
+            completed_at=t.completed_at, is_manual=bool(t.is_manual),
+        ) for t in tasks],
+    )
+
+
 @app.get("/intake-forms", response_model=List[schemas.IntakeFormRead])
 def list_intake_forms(
     actor: models.User = Depends(require_admin),
@@ -5044,6 +7499,8 @@ def public_intake_submit(
     form = db.query(models.IntakeForm).filter(models.IntakeForm.slug == slug).first()
     if not form or not form.is_active:
         raise HTTPException(404, "Forma topilmadi yoki faol emas")
+    if _find_duplicate_lead(db, payload.phone):
+        raise HTTPException(409, "Bu raqam bilan ariza allaqachon qabul qilingan")
     stage = _default_stage(db)
     lead = models.Lead(
         full_name=payload.full_name.strip(),
@@ -5617,7 +8074,7 @@ def _send_staff_warning_notification(w: models.StaffWarning, staff: models.User)
         w.notify_error = "Xodimga Telegram ID biriktirilmagan (bot orqali /start bosishi kerak)"
         return
     emoji = SEVERITY_EMOJI.get(w.severity, "⚠️")
-    local_time = (w.created_at + timedelta(hours=5)).strftime("%d.%m.%Y %H:%M")
+    local_time = tz.to_local(w.created_at).strftime("%d.%m.%Y %H:%M")
     lines = [f"{emoji} <b>Sizga ogohlantirish berildi</b>", ""]
     if w.code:
         lines.append(f"Kod: {html.escape(w.code)}")
@@ -6024,6 +8481,19 @@ def set_bot_setting(key: str, payload: schemas.BotSettingValue, actor: models.Us
         return schemas.BotSettingValue(value=payload.value)
     finally:
         db.close()
+
+
+@app.post("/bot/investor/send-now")
+def investor_send_daily_stats_now(actor: models.User = Depends(require_admin)):
+    """Kunlik statistikani darhol investorlar guruhiga yuboradi (sinov/qo'lda yuborish uchun)."""
+    chat_id = _investor_setting("investor_chat_id")
+    if not chat_id:
+        raise HTTPException(status_code=400, detail="Investorlar guruhi Telegram chat ID kiritilmagan")
+    ok, err = send_telegram_message(chat_id, build_investor_daily_stats_message())
+    if ok:
+        today_str = tz.today().isoformat()
+        _investor_setting_set("investor_daily_stats_last_sent", today_str)
+    return {"ok": ok, "detail": err}
 
 
 @app.post("/bot/invite-links", response_model=schemas.BotInviteLinkRead, status_code=201)

@@ -99,7 +99,7 @@ function LessonDetail({ lesson, onSave, saving, canEdit }) {
 
       {canEdit && (
         <div className="actions">
-          <button className="button primary" type="submit" disabled={saving}>
+          <button className="button" type="submit" disabled={saving}>
             {saving ? 'Saqlanmoqda...' : 'Saqlash'}
           </button>
         </div>

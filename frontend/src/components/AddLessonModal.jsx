@@ -80,7 +80,7 @@ function AddLessonModal({ category, onSave, onClose, existingNumbers }) {
           </div>
           <div className="modal-footer">
             <button type="button" className="button secondary" onClick={onClose}>Bekor</button>
-            <button type="submit" className="button primary" disabled={saving}>
+            <button type="submit" className="button" disabled={saving}>
               {saving ? 'Saqlanmoqda...' : "Qo'shish"}
             </button>
           </div>

@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, tz
 from ..database import get_db
 from .. import security
 from . import schemas, service
@@ -131,7 +131,7 @@ def payment_summary(
     year: int | None = Query(None, ge=2020),
     db: Session = Depends(get_db),
 ):
-    now = datetime.utcnow()
+    now = tz.now()                      # standart oy/yil — Toshkent taqvimi
     return service.build_payment_summary(db, child, month or now.month, year or now.year)
 
 
@@ -142,7 +142,7 @@ def attendance(
     year: int | None = Query(None, ge=2020),
     db: Session = Depends(get_db),
 ):
-    now = datetime.utcnow()
+    now = tz.now()                      # standart oy/yil — Toshkent taqvimi
     return service.build_attendance(db, child, month or now.month, year or now.year)
 
 
