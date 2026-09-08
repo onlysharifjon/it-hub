@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -9,14 +8,17 @@ import {
   faXmark, faCircleExclamation,
 } from '@fortawesome/free-solid-svg-icons'
 import { fetchConversionTree, fetchLeadActivities, addLeadNote } from '../api'
-import KpiCard from './ui/KpiCard'
+import { PageIntro, SummaryRow, ViewTabs } from './ui/Workspace'
+import { Drawer } from './ui/Modal'
+import Overlay from './ui/Overlay'
+import useFocusTrap from './ui/useFocusTrap'
 import { EmptyState, ErrorState, CardSkeleton, Skeleton } from './ui/States'
-import ConversionTree from './tree/ConversionTree'
+import ConversionCanvas from './tree/ConversionCanvas'
+import useCanvasLayout from './tree/useCanvasLayout'
 import TreeMobile from './tree/TreeMobile'
-import TreeLegend from './tree/TreeLegend'
 import TreeDetailPanel from './tree/TreeDetailPanel'
 import { ConversionInsights, SourceConversion, OperatorConversion } from './tree/ConversionPanels'
-import { LINK_LABEL, findMainPath } from './tree/layout'
+import { LINK_LABEL } from './tree/layout'
 import { LeadDrawer } from './Leads'
 import { tashkentNow } from '../utils/datetime'
 
@@ -40,20 +42,6 @@ const money = (n) => Number(n || 0).toLocaleString('uz-UZ')
  *   o'tish   — kogorta lidlarining bosqich o'zgarishlari (vaqtdan qat'i nazar);
  *   tushum   — konversiya bo'lgan lidlarga bog'langan talabalarning to'lovlari.
  */
-/** Mobil ekran — grafik o'rniga soddalashtirilgan tik oqim ko'rsatiladi. */
-function useIsNarrow(px = 760) {
-  const [narrow, setNarrow] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(`(max-width:${px}px)`).matches)
-  useEffect(() => {
-    const mq = window.matchMedia(`(max-width:${px}px)`)
-    const on = e => setNarrow(e.matches)
-    mq.addEventListener('change', on)
-    setNarrow(mq.matches)
-    return () => mq.removeEventListener('change', on)
-  }, [px])
-  return narrow
-}
-
 export default function Tree({ currentUser }) {
   const now = tashkentNow()
   const [month, setMonth] = useState(now.getMonth() + 1)
@@ -62,24 +50,14 @@ export default function Tree({ currentUser }) {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
   const [selection, setSelection] = useState(null)
-  const [zoom, setZoom] = useState(1)
+  const canvasLayout = useCanvasLayout('minar:conversion-layout:v1:' + (currentUser?.id ?? 'local'))
+  const [mapView, setMapView] = useState(() => window.matchMedia('(max-width:760px)').matches ? 'list' : 'canvas')
   const [full, setFull] = useState(false)
+  const fullRef = useRef(null)
+  useFocusTrap(full, fullRef, () => setFull(false))
   const [openLead, setOpenLead] = useState(null)
   const [leadActivities, setLeadActivities] = useState([])
-  const isNarrow = useIsNarrow()
   const [showMinor, setShowMinor] = useState(false)
-  const scrollRef = useRef(null)
-  const [availWidth, setAvailWidth] = useState(0)
-
-  // Konteyner kengligini kuzatamiz — grafik unga moslanadi.
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(([e]) => setAvailWidth(e.contentRect.width - 32))
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [full, isNarrow, loading])
-
   const load = useCallback(async () => {
     setLoading(true); setErr(null)
     try {
@@ -99,10 +77,9 @@ export default function Tree({ currentUser }) {
   // Fullscreen — Escape bilan chiqish (§48).
   useEffect(() => {
     if (!full) return
-    const onKey = (e) => { if (e.key === 'Escape') setFull(false) }
-    window.addEventListener('keydown', onKey)
+    const previousOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = '' }
+    return () => { document.body.style.overflow = previousOverflow }
   }, [full])
 
   function shiftMonth(delta) {
@@ -211,15 +188,6 @@ export default function Tree({ currentUser }) {
           <FontAwesomeIcon icon={faChevronRight} />
         </button>
       </div>
-      <div className="tree-zoom" role="group" aria-label="Masshtab">
-        <button className="btn-icon" onClick={() => setZoom(z => Math.max(0.5, +(z - 0.1).toFixed(2)))}
-          aria-label="Kichraytirish"><FontAwesomeIcon icon={faMagnifyingGlassMinus} /></button>
-        <span className="tree-zoom-val">{Math.round(zoom * 100)}%</span>
-        <button className="btn-icon" onClick={() => setZoom(z => Math.min(1.6, +(z + 0.1).toFixed(2)))}
-          aria-label="Kattalashtirish"><FontAwesomeIcon icon={faMagnifyingGlassPlus} /></button>
-        <button className="btn-icon" onClick={() => setZoom(1)} aria-label="Masshtabni tiklash"
-          title="Tiklash"><FontAwesomeIcon icon={faArrowsRotate} /></button>
-      </div>
       <button className="button secondary" onClick={exportCsv} disabled={!data}>
         <FontAwesomeIcon icon={faFileArrowDown} /> Export
       </button>
@@ -252,84 +220,32 @@ export default function Tree({ currentUser }) {
     }
   }, [data, showMinor])
 
-  const tones = useMemo(() => {
-    if (!data) return new Set()
-    const mainPath = findMainPath(data.stages, shownTransitions)
-    const mainSet = new Set(mainPath)
-    const idx = new Map(data.stages.map((x, i) => [x.key, i]))
-    const set = new Set()
-    for (const t of shownTransitions) {
-      const adj = mainSet.has(t.from_key) && mainSet.has(t.to_key) &&
-        mainPath.indexOf(t.to_key) === mainPath.indexOf(t.from_key) + 1
-      set.add(adj && t.kind === 'normal' ? 'main' : t.kind)
-    }
-    return set
-  }, [data, shownTransitions])                 // eslint-disable-line react-hooks/exhaustive-deps
-
   const treeArea = (
-    <div className="tree-stage">
-      <div className="tree-stage-head">
-        <TreeLegend tones={tones} />
-        {minorCount > 0 && (
-          <button className={`chip${showMinor ? ' is-on' : ''}`}
-            onClick={() => setShowMinor(v => !v)}
-            title="1–2 lidli mayda o'tishlar">
-            Kichik oqimlar <span>{minorCount}</span>
-          </button>
-        )}
-        {selection && (
-          <button className="button secondary sm" onClick={() => setSelection(null)}>
-            <FontAwesomeIcon icon={faXmark} /> Filtrni tozalash
-          </button>
-        )}
-      </div>
-      <div className={`tree-scroll${isNarrow ? ' is-mobile' : ''}`} ref={scrollRef}>
-        {loading ? (
-          <div className="tree-skeleton">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} height={92} radius="var(--radius-lg)" />
-            ))}
-          </div>
-        ) : !data || data.total_leads === 0 ? (
-          <EmptyState
-            icon={faSitemap}
-            title="Bu oy uchun lidlar topilmadi"
-            description={`${MONTHS[month - 1]} ${year} oyida yaratilgan lid yo'q. Boshqa oyni tanlab ko'ring.`}
-          />
-        ) : isNarrow ? (
-          <TreeMobile
-            stages={data.stages} transitions={shownTransitions}
-            total={data.total_leads}
-            onSelectNode={selectNode} onSelectTransition={selectTransition}
-          />
-        ) : (
-          <ConversionTree
-            stages={data.stages}
-            transitions={shownTransitions}
-            total={data.total_leads}
-            availableWidth={availWidth}
-            selection={selection}
-            onSelectNode={selectNode}
-            onSelectTransition={selectTransition}
-            zoom={zoom}
-          />
-        )}
-      </div>
-    </div>
+    <section className="map-stage">
+      <header className="map-stage-bar">
+        <div className="map-stage-title"><span><FontAwesomeIcon icon={faSitemap} /></span><div><h2>Konversiya xaritasi</h2><p>{data?.stages.length || 0} bosqich · {shownTransitions.length} o‘tish</p></div></div>
+        <div className="map-stage-views">
+          {minorCount > 0 && <button className={'chip' + (showMinor ? ' is-on' : '')} onClick={() => setShowMinor(v => !v)} aria-pressed={showMinor}>Kichik oqimlar <span>{minorCount}</span></button>}
+          <ViewTabs label="Xarita ko‘rinishi" value={mapView} onChange={setMapView} items={[{ key: 'canvas', label: 'Xarita' }, { key: 'list', label: 'Ro‘yxat' }]} />
+        </div>
+      </header>
+      {loading ? <CardSkeleton count={3} /> : !data || data.total_leads === 0 ? <EmptyState icon={faSitemap} title="Bu oy uchun lidlar topilmadi" description={MONTHS[month - 1] + ' ' + year + ' oyida yaratilgan lid yo‘q. Boshqa oyni tanlang.'} /> : mapView === 'list' ? (
+        <div className="map-list"><TreeMobile stages={data.stages} transitions={shownTransitions} total={data.total_leads} onSelectNode={selectNode} onSelectTransition={selectTransition} /></div>
+      ) : <ConversionCanvas stages={data.stages} transitions={shownTransitions} total={data.total_leads} selection={selection} onSelectNode={selectNode} onSelectTransition={selectTransition} layout={canvasLayout} />}
+      <footer className="map-stage-footer"><div className="map-legend"><span><i />Jarayon</span>{shownTransitions.some(t => t.kind === 'back') && <span><i className="back" />Qayta o‘tish</span>}<span><i className="won" />To‘landi</span><span><i className="lost" />Yo‘qotish</span></div><span>Ctrl + g‘ildirak: masshtab · Shift: katakka tekislash</span></footer>
+    </section>
   )
 
   if (full) {
-    return createPortal(
-      <div className="tree-fullscreen" role="dialog" aria-modal="true" aria-label="Tree — to'liq ekran">
+    return (
+      <Overlay ref={fullRef} layer={1100} className="tree-fullscreen" role="dialog" aria-modal="true" aria-label="Tree — to'liq ekran">
         <div className="tree-full-bar">
           <h3><FontAwesomeIcon icon={faSitemap} /> Tree · {MONTHS[month - 1]} {year}</h3>
           <span style={{ flex: 1 }} />
           {controls}
         </div>
-        <div className="tree-full-body">
-          {treeArea}
-          <TreeDetailPanel selection={selection} onClear={() => setSelection(null)} onOpenLead={showLead} />
-        </div>
+        <div className="tree-full-body">{treeArea}</div>
+        <Drawer open={!!selection} title="Xarita tafsilotlari" onClose={() => setSelection(null)} width={500}><TreeDetailPanel selection={selection} onClear={() => setSelection(null)} onOpenLead={showLead} /></Drawer>
         {openLead && (
           <LeadDrawer
             lead={openLead} stages={[]} activities={leadActivities}
@@ -338,22 +254,13 @@ export default function Tree({ currentUser }) {
             onClose={() => setOpenLead(null)} onNote={addNote}
           />
         )}
-      </div>,
-      document.body,
+      </Overlay>
     )
   }
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div>
-          <h2><FontAwesomeIcon icon={faSitemap} /> Tree</h2>
-          <p className="page-sub">Lid oqimini vizual ko'ring va konversiya jarayonini tahlil qiling</p>
-        </div>
-      </div>
-
-      {controls}
-
+    <div className="page tree-studio map-workspace">
+      <PageIntro title="Tree" eyebrow="Konversiya tahlili" description="Aloqalardan natijagacha. Jarayonni o‘zingiz joylashtiring." actions={controls} />
       {err ? (
         <ErrorState
           title="Conversion ma'lumotlarini yuklashda xatolik yuz berdi"
@@ -361,24 +268,12 @@ export default function Tree({ currentUser }) {
         />
       ) : (
         <>
-          <div className="kpi-grid" style={{ marginTop: 16 }}>
-            {loading ? <CardSkeleton count={4} /> : (
-              <>
-                <KpiCard label="Jami lidlar" icon={faUsers} tone="primary"
-                  value={money(data?.total_leads)}
-                  sub={`${MONTHS[month - 1]} ${year} · yaratilgan`} />
-                <KpiCard label="Konversiya" icon={faPercent} tone="success"
-                  value={`${data?.conversion_rate ?? 0}%`}
-                  sub={`${money(data?.won_leads)} ta to'landi · ${money(data?.lost_leads)} rad etildi`} />
-                <KpiCard label="O'rtacha konversiya" icon={faClock} tone="info"
-                  value={data?.avg_conversion_days != null ? `${data.avg_conversion_days} kun` : '—'}
-                  sub={data?.median_conversion_days != null ? `mediana ${data.median_conversion_days} kun` : 'hali konversiya yo\'q'} />
-                <KpiCard label="To'langan tushum" icon={faMoneyBillWave} tone="accent"
-                  value={money(data?.revenue)} unit="so'm"
-                  sub={data?.avg_revenue_per_won ? `o'rtacha ${money(data.avg_revenue_per_won)} / lid` : undefined} />
-              </>
-            )}
-          </div>
+          {loading ? <CardSkeleton count={4} /> : <SummaryRow items={[
+            { label: 'Jami lidlar', value: money(data?.total_leads), sub: MONTHS[month - 1] + ' ' + year + ' da yaratilgan' },
+            { label: 'Konversiya', value: (data?.conversion_rate ?? 0) + '%', sub: money(data?.won_leads) + ' to‘landi · ' + money(data?.lost_leads) + ' rad etildi', tone: 'success' },
+            { label: 'O‘rtacha konversiya', value: data?.avg_conversion_days ?? '—', unit: 'kun', sub: data?.median_conversion_days != null ? 'Mediana ' + data.median_conversion_days + ' kun' : 'Hali konversiya yo‘q' },
+            { label: 'To‘langan tushum', value: money(data?.revenue), unit: 'so‘m', sub: 'Ushbu lidlarga bog‘langan to‘lovlar' },
+          ]} />}
 
           {!loading && data && data.won_without_student > 0 && (
             <div className="tree-warn">
@@ -391,17 +286,12 @@ export default function Tree({ currentUser }) {
             </div>
           )}
 
-          {!loading && data && (
-            <ConversionInsights insights={data.insights} onFocus={focusInsight} />
-          )}
-
-          <div className="tree-layout">
-            {treeArea}
-            <TreeDetailPanel selection={selection} onClear={() => setSelection(null)} onOpenLead={showLead} />
-          </div>
+          <div className="tree-flow-workspace">{treeArea}</div>
+          <p className="flow-definition">Foizlar shu oyda kelgan lidlarga nisbatan. Joylashuvni ko‘chirish hisob-kitoblarga ta’sir qilmaydi.</p>
+          <Drawer open={!!selection} title="Xarita tafsilotlari" onClose={() => setSelection(null)} width={500}><TreeDetailPanel selection={selection} onClear={() => setSelection(null)} onOpenLead={showLead} /></Drawer>
 
           {!loading && data && data.total_leads > 0 && (
-            <div className="tree-tables">
+            <details className="map-reports"><summary>Manbalar va operatorlar tahlili <span>Hisobotlarni ochish</span></summary><ConversionInsights insights={data.insights} onFocus={focusInsight} /><div className="tree-tables">
               <section>
                 <h4>Manba bo'yicha konversiya</h4>
                 <SourceConversion sources={data.sources} />
@@ -412,7 +302,7 @@ export default function Tree({ currentUser }) {
                   <OperatorConversion operators={data.operators} />
                 </section>
               )}
-            </div>
+            </div></details>
           )}
         </>
       )}

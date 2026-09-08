@@ -1,9 +1,11 @@
+import { PageIntro, Initials, ViewTabs } from './ui/Workspace'
+import Overlay from './ui/Overlay'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faPen, faUsers, faUserPlus, faUserMinus,
-  faBoxArchive, faBoxOpen,
+  faBoxArchive, faBoxOpen, faArrowRight, faClock, faBookOpen,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchGroups, createGroup, updateGroup,
@@ -179,29 +181,11 @@ export default function Groups({ onOpenGroup }) {
   const availableStudents = allStudents.filter(s => !membersInDetail.includes(s.id))
 
   return (
-    <div className="page">
+    <div className="page groups-studio">
       {confirmUI}
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faUsers} className="page-icon" /> Guruhlar</h1>
-          <p className="page-subtitle">Kohorta, o'qituvchi, jadval va kurs progressi</p>
-        </div>
-        <div className="header-actions">
-          <button className="button" onClick={openAdd}>
-            <FontAwesomeIcon icon={faPlus} /> Guruh yaratish
-          </button>
-        </div>
-      </div>
-
+      <PageIntro title="Guruhlar" eyebrow="Ta’lim jarayoni" description="Guruhlar, jadval va o‘quv dasturi bir joyda." actions={<button className="button" onClick={openAdd}><FontAwesomeIcon icon={faPlus} /> Guruh yaratish</button>} />
+      <ViewTabs value={statusFilter} onChange={handleStatusFilter} items={[{ key: 'active', label: 'Faol guruhlar' }, { key: 'archived', label: 'Arxiv' }, { key: 'all', label: 'Barcha guruhlar' }]} />
       <div className="toolbar">
-        <div className="segmented" role="group" aria-label="Holat bo'yicha filtr">
-          {[['active', 'Faol'], ['archived', 'Arxiv'], ['all', 'Hammasi']].map(([val, label]) => (
-            <button key={val} className={statusFilter === val ? 'active' : ''}
-              onClick={() => handleStatusFilter(val)}>
-              {label}
-            </button>
-          ))}
-        </div>
         <div className="segmented" role="group" aria-label="Kun bo'yicha filtr">
           {[['all', 'Barchasi'], ['Juft kunlar', 'Juft'], ['Toq kunlar', 'Toq']].map(([val, label]) => (
             <button key={val} className={dayFilter === val ? 'active' : ''}
@@ -216,83 +200,15 @@ export default function Groups({ onOpenGroup }) {
 
       {loading ? <div className="muted center">Yuklanmoqda...</div> : (
         <>
-          <div className="groups-grid">
-            {(data.items || []).map(g => (
-              <div
-                key={g.id}
-                className={`group-card group-card-clickable ${!g.is_active ? 'inactive' : ''}`}
-                onClick={() => onOpenGroup(g)}
-              >
-                <div className="group-card-header">
-                  <h3>{g.name}</h3>
-                  <div className="group-card-badges">
-                    <span
-                      className="stage-badge"
-                      style={{
-                        background: STAGE_COLORS[g.stage || 'foundation'].bg,
-                        color: STAGE_COLORS[g.stage || 'foundation'].color,
-                      }}
-                    >
-                      {g.course_name || STAGE_LABELS[g.stage || 'foundation']}
-                    </span>
-                    <span className={`status-badge ${g.is_active ? 'active' : 'inactive'}`}>
-                      {g.is_active ? 'Faol' : 'Arxivda'}
-                    </span>
-                  </div>
-                </div>
-                <div className="group-card-info">
-                  <div><span className="label">Ustoz:</span> {g.teacher_name || '—'}</div>
-                  <div><span className="label">Narx:</span> {Number(g.course_price).toLocaleString()} so'm/oy</div>
-                  <div><span className="label">Jadval:</span> {g.schedule || '—'}{g.lesson_time ? ` — soat ${g.lesson_time}` : ''}</div>
-                  <div><span className="label">O'quvchilar:</span> <span className="badge">{g.student_count}</span></div>
-                </div>
-
-                {/* Progress bar */}
-                <div className="group-progress-wrap">
-                  <div className="group-progress-header">
-                    <span className="group-progress-label">
-                      {g.completed_lessons}/{g.total_lessons} dars
-                    </span>
-                    <span
-                      className="group-progress-pct"
-                      style={{ color: g.progress_pct >= 80 ? 'var(--danger)' : g.progress_pct >= 60 ? 'var(--warning)' : STAGE_COLORS[g.stage || 'foundation'].color }}
-                    >
-                      {g.progress_pct}%
-                    </span>
-                  </div>
-                  <div className="group-progress-bar">
-                    <div
-                      className="group-progress-fill"
-                      style={{
-                        width: `${g.progress_pct}%`,
-                        background: STAGE_COLORS[g.stage || 'foundation'].bar,
-                      }}
-                    />
-                  </div>
-                  <div className={`group-progress-remaining${
-                    g.remaining_lessons <= 0 ? ' is-done' : g.remaining_lessons <= 5 ? ' is-near' : ''
-                  }`}>
-                    {g.remaining_lessons > 0
-                      ? `${g.remaining_lessons} dars qoldi`
-                      : 'Kurs tugadi'}
-                  </div>
-                </div>
-
-                <div className="group-card-actions" onClick={e => e.stopPropagation()}>
-                  <button className="btn-sm" onClick={() => loadDetail(g.id)}>
-                    <FontAwesomeIcon icon={faUsers} /> Talabalar
-                  </button>
-                  <button className="btn-sm" onClick={() => openEdit(g)}>
-                    <FontAwesomeIcon icon={faPen} /> Tahrir
-                  </button>
-                  <button className="btn-sm" onClick={() => handleToggle(g)}>
-                    <FontAwesomeIcon icon={g.is_active ? faBoxArchive : faBoxOpen} />
-                    {g.is_active ? ' Arxivlash' : ' Arxivdan chiqarish'}
-                  </button>
-                </div>
-              </div>
-            ))}
-            {(data.items || []).length === 0 && <div className="muted center">Guruhlar yo'q</div>}
+          <div className="cohort-list">
+            <div className="cohort-list-labels"><span>Guruh / o‘qituvchi</span><span>Dars jadvali</span><span>O‘quv jarayoni</span><span>Guruh boshqaruvi</span></div>
+            {(data.items || []).map((g, i) => <article key={g.id} className={'cohort-row' + (!g.is_active ? ' is-archived' : '')}>
+              <button className="cohort-identity" onClick={() => onOpenGroup(g)} aria-label={g.name + ' guruhini ochish'}><span className={'cohort-symbol tone-' + (i % 3)}><FontAwesomeIcon icon={faBookOpen} /></span><span><small>{g.course_name || STAGE_LABELS[g.stage || 'foundation']}</small><strong>{g.name}</strong><span><Initials name={g.teacher_name} />{g.teacher_name || 'Ustoz biriktirilmagan'}</span></span></button>
+              <div className="cohort-schedule"><strong><FontAwesomeIcon icon={faClock} />{g.lesson_time || 'Vaqt belgilanmagan'}</strong><span>{g.schedule || 'Jadval belgilanmagan'}</span><small>{g.student_count} ta talaba · {Number(g.course_price).toLocaleString()} so‘m / oy</small></div>
+              <div className="cohort-progress"><div><span>{g.completed_lessons}/{g.total_lessons} dars</span><strong>{g.progress_pct}%</strong></div><div className="cohort-track"><i style={{ width: Math.min(100, Math.max(0, Number(g.progress_pct) || 0)) + '%' }} /></div><small>{g.remaining_lessons > 0 ? g.remaining_lessons + ' ta dars qoldi' : 'Kurs yakunlangan'}</small></div>
+              <div className="cohort-actions"><button className="button secondary small" onClick={() => loadDetail(g.id)}><FontAwesomeIcon icon={faUsers} /> Talabalar</button><div><button className="btn-icon" aria-label={g.name + ' guruhini tahrirlash'} title="Tahrirlash" onClick={() => openEdit(g)}><FontAwesomeIcon icon={faPen} /></button><button className="btn-icon" aria-label={g.is_active ? 'Arxivlash' : 'Arxivdan chiqarish'} title={g.is_active ? 'Arxivlash' : 'Arxivdan chiqarish'} onClick={() => handleToggle(g)}><FontAwesomeIcon icon={g.is_active ? faBoxArchive : faBoxOpen} /></button><button className="btn-icon" aria-label={g.name + ' tafsilotlari'} title="Guruhni ochish" onClick={() => onOpenGroup(g)}><FontAwesomeIcon icon={faArrowRight} /></button></div></div>
+            </article>)}
+            {(data.items || []).length === 0 && <div className="cohort-empty"><FontAwesomeIcon icon={faUsers} /><h3>Guruhlar topilmadi</h3><p>Filtrlarni o‘zgartiring yoki yangi guruh yarating.</p></div>}
           </div>
           <Pagination meta={data.meta} onPageChange={handlePageChange} />
         </>
@@ -300,7 +216,7 @@ export default function Groups({ onOpenGroup }) {
 
       {/* Group form modal */}
       {modal && (
-        <div className="modal-overlay" onClick={() => setModal(null)}>
+        <Overlay className="modal-overlay" onClick={() => setModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{modal === 'add' ? 'Yangi guruh' : 'Guruhni tahrirlash'}</h3>
@@ -367,12 +283,12 @@ export default function Groups({ onOpenGroup }) {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {/* Detail modal */}
       {detailGroup && (
-        <div className="modal-overlay" onClick={() => setDetailGroup(null)}>
+        <Overlay className="modal-overlay" onClick={() => setDetailGroup(null)}>
           <div className="modal modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>👥 {detailGroup.name} — O'quvchilar</h3>
@@ -422,7 +338,7 @@ export default function Groups({ onOpenGroup }) {
               </table>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   )

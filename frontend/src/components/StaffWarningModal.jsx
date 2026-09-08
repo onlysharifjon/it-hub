@@ -1,3 +1,4 @@
+import Overlay from './ui/Overlay'
 import { useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -42,7 +43,7 @@ export default function StaffWarningModal({ staffList, codes, initialStaffId, on
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <Overlay className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h3><FontAwesomeIcon icon={faTriangleExclamation} /> Ogohlantirish berish</h3>
@@ -105,6 +106,6 @@ export default function StaffWarningModal({ staffList, codes, initialStaffId, on
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }

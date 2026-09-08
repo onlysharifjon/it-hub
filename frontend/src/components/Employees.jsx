@@ -1,3 +1,4 @@
+import { PageIntro } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -89,14 +90,7 @@ export default function Employees({ currentUser }) {
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faUsers} className="page-icon" /> Xodimlar</h1>
-          <p className="page-subtitle">
-            {staffList.length} xodim · {linked} tasi Telegramga bog'langan
-          </p>
-        </div>
-      </div>
+      <PageIntro title={<>Xodimlar</>} description={<>{staffList.length} xodim · {linked} tasi Telegramga bog'langan</>}  />
 
       <DataTable
         columns={columns}

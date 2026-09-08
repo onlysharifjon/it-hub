@@ -1,3 +1,7 @@
+import { PageIntro } from './ui/Workspace'
+import { Initials, SummaryRow, ViewTabs } from './ui/Workspace'
+import Overlay from './ui/Overlay'
+import PersonName from './ui/PersonName'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -23,6 +27,7 @@ export default function Parents({ currentUser }) {
   const [students, setStudents] = useState([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [parentView, setParentView] = useState('families')
 
   const [modal, setModal] = useState(false)
   const [form, setForm] = useState(EMPTY)
@@ -161,7 +166,7 @@ export default function Parents({ currentUser }) {
   }
 
   const columns = [
-    { key: 'full_name', header: 'Ota-ona', sortable: true, render: p => <strong>{p.full_name}</strong> },
+    { key: 'full_name', header: 'Ota-ona', sortable: true, render: p => <PersonName name={p.full_name} /> },
     { key: 'phone', header: 'Telefon', sortable: true },
     {
       key: 'username', header: 'Login', sortable: true,
@@ -222,17 +227,10 @@ export default function Parents({ currentUser }) {
   ]
 
   return (
-    <div className="page">
+    <div className="page parents-studio">
       {confirmUI}
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faPeopleRoof} className="page-icon" /> Ota-onalar</h1>
-          <p className="page-subtitle">
-            <FontAwesomeIcon icon={faMobileScreen} /> Mobil ilova akkauntlari — davomat, baho va to'lovlar.
-            Parol faqat yaratilganda bir marta ko'rsatiladi.
-          </p>
-        </div>
-        <div className="header-actions">
+      <PageIntro title={<>Ota-onalar</>} description={<><FontAwesomeIcon icon={faMobileScreen} /> Mobil ilova akkauntlari — davomat, baho va to'lovlar.
+            Parol faqat yaratilganda bir marta ko'rsatiladi.</>} actions={<><div className="header-actions">
           {isAdmin && (
             <button className="button secondary" onClick={() => { setBroadcastText(''); setBroadcastModal(true) }}>
               <FontAwesomeIcon icon={faPaperPlane} /> Telegram orqali xabar
@@ -243,26 +241,17 @@ export default function Parents({ currentUser }) {
               <FontAwesomeIcon icon={faPlus} /> Akkaunt ochish
             </button>
           )}
-        </div>
-      </div>
+        </div></>} />
 
-      <DataTable
+      <SummaryRow items={[{ label: 'Ro‘yxatdagi ota-onalar', value: items.length }, { label: 'Faol akkauntlar', value: items.filter(p => p.is_active).length }, { label: 'Biriktirilgan farzandlar', value: items.reduce((n,p) => n + (p.children || []).length, 0) }]} />
+      <div className="directory-toolbar"><ViewTabs value={parentView} onChange={setParentView} items={[{ key: 'families', label: 'Oilalar' }, { key: 'table', label: 'Jadval' }]} /><form onSubmit={handleSearch}><input className="field" value={search} onChange={e => setSearch(e.target.value)} placeholder="Ism yoki telefon bo‘yicha qidirish" aria-label="Ota-onani qidirish" /></form></div>
+      {parentView === 'families' && !loading && items.length > 0 ? <div className="family-grid">{items.map(p => <article key={p.id} className="family-card"><header><Initials name={p.full_name} /><div><h2>{p.full_name}</h2><a href={'tel:' + p.phone}>{p.phone || 'Telefon kiritilmagan'}</a></div><span className={'family-status' + (p.is_active ? ' is-active' : '')}>{p.is_active ? 'Faol' : 'Bloklangan'}</span></header><div className="family-children"><span className="studio-eyebrow">Farzandlar</span>{p.children?.length ? p.children.map(c => <div key={c.student_id ?? c.id}><Initials name={c.full_name || c.student_name} /><span>{c.full_name || c.student_name}</span>{canManage && <button className="btn-icon danger" title="Farzandni ajratish" aria-label="Farzandni ajratish" onClick={() => handleUnlink(p, c)}><FontAwesomeIcon icon={faXmark} /></button>}</div>) : <p>Hali farzand biriktirilmagan</p>}</div>{canManage && <footer><button className="button secondary small" onClick={() => setLinkFor(p)}><FontAwesomeIcon icon={faUserPlus} /> Biriktirish</button><button className="btn-icon" title="Parolni yangilash" aria-label="Parolni yangilash" onClick={() => handleReset(p)}><FontAwesomeIcon icon={faKey} /></button><button className="btn-icon" title={p.is_active ? 'Bloklash' : 'Faollashtirish'} aria-label={p.is_active ? 'Bloklash' : 'Faollashtirish'} onClick={() => handleToggle(p)}><FontAwesomeIcon icon={p.is_active ? faToggleOn : faToggleOff} /></button></footer>}</article>)}</div> : <DataTable
         columns={columns}
         rows={items}
         loading={loading}
         rowClassName={p => (!p.is_active ? 'row-inactive' : undefined)}
         clientPageSize={25}
         densityToggle densityKey="parents"
-        toolbar={
-          <form onSubmit={handleSearch} className="search-wrap">
-            <FontAwesomeIcon icon={faSearch} className="search-icon" />
-            <input
-              className="search-input"
-              placeholder="Ism, telefon yoki login..."
-              value={search} onChange={e => setSearch(e.target.value)}
-            />
-          </form>
-        }
         empty={{
           icon: faPeopleRoof,
           title: search ? 'Hech narsa topilmadi' : "Ota-ona akkauntlari yo'q",
@@ -270,11 +259,11 @@ export default function Parents({ currentUser }) {
             ? "Qidiruv so'zini o'zgartirib ko'ring."
             : 'Akkaunt ochilgach, ota-ona mobil ilovaga kira oladi.',
         }}
-      />
+      />}
 
       {/* Yangi akkaunt modali */}
       {modal && (
-        <div className="modal-overlay" onClick={() => setModal(false)}>
+        <Overlay className="modal-overlay" onClick={() => setModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faPeopleRoof} /> Ota-ona akkaunti ochish</h3>
@@ -331,12 +320,12 @@ export default function Parents({ currentUser }) {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {/* Login/parol modali — bir marta ko'rsatiladi */}
       {creds && (
-        <div className="modal-overlay" onClick={() => setCreds(null)}>
+        <Overlay className="modal-overlay" onClick={() => setCreds(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faKey} /> Kirish ma'lumotlari</h3>
@@ -372,12 +361,12 @@ export default function Parents({ currentUser }) {
               <button className="button" onClick={() => setCreds(null)}>Yopdim, saqlab oldim</button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {/* Farzand biriktirish modali */}
       {linkFor && (
-        <div className="modal-overlay" onClick={() => setLinkFor(null)}>
+        <Overlay className="modal-overlay" onClick={() => setLinkFor(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faUserPlus} /> Farzand biriktirish</h3>
@@ -403,11 +392,11 @@ export default function Parents({ currentUser }) {
               <button className="button secondary" onClick={() => setLinkFor(null)}>Yopish</button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {broadcastModal && (
-        <div className="modal-overlay" onClick={() => setBroadcastModal(false)}>
+        <Overlay className="modal-overlay" onClick={() => setBroadcastModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faPaperPlane} /> Barcha ota-onalarga xabar</h3>
@@ -430,7 +419,7 @@ export default function Parents({ currentUser }) {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   )

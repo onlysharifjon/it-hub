@@ -1,3 +1,6 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faChevronUp, faChevronDown, faXmark, faCheck } from '@fortawesome/free-solid-svg-icons'
+
 function LessonList({ lessons, selectedLessonId, onSelectLesson, canEdit, onReorder, onDelete }) {
   if (!lessons.length) {
     return <div className="muted">Bu hafta uchun darslar yo'q</div>
@@ -18,14 +21,15 @@ function LessonList({ lessons, selectedLessonId, onSelectLesson, canEdit, onReor
   return (
     <ul className="lesson-list">
       {lessons.map((lesson, index) => (
-        <li key={lesson.id} className="lesson-list-item">
+        <li key={lesson.id} className={`lesson-list-item${lesson.id === selectedLessonId ? ' is-selected' : ''}`}>
           <button
             className={`lesson-card ${lesson.id === selectedLessonId ? 'selected' : ''}`}
             onClick={() => onSelectLesson(lesson.id)}
+            aria-pressed={lesson.id === selectedLessonId}
           >
-            <div className="lesson-number">Dars {lesson.lesson_number}</div>
-            <div className="lesson-title">{lesson.title}</div>
-            <div className="lesson-section">Bo'lim: {lesson.section || 'kiritilmagan'}</div>
+            <span className="lesson-number">{String(lesson.lesson_number).padStart(2, '0')}</span>
+            <span className="lesson-row-copy"><span className="lesson-title">{lesson.title}</span><span className="lesson-section">{lesson.section || 'Bo‘lim kiritilmagan'}</span></span>
+            {lesson.guide?.trim() && lesson.homework?.trim() && <span className="lesson-ready" title="Qo‘llanma va uy vazifasi tayyor"><FontAwesomeIcon icon={faCheck} /></span>}
           </button>
 
           {canEdit && (
@@ -35,18 +39,21 @@ function LessonList({ lessons, selectedLessonId, onSelectLesson, canEdit, onReor
                 onClick={(e) => { e.stopPropagation(); moveLesson(index, -1) }}
                 disabled={index === 0}
                 title="Yuqoriga"
-              >▲</button>
+                aria-label={`${lesson.title}: yuqoriga`}
+              ><FontAwesomeIcon icon={faChevronUp} /></button>
               <button
                 className="icon-action"
                 onClick={(e) => { e.stopPropagation(); moveLesson(index, 1) }}
                 disabled={index === lessons.length - 1}
                 title="Pastga"
-              >▼</button>
+                aria-label={`${lesson.title}: pastga`}
+              ><FontAwesomeIcon icon={faChevronDown} /></button>
               <button
                 className="icon-action danger"
                 onClick={(e) => { e.stopPropagation(); onDelete(lesson) }}
                 title="O'chirish"
-              >✕</button>
+                aria-label={`${lesson.title}: o‘chirish`}
+              ><FontAwesomeIcon icon={faXmark} /></button>
             </div>
           )}
         </li>

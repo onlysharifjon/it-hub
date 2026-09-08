@@ -1,3 +1,4 @@
+import Overlay from './ui/Overlay'
 import { useEffect, useState } from 'react'
 import { fetchAuditLogs } from '../api'
 import DateFilter from './DateFilter'
@@ -56,7 +57,7 @@ function AuditLogPanel({ onClose }) {
   }
 
   return (
-    <div className="audit-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <Overlay className="audit-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="audit-panel">
         <div className="audit-header">
           <div>
@@ -110,7 +111,7 @@ function AuditLogPanel({ onClose }) {
           })}
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }
 

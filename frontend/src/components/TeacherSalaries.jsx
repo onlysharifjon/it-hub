@@ -1,3 +1,5 @@
+import { PageIntro } from './ui/Workspace'
+import { SummaryRow, Initials } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -44,64 +46,27 @@ export default function TeacherSalaries() {
   const teachers = data?.teachers || []
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faChalkboardTeacher} className="page-icon" /> O'qituvchi maoshlari</h1>
-          <p className="page-subtitle">
-            Formula: 50 000 so'm / oydagi darslar soni × talaba kelgan darslar soni
-          </p>
-        </div>
-        <div className="header-actions">
+    <div className="page teacher-pay-studio">
+      <PageIntro title={<>O'qituvchi maoshlari</>} description={<>Formula: 50 000 so'm / oydagi darslar soni × talaba kelgan darslar soni</>} actions={<><div className="header-actions">
           <select className="field-sm" value={month} onChange={e => setMonth(Number(e.target.value))} aria-label="Oy">
             {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
           </select>
           <select className="field-sm" value={year} onChange={e => setYear(Number(e.target.value))} aria-label="Yil">
             {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-        </div>
-      </div>
+        </div></>} />
 
       {loading ? (
         <TableSkeleton />
       ) : data ? (
         <>
-          <MetricStrip columns={3}>
-            <Metric label="Jami o'qituvchi maoshi" value={fmt(data.total_teacher_salary)} unit="so'm"
-              sub={`${MONTHS[month - 1]} ${year}`} />
-            <Metric label="O'qituvchilar" value={teachers.length} sub="faol guruhlar bo'yicha" />
-            <Metric label="O'rtacha maosh"
-              value={teachers.length ? fmt(Math.round(Number(data.total_teacher_salary) / teachers.length)) : '—'}
-              unit="so'm" sub="bitta o'qituvchiga" />
-          </MetricStrip>
-
+          <SummaryRow items={[{ label: 'Jami o‘qituvchi maoshi', value: fmt(data.total_teacher_salary), unit: 'so‘m', sub: MONTHS[month - 1] + ' ' + year }, { label: 'O‘qituvchilar', value: teachers.length, sub: 'Faol guruhlar bo‘yicha' }, { label: 'O‘rtacha maosh', value: teachers.length ? fmt(Math.round(Number(data.total_teacher_salary) / teachers.length)) : '—', unit: 'so‘m' }]} />
           {/* Per-teacher list */}
           <div className="finance-groups">
             {teachers.map(t => (
               <div key={t.teacher_id} className="finance-group-card">
 
-                {/* Teacher header */}
-                <div
-                  className="finance-group-header"
-                  onClick={() => toggleTeacher(t.teacher_id)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <div className="finance-group-name">
-                    <FontAwesomeIcon
-                      icon={expanded[t.teacher_id] ? faChevronDown : faChevronRight}
-                      style={{ fontSize: 11, marginRight: 8, color: 'var(--muted)' }}
-                    />
-                    <strong>{t.teacher_name}</strong>
-                    <span className="text-muted" style={{ fontSize: 12, marginLeft: 8 }}>
-                      {t.groups.length} guruh
-                    </span>
-                  </div>
-                  <div className="finance-group-stats">
-                    <span style={{ fontWeight: 700, color: 'var(--primary)', fontSize: 15 }}>
-                      {fmt(t.total_salary)} so'm
-                    </span>
-                  </div>
-                </div>
+                <button className="teacher-pay-header" onClick={() => toggleTeacher(t.teacher_id)} aria-expanded={!!expanded[t.teacher_id]}><Initials name={t.teacher_name} /><span className="teacher-pay-name"><strong>{t.teacher_name || 'O‘qituvchi'}</strong><small>{t.groups.length} ta guruh · {t.groups.reduce((n,g) => n + g.students.length, 0)} talaba</small></span><span className="teacher-pay-amount"><small>Hisoblangan maosh</small><strong>{fmt(t.total_salary)}<span> so‘m</span></strong></span><FontAwesomeIcon icon={expanded[t.teacher_id] ? faChevronDown : faChevronRight} /></button>
 
                 {/* Groups breakdown */}
                 {expanded[t.teacher_id] && (

@@ -1,3 +1,5 @@
+import { PageIntro } from './ui/Workspace'
+import Overlay from './ui/Overlay'
 import { useEffect, useState } from 'react'
 import { TableSkeleton } from './ui/States'
 import { toast } from 'react-hot-toast'
@@ -43,14 +45,7 @@ export default function BotAdmin() {
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faRobot} className="page-icon" /> Bot boshqaruvi</h1>
-          <p className="page-subtitle">
-            O'zgarishlar botga darhol ta'sir qiladi va xodimga Telegram orqali xabar boradi.
-          </p>
-        </div>
-      </div>
+      <PageIntro title={<>Bot boshqaruvi</>} description={<>O'zgarishlar botga darhol ta'sir qiladi va xodimga Telegram orqali xabar boradi.</>}  />
 
       <div className="tab-bar">
         {TABS.map(t => (
@@ -195,7 +190,7 @@ function RolesTab({ roles, reload }) {
       />
 
       {modal && (
-        <div className="modal-overlay" onClick={() => setModal(false)}>
+        <Overlay className="modal-overlay" onClick={() => setModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faTag} /> Yangi rol</h3>
@@ -216,7 +211,7 @@ function RolesTab({ roles, reload }) {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   )

@@ -7,8 +7,9 @@ import {
 import {
   fetchTeamActivity, fetchOperatorActivity, fetchCallActivities,
 } from '../api'
-import KpiCard from './ui/KpiCard'
+import { PageIntro, SummaryRow, ViewTabs, Initials, ProgressRing } from './ui/Workspace'
 import DataTable from './ui/DataTable'
+import OperatorRoster, { TEAM_ROLE_LABEL } from './team/OperatorRoster'
 import { Drawer } from './ui/Modal'
 import { EmptyState, ErrorState, CardSkeleton, TableSkeleton } from './ui/States'
 import { ConversionInsights } from './tree/ConversionPanels'
@@ -64,6 +65,10 @@ function rangeDates(kind) {
  */
 export default function TeamActivity() {
   const [range, setRange] = useState('today')
+  const [activityView, setActivityView] = useState('overview')
+  const [operatorView, setOperatorView] = useState('performance')
+  const [operatorQuery, setOperatorQuery] = useState('')
+  const [operatorSort, setOperatorSort] = useState('calls')
   const [from, setFrom] = useState(() => rangeDates('today')[0])
   const [to, setTo] = useState(() => rangeDates('today')[1])
   const [data, setData] = useState(null)
@@ -167,7 +172,7 @@ export default function TeamActivity() {
   if (err) {
     return (
       <div className="page">
-        <div className="page-head"><h2><FontAwesomeIcon icon={faUsersGear} /> Jamoa faoliyati</h2></div>
+        <div className="page-header"><h1><FontAwesomeIcon icon={faUsersGear} className="page-icon" /> Jamoa faoliyati</h1></div>
         <ErrorState title="Faoliyat ma'lumotini yuklab bo'lmadi" onRetry={load} />
       </div>
     )
@@ -176,60 +181,21 @@ export default function TeamActivity() {
   const operators = data?.operators || []
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div>
-          <h2><FontAwesomeIcon icon={faUsersGear} /> Jamoa faoliyati</h2>
-          <p className="page-sub">Kim qancha ishladi, kimga qo'ng'iroq qildi va natija nima bo'ldi</p>
-        </div>
-      </div>
+    <div className="page team-hub">
+      <PageIntro title="Jamoa faoliyati" description="Aloqalar, natijalar va jamoaning kundalik ritmi." actions={<div className="team-period">{RANGES.map(r => <button key={r.v} type="button" className={range === r.v ? 'is-active' : ''} onClick={() => pickRange(r.v)}>{r.label}</button>)}</div>} />
+      {range === 'custom' && <div className="team-custom-period"><span>Hisobot davri</span><input className="field" type="date" value={from} aria-label="Boshlanish" onChange={e => setFrom(e.target.value)} /><span>—</span><input className="field" type="date" value={to} aria-label="Tugash" onChange={e => setTo(e.target.value)} /></div>}
+      {loading ? <CardSkeleton count={4} /> : <div className="team-pulse-band">
+        <div className="team-pulse-total"><span className="team-pulse-icon"><FontAwesomeIcon icon={faPhone} /></span><div><span>Jami qo‘ng‘iroqlar</span><strong>{data.total_calls}</strong></div><small>O‘rtacha {data.avg_calls_per_operator} / operator</small></div>
+        <div><span><i className="pulse-dot blue" />Bog‘lanildi</span><strong>{data.connected}<small>{data.connect_rate}%</small></strong></div>
+        <div><span><i className="pulse-dot rose" />Javobsiz</span><strong>{data.no_answer}</strong></div>
+        <div><span><i className="pulse-dot violet" />Vazifalar bajarildi</span><strong>{data.completed_tasks}<small>{data.callbacks} qayta aloqa</small></strong></div>
+      </div>}
+      <div className="team-view-line"><ViewTabs value={activityView} onChange={setActivityView} items={[{ key: 'overview', label: 'Jamoa ko‘rinishi', count: operators.length }, { key: 'journal', label: 'Qo‘ng‘iroqlar jurnali', count: log?.total }]} />{activityView === 'overview' && <div className="segmented"><button onClick={() => setOperatorView('performance')} className={operatorView === 'performance' ? 'active' : ''}>Natijalar</button><button onClick={() => setOperatorView('table')} className={operatorView === 'table' ? 'active' : ''}>Batafsil jadval</button></div>}</div>
+      {activityView === 'overview' && (loading ? <TableSkeleton rows={5} cols={6} /> : operatorView === 'table' ? <div className="team-full-table"><DataTable columns={opColumns} rows={operators} rowKey={r => r.id} onRowClick={openOperator} scroll /></div> : <OperatorRoster operators={operators} onOpen={openOperator} query={operatorQuery} setQuery={setOperatorQuery} sort={operatorSort} setSort={setOperatorSort} />)}
+      {activityView === 'overview' && !loading && data?.insights?.length > 0 && <ConversionInsights insights={data.insights} onFocus={() => {}} />}
 
-      <div className="ta-range">
-        {RANGES.map(r => (
-          <button key={r.v} className={`chip${range === r.v ? ' is-on' : ''}`}
-            onClick={() => pickRange(r.v)}>{r.label}</button>
-        ))}
-        {range === 'custom' && (
-          <>
-            <input className="field" type="date" value={from} aria-label="Boshlanish"
-              onChange={e => setFrom(e.target.value)} />
-            <input className="field" type="date" value={to} aria-label="Tugash"
-              onChange={e => setTo(e.target.value)} />
-          </>
-        )}
-      </div>
-
-      <div className="kpi-grid">
-        {loading ? <CardSkeleton count={4} /> : (
-          <>
-            <KpiCard label="Qo'ng'iroqlar" value={data.total_calls} icon={faPhone} tone="primary"
-              sub={`o'rtacha ${data.avg_calls_per_operator} / operator`} />
-            <KpiCard label="Bog'landi" value={data.connected} icon={faCircleCheck} tone="success"
-              sub={`${data.connect_rate}% bog'lanish`} />
-            <KpiCard label="Javobsiz" value={data.no_answer} icon={faPhoneSlash} tone="warning" />
-            <KpiCard label="Bajarilgan vazifa" value={data.completed_tasks} icon={faPercent} tone="info"
-              sub={`${data.callbacks} callback · ${data.payment_calls} to'lov`} />
-          </>
-        )}
-      </div>
-
-      {!loading && data?.insights?.length > 0 && (
-        <ConversionInsights insights={data.insights} onFocus={() => {}} />
-      )}
-
-      <section className="wc-section">
-        <h4 className="wc-section-head">Operatorlar</h4>
-        {loading ? <TableSkeleton rows={4} cols={8} /> : operators.length === 0 ? (
-          <EmptyState compact icon={faPhone} title="Bu davrda faoliyat yo'q"
-            description="Tanlangan sanalar oralig'ida qo'ng'iroq yozilmagan." />
-        ) : (
-          <DataTable columns={opColumns} rows={operators} rowKey={r => r.id}
-            onRowClick={openOperator} scroll />
-        )}
-      </section>
-
-      <section className="wc-section">
-        <h4 className="wc-section-head">Qo'ng'iroqlar jurnali</h4>
+      {activityView === 'journal' && <section className="studio-section team-journal">
+        <div className="studio-section-head"><div><h2>Qo‘ng‘iroqlar jurnali</h2><p>Natijalar, izohlar va keyingi qadamlar.</p></div><span>{log?.total || 0} ta yozuv</span></div>
         <div className="ta-filters">
           <div className="ta-search">
             <FontAwesomeIcon icon={faMagnifyingGlass} />
@@ -272,7 +238,7 @@ export default function TeamActivity() {
           onPageChange={setLogPage}
           scroll
         />
-      </section>
+      </section>}
 
       <Drawer open={!!openOp} title={openOp?.name} onClose={() => setOpenOp(null)} width={560}>
         {openOp && <OperatorDetail op={openOp} detail={opDetail} />}
@@ -289,7 +255,7 @@ function OperatorDetail({ op, detail }) {
   }
   const s = detail.operator
   return (
-    <div className="ta-detail">
+    <div className="ta-detail operator-dossier"><header className="operator-dossier-head"><Initials name={op.name} /><div><span>Operator tafsilotlari</span><h2>{op.name}</h2><p>{TEAM_ROLE_LABEL[op.role] || op.role}</p></div></header>
       <div className="ta-detail-stats">
         <Stat n={s.calls} label="qo'ng'iroq" />
         <Stat n={s.connected} label="bog'landi" />

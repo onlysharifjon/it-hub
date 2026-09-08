@@ -1,20 +1,24 @@
+import { PageIntro, SummaryRow, Initials } from './ui/Workspace'
+import { shiftDay } from '../utils/datetime'
+import Overlay from './ui/Overlay'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faCalendarCheck, faCheck, faXmark,
   faArrowLeft, faUsers, faChalkboardTeacher, faCalendarDay,
-  faUmbrellaBeach, faPlus, faTrash,
+  faUmbrellaBeach, faPlus, faTrash, faClock, faChevronLeft, faChevronRight,
 } from '@fortawesome/free-solid-svg-icons'
 import { fetchTodayGroups, fetchAttendance, saveAttendance, fetchHolidays, createHoliday, deleteHoliday, tashkentToday } from '../api'
 import useConfirm from './ui/useConfirm'
 
 const TODAY_STR = tashkentToday()
 const DAY_NAMES = ['Yakshanba', 'Dushanba', 'Seshanba', 'Chorshanba', 'Payshanba', 'Juma', 'Shanba']
+const MONTH_NAMES = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr']
 
 function formatDateLabel(dateStr) {
   const d = new Date(dateStr + 'T00:00:00')
-  return `${DAY_NAMES[d.getDay()]}, ${d.toLocaleDateString('uz-UZ', { day: 'numeric', month: 'long', year: 'numeric' })}`
+  return `${DAY_NAMES[d.getDay()]}, ${d.getDate()} ${MONTH_NAMES[d.getMonth()].toLowerCase()} ${d.getFullYear()}`
 }
 
 export default function TodayAttendance({ currentUser }) {
@@ -129,13 +133,17 @@ export default function TodayAttendance({ currentUser }) {
     finally { setSaving(false) }
   }
 
+  const weekDay = (new Date(selectedDate + 'T12:00:00').getDay() + 6) % 7
+  const weekDates = Array.from({ length: 7 }, (_, i) => shiftDay(selectedDate, i - weekDay))
+  const groupsDone = groups.filter(g => g.attendance_taken).length
+
   // ── Attendance form ───────────────────────────────────────────────────────
   if (activeGroup) {
     const presentCount = Object.values(attendance).filter(v => v === true).length
     const absentCount = Object.values(attendance).filter(v => v === false).length
 
     return (
-      <div className="page">
+      <div className="page attendance-studio attendance-roster-page">
         {confirmUI}
         <div className="page-header">
           <div className="detail-title">
@@ -154,6 +162,7 @@ export default function TodayAttendance({ currentUser }) {
           <div className="muted center py-8">Yuklanmoqda...</div>
         ) : (
           <>
+            <SummaryRow items={[{ label: 'Guruhdagi talabalar', value: students.length }, { label: 'Darsda', value: presentCount, tone: 'success' }, { label: 'Kelmagan', value: absentCount, tone: absentCount ? 'danger' : undefined }]} />
             <div className="toolbar" style={{ marginBottom: '1rem', gap: 8 }}>
               <span className="text-muted" style={{ fontSize: 13 }}>Barchasi:</span>
               <button className="button secondary small" onClick={() => markAll(true)}>
@@ -169,14 +178,15 @@ export default function TodayAttendance({ currentUser }) {
             </div>
 
             <div className="today-att-list">
-              {students.map(s => {
+              {students.map((s, index) => {
                 const present = attendance[s.student_id]
                 return (
-                  <div
+                  <button type="button" aria-pressed={!!present}
                     key={s.student_id}
                     className={`today-att-row ${present ? 'att-row-present' : 'att-row-absent'}`}
                     onClick={() => toggleStudent(s.student_id)}
                   >
+                    <span className="attendance-row-number">{String(index + 1).padStart(2, '0')}</span><Initials name={s.student_name} />
                     <div className="today-att-info">
                       <div className="today-att-name">{s.student_name}</div>
                       <div className="today-att-phone text-muted">{s.phone}</div>
@@ -187,7 +197,7 @@ export default function TodayAttendance({ currentUser }) {
                         : <><FontAwesomeIcon icon={faXmark} /> Kelmadi</>
                       }
                     </div>
-                  </div>
+                  </button>
                 )
               })}
               {students.length === 0 && (
@@ -211,46 +221,14 @@ export default function TodayAttendance({ currentUser }) {
 
   // ── Groups list ───────────────────────────────────────────────────────────
   return (
-    <div className="page">
+    <div className="page attendance-studio">
       {confirmUI}
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1>
-            <FontAwesomeIcon icon={faCalendarCheck} className="page-icon" />
-            {isAdmin ? 'Davomat' : 'Bugungi darslar'}
-          </h1>
-          <p className="page-subtitle">Bugun darsi bor guruhlar — bosib yo'qlama qiling</p>
-        </div>
-      </div>
-
-      {/* Date picker — admin sees any date, teacher fixed to today */}
-      <div className="toolbar" style={{ marginBottom: 16 }}>
-        <FontAwesomeIcon icon={faCalendarDay} className="text-muted" />
-        {isAdmin ? (
-          <>
-            <input
-              type="date"
-              className="field-sm"
-              value={selectedDate}
-              onChange={e => setSelectedDate(e.target.value)}
-              style={{ width: 160 }}
-            />
-            <span className="text-muted" style={{ fontSize: 13 }}>{formatDateLabel(selectedDate)}</span>
-            {selectedDate !== TODAY_STR && (
-              <button className="button secondary small" onClick={() => setSelectedDate(TODAY_STR)}>
-                Bugun
-              </button>
-            )}
-          </>
-        ) : (
-          <span style={{ fontSize: 13, fontWeight: 500 }}>{formatDateLabel(selectedDate)}</span>
-        )}
-        {isSuperAdmin && (
-          <button className="button secondary small" style={{ marginLeft: 'auto' }} onClick={() => setHolidayModal(true)}>
-            <FontAwesomeIcon icon={faUmbrellaBeach} /> Dam olish kunlari
-          </button>
-        )}
-      </div>
+      <PageIntro title="Bugungi darslar" eyebrow="Dars jadvali va davomat" description="Darslarni rejalashtiring. Davomatni bir joyda belgilang." actions={<>
+        {isAdmin && <input type="date" className="field-sm" aria-label="Dars sanasi" value={selectedDate} onChange={e => { if (e.target.value) setSelectedDate(e.target.value) }} />}
+        {isSuperAdmin && <button className="button secondary" onClick={() => setHolidayModal(true)}><FontAwesomeIcon icon={faUmbrellaBeach} /> Dam olish kunlari</button>}
+      </>} />
+      <div className="schedule-week"><div className="schedule-week-title"><strong>{MONTH_NAMES[Number(selectedDate.slice(5, 7)) - 1] + ' ' + selectedDate.slice(0, 4)}</strong><div>{isAdmin && <><button aria-label="Oldingi hafta" onClick={() => setSelectedDate(shiftDay(selectedDate, -7))}><FontAwesomeIcon icon={faChevronLeft} /></button><button aria-label="Keyingi hafta" onClick={() => setSelectedDate(shiftDay(selectedDate, 7))}><FontAwesomeIcon icon={faChevronRight} /></button></>}{selectedDate !== TODAY_STR && isAdmin && <button onClick={() => setSelectedDate(TODAY_STR)}>Bugun</button>}</div></div><div className="schedule-days">{weekDates.map((date, i) => <button key={date} disabled={!isAdmin && date !== TODAY_STR} aria-pressed={date === selectedDate} className={(date === selectedDate ? 'is-selected' : '') + (date === TODAY_STR ? ' is-today' : '')} onClick={() => setSelectedDate(date)}><span>{['Dush', 'Sesh', 'Chor', 'Pay', 'Jum', 'Shan', 'Yak'][i]}</span><strong>{Number(date.slice(-2))}</strong><i /></button>)}</div></div>
+      <div className="schedule-overview"><div><h2>{formatDateLabel(selectedDate)}</h2><p>{loading ? 'Jadval yuklanmoqda...' : groups.length + ' ta dars · ' + groups.reduce((n, g) => n + Number(g.student_count || 0), 0) + ' ta talaba'}</p></div><div className="schedule-completion"><span>{groupsDone}/{groups.length} davomat olindi</span><div><i style={{ width: (groups.length ? groupsDone / groups.length * 100 : 0) + '%' }} /></div></div></div>
 
       {activeHoliday && (
         <div style={{
@@ -277,44 +255,18 @@ export default function TodayAttendance({ currentUser }) {
           <div>{isAdmin ? 'Bu kunda guruhlar topilmadi' : 'Bugun dars yo\'q'}</div>
         </div>
       ) : (
-        <div className="today-groups-grid">
-          {groups.map(g => (
-            <div key={g.id} className={`today-group-card ${g.attendance_taken ? 'att-taken' : ''}`}>
-              <div className="today-group-header">
-                <div>
-                  <div className="today-group-name">{g.name}</div>
-                  <div className="today-group-meta">
-                    <FontAwesomeIcon icon={faChalkboardTeacher} style={{ fontSize: 11 }} />
-                    {' '}{g.teacher_name || '—'}
-                  </div>
-                </div>
-                {g.attendance_taken ? (
-                  <div className="today-att-done">
-                    <FontAwesomeIcon icon={faCheck} /> Bajarildi
-                  </div>
-                ) : (
-                  <div className="today-att-pending">Kutilmoqda</div>
-                )}
-              </div>
-              <div className="today-group-info">
-                <span><FontAwesomeIcon icon={faUsers} style={{ fontSize: 11 }} /> {g.student_count} o'quvchi</span>
-                {g.schedule && <span>{g.schedule}{g.lesson_time ? ` — soat ${g.lesson_time}` : ''}</span>}
-              </div>
-              <button
-                className="button secondary small block td-card-cta"
-                onClick={() => openGroupAttendance(g)}
-              >
-                <FontAwesomeIcon icon={faCalendarCheck} />
-                {g.attendance_taken ? ' Ko\'rish / Tahrirlash' : ' Davomat olish'}
-              </button>
-            </div>
-          ))}
+        <div className="schedule-list">
+          {[...groups].sort((a,b) => (a.lesson_time || '99:99').localeCompare(b.lesson_time || '99:99')).map(g => <article key={g.id} className={'schedule-lesson' + (g.attendance_taken ? ' is-complete' : '')}>
+            <div className="schedule-time"><strong>{g.lesson_time || '—'}</strong><span>{g.schedule || 'Dars vaqti'}</span></div>
+            <div className="schedule-line"><i /></div>
+            <div className="schedule-lesson-body"><div className="schedule-lesson-title"><span className="studio-eyebrow">{g.course_name || 'Guruh darsi'}</span><h3>{g.name}</h3><div><Initials name={g.teacher_name} /><span>{g.teacher_name || 'Ustoz biriktirilmagan'}</span></div></div><div className="schedule-lesson-size"><FontAwesomeIcon icon={faUsers} /><strong>{g.student_count}</strong><span>talaba</span></div><div className="schedule-lesson-action"><span className={'schedule-status' + (g.attendance_taken ? ' is-done' : '')}><i />{g.attendance_taken ? 'Davomat olindi' : 'Davomat kutilmoqda'}</span><button className={'button small ' + (g.attendance_taken ? 'secondary' : '')} onClick={() => openGroupAttendance(g)}>{g.attendance_taken ? 'Ko‘rish / Tahrirlash' : 'Davomat olish'}<span>→</span></button></div></div>
+          </article>)}
         </div>
       )}
 
       {/* Holiday manage modal (faqat superadmin) */}
       {holidayModal && (
-        <div className="modal-overlay" onClick={() => setHolidayModal(false)}>
+        <Overlay className="modal-overlay" onClick={() => setHolidayModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faUmbrellaBeach} /> Dam olish kunlari</h3>
@@ -360,7 +312,7 @@ export default function TodayAttendance({ currentUser }) {
               )}
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   )

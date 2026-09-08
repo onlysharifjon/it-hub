@@ -1,3 +1,4 @@
+import { PageIntro } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -8,6 +9,7 @@ import Modal from './ui/Modal'
 import ConfirmDialog from './ui/ConfirmDialog'
 import Badge from './ui/Badge'
 import { Input } from './ui/Field'
+import Catalog from './ui/Catalog'
 
 const EMPTY = { name: '', description: '', total_lessons: '', duration_months: '' }
 
@@ -89,18 +91,21 @@ export default function Courses() {
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faBookOpen} className="page-icon" /> Kurslar</h1>
-          <p className="page-subtitle">Dastur, davomiyligi va darslar soni</p>
-        </div>
-        <div className="header-actions">
+      <PageIntro title={<>Kurslar</>} description={<>Dastur, davomiyligi va darslar soni</>} actions={<><div className="header-actions">
           <button className="button" onClick={openAdd}>
             <FontAwesomeIcon icon={faPlus} /> Kurs qo'shish
           </button>
-        </div>
-      </div>
+        </div></>} />
 
+      <Catalog rows={courses} loading={loading} error={error} label="ta kurs" renderCard={(c, i) => (
+        <article key={c.id} className={`catalog-card course-card${c.is_active ? '' : ' is-inactive'}`}>
+          <div className={`course-cover course-cover-${i % 3}`}><FontAwesomeIcon icon={faBookOpen} /><span>{String(i + 1).padStart(2, '0')}</span><Badge variant={c.is_active ? 'success' : 'neutral'}>{c.is_active ? 'Faol' : 'Yopiq'}</Badge></div>
+          <div className="course-card-content"><h2>{c.name}</h2><p className="catalog-description">{c.description || 'O‘quv dasturi'}</p>
+            <div className="course-facts"><span><strong>{c.duration_months || '—'}</strong> oy davomiyligi</span><span><strong>{c.total_lessons}</strong> ta dars</span></div>
+            <div className="catalog-card-footer"><button className="button secondary small" onClick={() => openEdit(c)}><FontAwesomeIcon icon={faPen} /> Tahrirlash</button><button className="button ghost small" onClick={() => handleToggle(c)}>{c.is_active ? 'Yopish' : 'Ochish'}</button><button className="btn-icon danger" onClick={() => setConfirmTarget(c)} aria-label="O‘chirish" title="O‘chirish"><FontAwesomeIcon icon={faTrash} /></button></div>
+          </div>
+        </article>
+      )}>
       <DataTable
         columns={[
           { key: 'index', header: '#', width: 52, className: 'text-muted', render: (_c, i) => i + 1 },
@@ -145,6 +150,8 @@ export default function Courses() {
           action: <button className="button" onClick={openAdd}><FontAwesomeIcon icon={faPlus} /> Kurs qo'shish</button>,
         }}
       />
+
+      </Catalog>
 
       <Modal
         open={!!modal}

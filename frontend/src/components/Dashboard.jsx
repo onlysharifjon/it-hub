@@ -12,8 +12,8 @@ import {
   fetchLeadStats, fetchFinanceMonthly, fetchLeads,
   fetchStudentGrowth, fetchTeacherSalaries, fetchAuditLogs,
 } from '../api'
-import KpiCard from './ui/KpiCard'
-import { BarChart, Waterfall } from './ui/Chart'
+import InsightChart from './ui/InsightChart'
+import { PageIntro, SummaryRow } from './ui/Workspace'
 import { Metric, MetricStrip } from './ui/Metric'
 import Meter from './ui/Meter'
 import Badge from './ui/Badge'
@@ -178,8 +178,8 @@ export default function Dashboard({ onNavigate }) {
   const lastKnownMonth = year === THIS_YEAR ? THIS_MONTH : 12
   const chartData = history.map(m => ({
     label: MONTHS_SHORT[m.month - 1],
-    value: Number(m.total_income),
-    compare: Number(m.total_expenses),
+    value: m.month <= lastKnownMonth ? Number(m.total_income) : null,
+    compare: m.month <= lastKnownMonth ? Number(m.total_expenses) : null,
     // Umuman harakat bo'lmagan oy (tushum ham, chiqim ham 0) — bu "foyda nol"
     // emas, "ma'lumot yo'q". Nol deb chizilsa chiziq tekis turib, o'sha
     // oylarda natija bo'lgandek ko'rinadi.
@@ -311,62 +311,31 @@ export default function Dashboard({ onNavigate }) {
   ]
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <h1><FontAwesomeIcon icon={faChartBar} className="page-icon" /> Dashboard</h1>
-        <div className="header-actions">
-          <span className="dash-filter-label"><FontAwesomeIcon icon={faFilter} /> Yil</span>
-          <select className="field-sm" value={year} onChange={e => setYear(parseInt(e.target.value))}>
-            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <button
-            className="button secondary"
-            onClick={() => openDownload(exportExcelUrl()).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}
-          >
-            <FontAwesomeIcon icon={faFileExcel} /> Excel
-          </button>
-        </div>
+    <div className="page dashboard-studio">
+      <PageIntro title="Dashboard" eyebrow="Markaz hisoboti" description="Markazingiz natijalari, bir qarashda." actions={<>
+        <select className="field-sm" aria-label="Hisobot yili" value={year} onChange={e => setYear(parseInt(e.target.value))}>{YEARS.map(y => <option key={y} value={y}>{y}</option>)}</select>
+        <button className="button secondary" onClick={() => openDownload(exportExcelUrl()).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}><FontAwesomeIcon icon={faFileExcel} /> Eksport</button>
+      </>} />
+      <SummaryRow label="Joriy oy moliyasi" items={[
+        { label: MONTHS[THIS_MONTH - 1] + ' tushumi', value: fmt(monthIncome), unit: 'so‘m', sub: stats.income_change_pct != null ? (stats.income_change_pct > 0 ? '+' : '') + stats.income_change_pct + '% o‘tgan oyga nisbatan' : undefined, onClick: () => onNavigate('payments') },
+        { label: 'O‘qituvchi maoshi', value: fmt(teacherSalary), unit: 'so‘m', sub: 'Joriy oy hisoblangan', onClick: () => onNavigate('teacher_salaries') },
+        { label: 'Tashqi xarajatlar', value: fmt(externalExp), unit: 'so‘m', sub: 'Joriy oy bo‘yicha', onClick: () => onNavigate('expenses') },
+        { label: 'Sof foyda', value: fmt(netProfit), unit: 'so‘m', tone: netProfit < 0 ? 'danger' : 'success', sub: 'Tushumdan barcha chiqimlar', onClick: () => onNavigate('finance') },
+      ]} />
+      <div className="dashboard-charts">
+        <InsightChart title="Moliya dinamikasi" subtitle={year + ' yil · oylik natijalar'} unit="so‘m" data={chartData}
+          series={[{ key: 'value', label: 'Tushum', color: 'var(--viz-1)' }, { key: 'compare', label: 'Chiqim', color: 'var(--viz-2)' }, { key: 'line', label: 'Sof foyda', color: 'var(--viz-3)' }]}
+          footnote={<>Ko‘rsatkichni tanlab, oylar bo‘yicha taqqoslang.</>} />
+        <InsightChart title="Talabalar o‘sishi" subtitle={year + ' yil · o‘sish sur’ati'} data={growthChart} aggregate="last" defaultSeries="line"
+          series={[{ key: 'line', label: 'Jami talabalar', color: 'var(--viz-3)' }, { key: 'value', label: 'Yangi talabalar', color: 'var(--viz-1)' }]}
+          footnote={<>Yil boshida <strong>{fmt(growth?.starting_total)}</strong> · qo‘shildi <strong>+{fmt(joinedThisYear)}</strong>{growthPct != null && <span>({growthPct.toFixed(0)}%)</span>}</>} />
       </div>
 
-      {/* ── 1-daraja: oyning bitta asosiy raqami + P&L parchalanishi ──
-           Ilgari bu yerda 10 ta bir xil og'irlikdagi KPI kartasi bor edi.
-           Endi bitta yetakchi raqam va uning qanday hosil bo'lgani. ── */}
-      <section className="dash-primary" aria-label="Oylik moliyaviy natija">
-        <KpiCard
-          size="lg" tone="primary"
-          label={`${MONTHS[THIS_MONTH - 1]} tushumi`}
-          value={fmt(stats.this_month_income)} unit="so'm"
-          icon={faMoneyBillWave}
-          trend={stats.income_change_pct} trendLabel="o'tgan oyga"
-          spark={incomeSpark}
-          onClick={() => onNavigate('payments')}
-          hint="To'lovlar sahifasiga o'tish"
-        />
-
-        <div className="dash-pl">
-          <SectionHead
-            title="Pul qayerga ketdi"
-            description={`${MONTHS[THIS_MONTH - 1]} · tushumdan sof foydagacha`}
-          />
-          <Waterfall
-            start={{ label: 'Tushum', value: monthIncome }}
-            steps={[
-              { label: "O'qituvchi maoshi", value: teacherSalary, onClick: () => onNavigate('teacher_salaries') },
-              { label: 'Tashqi xarajatlar', value: externalExp, onClick: () => onNavigate('expenses') },
-            ]}
-            result={{ label: 'Sof foyda', value: netProfit }}
-            format={fmt}
-          />
-        </div>
-      </section>
-
-      {/* ── 2-daraja: nima e'tibor talab qiladi ── */}
       <AttentionPanel items={alerts} />
 
-      {/* ── 3-daraja: operatsion ko'rsatkichlar — zich qator, karta devori emas ── */}
       <SectionHead
         title="Operatsion ko'rsatkichlar"
-        description="Raqamni bosib tegishli bo'limga o'ting"
+        description="Ta’lim va sotuv natijalari"
       />
       <MetricStrip columns={6}>
         <Metric
@@ -405,44 +374,6 @@ export default function Dashboard({ onNavigate }) {
           onClick={() => onNavigate('finance')}
         />
       </MetricStrip>
-
-      {/* ── Yillik grafik: tushum vs chiqim ── */}
-      <div className="chart-card">
-        <div className="chart-card-head">
-          <h2>{year} yil — tushum va chiqim</h2>
-        </div>
-        <BarChart
-          data={chartData}
-          seriesLabel="Tushum"
-          compareLabel="Chiqim"
-          lineLabel="Sof foyda"
-          highlightIndex={currentMonthIdx}
-          height={240}
-        />
-      </div>
-
-      {/* ── O'quvchi o'sishi ── */}
-      {growthMonths.length > 0 && (
-        <div className="chart-card">
-          <div className="chart-card-head">
-            <h2><FontAwesomeIcon icon={faArrowTrendUp} className="page-icon" /> O'quvchi o'sishi — {year}</h2>
-            <div className="chart-card-actions">
-              <span className="dash-filter-label">
-                Yil boshida <strong>{fmt(growth.starting_total)}</strong> · qo'shildi{' '}
-                <strong className="tone-success">+{fmt(joinedThisYear)}</strong>
-                {growthPct != null && <> ({growthPct.toFixed(0)}%)</>}
-              </span>
-            </div>
-          </div>
-          <BarChart
-            data={growthChart}
-            seriesLabel="Yangi o'quvchilar"
-            lineLabel="Jami (kumulyativ)"
-            highlightIndex={currentMonthIdx}
-            height={200}
-          />
-        </div>
-      )}
 
       {/* ── O'qituvchi natijalari ── */}
       {teacherRows.length > 0 && (

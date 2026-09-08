@@ -21,142 +21,7 @@ export function short(n) {
   return String(Math.round(v))
 }
 
-/**
- * Ustunli diagramma. Bitta yoki ikkita qator (taqqoslash uchun).
- *
- *   <BarChart
- *     data={[{ label: 'Yan', value: 1200000, compare: 800000 }, ...]}
- *     seriesLabel="Tushum" compareLabel="Chiqim"
- *     highlightIndex={currentMonthIdx}
- *     onBarClick={(d, i) => ...}
- *   />
- */
-export function BarChart({
-  data = [],
-  height = 200,
-  seriesLabel = '',
-  compareLabel = '',
-  lineLabel = '',
-  highlightIndex = -1,
-  valueFormat = short,
-  tooltipFormat = fmtNum,
-  onBarClick,
-  emptyText = "Ma'lumot yo'q",
-}) {
-  const hasCompare = data.some(d => d.compare != null)
-  // Uchinchi qator — chiziq (sof foyda kabi manfiy bo'la oladigan ko'rsatkich).
-  // Ustunlar 0 dan yuqoriga o'sadi, shuning uchun manfiy qiymatni ustun bilan
-  // ko'rsatib bo'lmaydi; chiziq o'z shkalasida chiziladi va 0 chizig'i
-  // ko'rsatiladi.
-  const hasLine = data.some(d => d.line != null)
-  const max = Math.max(
-    ...data.map(d => Math.max(Number(d.value) || 0, Number(d.compare) || 0)),
-    1,
-  )
-
-  if (!data.length) return <div className="muted center py-8">{emptyText}</div>
-
-  // Chiziq geometriyasi: 0..100 foizli koordinatalar (SVG preserveAspectRatio=none)
-  let linePts = null, lineZeroY = null
-  if (hasLine) {
-    // null — ma'lumot yo'q (masalan hali kelmagan oylar): chiziq u yerda uzilади,
-    // nolga tushgandek ko'rinmaydi.
-    const known = data
-      .map((d, i) => ({ i, v: d.line == null ? null : Number(d.line) || 0 }))
-      .filter(p => p.v != null)
-    const vals = known.map(p => p.v)
-    const lo = Math.min(0, ...vals)
-    const hi = Math.max(0, ...vals)
-    const span = hi - lo || 1
-    const toY = v => 100 - ((v - lo) / span) * 100
-    const stepX = data.length > 1 ? 100 / (data.length - 1) : 0
-    linePts = known.map(p => `${(p.i * stepX).toFixed(2)},${toY(p.v).toFixed(2)}`).join(' ')
-    lineZeroY = toY(0)
-  }
-
-  return (
-    <div className="chart">
-      {(seriesLabel || compareLabel) && (
-        <div className="chart-legend">
-          {seriesLabel && (
-            <span className="chart-legend-item">
-              <span className="chart-swatch is-primary" /> {seriesLabel}
-            </span>
-          )}
-          {hasCompare && compareLabel && (
-            <span className="chart-legend-item">
-              <span className="chart-swatch is-compare" /> {compareLabel}
-            </span>
-          )}
-          {hasLine && lineLabel && (
-            <span className="chart-legend-item">
-              <span className="chart-swatch is-line" /> {lineLabel}
-              {/* Foyda manfiy bo'la oladi, ustunlar esa faqat 0 dan yuqoriga
-                  o'sadi — shuning uchun chiziq o'z shkalasida chiziladi va
-                  nol darajasi punktir bilan belgilanadi. Bu yerda muhimi
-                  qiymat emas, shakl: tushum o'sib foyda tushayotganini
-                  ko'rsatish. */}
-              <span className="chart-legend-note">(shakl · o'z shkalasi)</span>
-            </span>
-          )}
-        </div>
-      )}
-
-      <div className="chart-plot" style={{ height }}>
-        {/* gorizontal to'r chiziqlari */}
-        <div className="chart-grid" aria-hidden="true">
-          {[1, 0.75, 0.5, 0.25, 0].map(f => (
-            <div key={f} className="chart-grid-line">
-              <span className="chart-grid-label">{valueFormat(max * f)}</span>
-            </div>
-          ))}
-        </div>
-
-        {hasLine && (
-          <svg className="chart-line-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-            <line x1="0" x2="100" y1={lineZeroY} y2={lineZeroY} className="chart-line-zero" />
-            <polyline points={linePts} className="chart-line-path" />
-          </svg>
-        )}
-
-        <div className="chart-bars">
-          {data.map((d, i) => {
-            const v = Number(d.value) || 0
-            const c = Number(d.compare) || 0
-            const isHi = i === highlightIndex
-            let title = hasCompare
-              ? `${d.label}: ${seriesLabel} ${tooltipFormat(v)} · ${compareLabel} ${tooltipFormat(c)}`
-              : `${d.label}: ${tooltipFormat(v)}`
-            if (hasLine && d.line != null) title += ` · ${lineLabel || 'Foyda'} ${tooltipFormat(d.line)}`
-            return (
-              <div
-                key={i}
-                className={`chart-col ${isHi ? 'is-current' : ''} ${onBarClick ? 'is-clickable' : ''}`.trim()}
-                title={title}
-                onClick={onBarClick ? () => onBarClick(d, i) : undefined}
-              >
-                <div className="chart-col-value">{v > 0 ? valueFormat(v) : ''}</div>
-                <div className="chart-col-bars">
-                  <div
-                    className="chart-bar is-primary"
-                    style={{ height: `${Math.max((v / max) * 100, v > 0 ? 2 : 0)}%` }}
-                  />
-                  {hasCompare && (
-                    <div
-                      className="chart-bar is-compare"
-                      style={{ height: `${Math.max((c / max) * 100, c > 0 ? 2 : 0)}%` }}
-                    />
-                  )}
-                </div>
-                <div className="chart-col-label">{d.label}</div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    </div>
-  )
-}
+export { default as BarChart } from './WorkspaceChart'
 
 /**
  * Sparkline — KPI kartasi ichidagi kichik trend chizig'i (SVG polyline).
@@ -233,7 +98,7 @@ export function Waterfall({ start, steps = [], result, format = fmtNum, onStepCl
       <div className="ui-wf-row is-start">
         <span className="ui-wf-label">{start.label}</span>
         <div className="ui-wf-track">
-          <div className="ui-wf-fill is-income" style={{ width: '100%' }} />
+          <div className="ui-wf-fill is-income" style={{ width: Number(start.value) ? '100%' : '0%' }} />
         </div>
         <span className="ui-wf-value num">{format(start.value)}</span>
       </div>

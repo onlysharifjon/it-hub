@@ -1,3 +1,4 @@
+import Overlay from './ui/Overlay'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -679,7 +680,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
 
       {/* Uy vazifasi modal */}
       {hwModal && (
-        <div className="modal-overlay" onClick={() => setHwModal(false)}>
+        <Overlay className="modal-overlay" onClick={() => setHwModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faPaperPlane} /> Uy vazifasi — {group.name}</h3>
@@ -714,12 +715,12 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {/* Sertifikat sozlamalari modal */}
       {certModal && (
-        <div className="modal-overlay" onClick={() => setCertModal(false)}>
+        <Overlay className="modal-overlay" onClick={() => setCertModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faAward} /> Sertifikat — {group.name}</h3>
@@ -744,7 +745,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {certRecords && (

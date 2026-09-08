@@ -1,3 +1,6 @@
+import { PageIntro } from './ui/Workspace'
+import Catalog from './ui/Catalog'
+import { Initials } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -134,21 +137,14 @@ export default function Special() {
   ]
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faStar} className="page-icon" /> Special chegirmalar</h1>
-          <p className="page-subtitle">
-            To'lov hisobiga bevosita ta'sir qiladi — qarzdorlik, Moliya va ota-ona ilovasida ham.
-          </p>
-        </div>
-        <div className="header-actions">
+    <div className="page special-studio">
+      <PageIntro title={<>Special chegirmalar</>} description={<>To'lov hisobiga bevosita ta'sir qiladi — qarzdorlik, Moliya va ota-ona ilovasida ham.</>} actions={<><div className="header-actions">
           <button className="button" onClick={() => { setForm(EMPTY); setModal(true) }}>
             <FontAwesomeIcon icon={faPlus} /> Chegirma berish
           </button>
-        </div>
-      </div>
+        </div></>} />
 
+      <Catalog rows={items} loading={loading} label="ta chegirma" renderCard={d => <article key={d.id} className={'discount-card' + (!d.is_active ? ' is-inactive' : '')}><header><span className="discount-stamp"><FontAwesomeIcon icon={faStar} /></span><span>{d.is_active ? 'Faol chegirma' : 'To‘xtatilgan'}</span></header><div className="discount-value">{kindLabel(d)}</div><p>{d.reason || 'Individual chegirma'}</p><div className="discount-recipient"><Initials name={d.student_name} /><div><strong>{d.student_name}</strong><span>{d.group_name || 'Barcha guruhlar'}</span></div></div><footer><button className="button secondary small" onClick={() => handleToggle(d)}>{d.is_active ? 'To‘xtatish' : 'Faollashtirish'}</button><button className="btn-icon danger" title="O‘chirish" aria-label="O‘chirish" onClick={() => setDeleteTarget(d)}><FontAwesomeIcon icon={faTrash} /></button></footer></article>}>
       <DataTable
         columns={columns}
         rows={items}
@@ -166,6 +162,8 @@ export default function Special() {
           ),
         }}
       />
+
+      </Catalog>
 
       <ConfirmDialog
         open={!!deleteTarget}

@@ -1,3 +1,5 @@
+import { PageIntro } from './ui/Workspace'
+import { SummaryRow, ProgressRing, ViewTabs } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -309,13 +311,8 @@ export default function Payments({ currentUser }) {
   const collectionPct = totalExpected > 0 ? (totalPaidMonth / totalExpected) * 100 : null
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faCreditCard} className="page-icon" /> To'lovlar</h1>
-          <p className="page-subtitle">{MONTHS[filter.month - 1]} {filter.year} · to'lov qabul qilish va qarzdorlik</p>
-        </div>
-        <div className="header-actions">
+    <div className="page ledger-studio">
+      <PageIntro title={<>To'lovlar</>} description={<>{MONTHS[filter.month - 1]} {filter.year} · to'lov qabul qilish va qarzdorlik</>} actions={<><div className="header-actions">
           <select className="field-sm" value={filter.month} aria-label="Oy"
             onChange={e => setFilter(p => ({ ...p, month: parseInt(e.target.value) }))}>
             {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
@@ -330,42 +327,13 @@ export default function Payments({ currentUser }) {
           <button className="button" onClick={() => { setEditing(null); setForm(EMPTY); setModal(true) }}>
             <FontAwesomeIcon icon={faPlus} /> To'lov qo'shish
           </button>
-        </div>
-      </div>
+        </div></>} />
 
       {/* ── Oyning holati: bitta zich qator, karta devori emas ── */}
-      <MetricStrip columns={4}>
-        <Metric
-          label="Jami qarzdorlik" tone="danger"
-          value={statsLoading ? '—' : fmtn(totalDebt)} unit="so'm"
-          sub={statsLoading ? '' : `${debtors.length} o'quvchi`}
-          onClick={() => setView('debtors')}
-        />
-        <Metric
-          label="Yig'ilgan (oy)" tone="success"
-          value={statsLoading ? '—' : fmtn(totalPaidMonth)} unit="so'm"
-          sub={collectionPct == null ? '' : `${collectionPct.toFixed(0)}% yig'ildi`}
-        />
-        <Metric
-          label="Kutilayotgan (oy)"
-          value={statsLoading ? '—' : fmtn(totalExpected)} unit="so'm"
-        />
-        <Metric
-          label="Sahifadagi to'lovlar"
-          value={fmtn(total)} unit="so'm"
-          sub={meta ? `${meta.total} ta yozuv` : ''}
-        />
-      </MetricStrip>
-
+      <section className="ledger-overview"><div className="ledger-balance"><span className="studio-eyebrow">Oylik to‘lov yig‘ilishi</span><strong>{statsLoading ? '—' : fmtn(totalPaidMonth)}<small>so‘m</small></strong><div><ProgressRing value={collectionPct || 0} label="To‘lov yig‘ilishi" size={52} /><p>{collectionPct == null ? 'Hali ma’lumot yo‘q' : collectionPct.toFixed(0) + '% yig‘ildi'}<span>{MONTHS[filter.month - 1]} {filter.year}</span></p></div></div><div className="ledger-balance-details"><div><span>Kutilayotgan to‘lov</span><strong>{statsLoading ? '—' : fmtn(totalExpected)} <small>so‘m</small></strong></div><button onClick={() => setView('debtors')}><span>Qarzdorlik <small>{debtors.length} talaba →</small></span><strong className="tone-danger">{statsLoading ? '—' : fmtn(totalDebt)} <small>so‘m</small></strong></button><div><span>Sahifadagi to‘lovlar</span><strong>{fmtn(total)} <small>so‘m</small></strong></div></div></section>
+      <ViewTabs value={view} onChange={setView} items={[{ key: 'list', label: 'To‘lovlar tarixi', count: meta?.total }, { key: 'debtors', label: 'Qarzdorlar', count: debtors.length }]} />
+      <section className="studio-section ledger-records"><div className="studio-section-head"><div><h2>{view === 'list' ? 'To‘lovlar tarixi' : 'To‘lov kutilmoqda'}</h2><p>{MONTHS[filter.month - 1]} {filter.year} · {view === 'list' ? 'Barcha kirimlar va cheklar' : 'Talabalar bo‘yicha qarzdorlik'}</p></div></div>
       <div className="toolbar">
-        <div className="segmented" role="group" aria-label="Ko'rinish">
-          <button className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>
-            <FontAwesomeIcon icon={faList} /> Barcha to'lovlar
-          </button>
-          <button className={view === 'debtors' ? 'active' : ''} onClick={() => setView('debtors')}>
-            <FontAwesomeIcon icon={faTriangleExclamation} /> Qarzdorlar{!statsLoading && ` (${debtors.length})`}
-          </button>
-        </div>
         {view === 'list' && (
           <>
             <DateFilter value={dateFilter} onChange={handleDateFilter} />
@@ -405,6 +373,8 @@ export default function Payments({ currentUser }) {
           }}
         />
       )}
+
+      </section>
 
       <ConfirmDialog
         open={!!voidTarget}

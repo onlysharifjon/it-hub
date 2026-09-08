@@ -13,6 +13,7 @@ import NotificationBell from './NotificationBell'
 import CommandPalette from './CommandPalette'
 import ThemeToggle from './ui/ThemeToggle'
 import BrandLogo from './ui/BrandLogo'
+import { flatNav } from '../constants/nav'
 
 /** Tezkor amallar — rolga qarab (faqat foydalanuvchi kira oladigan sahifalar). */
 const QUICK_ACTIONS = [
@@ -21,7 +22,7 @@ const QUICK_ACTIONS = [
   { key: 'payments', label: "To'lov qabul", roles: ['admin', 'hunter'] },
 ]
 
-export default function Topbar({ currentUser, onNavigate, onAvatarUpdate, onLogout, onToggleMenu }) {
+export default function Topbar({ currentUser, activePage, onNavigate, onAvatarUpdate, onLogout, onToggleMenu }) {
   const role = currentUser?.role
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -60,6 +61,7 @@ export default function Topbar({ currentUser, onNavigate, onAvatarUpdate, onLogo
   const avatarLetter = (currentUser?.full_name || currentUser?.username)?.[0]?.toUpperCase() ?? '?'
   const avatarUrl = currentUser?.avatar ? `${API_BASE}/uploads/${currentUser.avatar}` : null
   const quickActions = QUICK_ACTIONS.filter(a => a.roles.includes(role))
+  const currentNav = flatNav(role).find(item => item.key === activePage || item.alsoActiveOn?.includes(activePage))
 
   function openProfile() {
     setProfileForm({ full_name: currentUser?.full_name || '', current_password: '', password: '', password2: '' })
@@ -117,10 +119,12 @@ export default function Topbar({ currentUser, onNavigate, onAvatarUpdate, onLogo
             shuning uchun bu element yashiriladi (takrorlamaslik uchun). */}
         <BrandLogo variant="mark" size="lg" className="topbar-brand" />
 
+        <div className="workspace-breadcrumb" aria-label="Joriy bo‘lim"><span>{currentNav?.group || 'Ish maydoni'}</span><span aria-hidden="true">/</span><strong>{currentNav?.label || 'Minar Academy'}</strong></div>
+
         <button className="topbar-search" onClick={() => setPaletteOpen(true)}>
           <FontAwesomeIcon icon={faMagnifyingGlass} />
-          <span>Qidirish yoki sahifaga o'tish...</span>
-          <kbd>⌘K</kbd>
+          <span>Qidirish...</span>
+          <kbd>Ctrl K</kbd>
         </button>
 
         <div className="topbar-actions">
@@ -148,6 +152,7 @@ export default function Topbar({ currentUser, onNavigate, onAvatarUpdate, onLogo
           <ThemeToggle />
 
           <div className="topbar-profile" ref={menuRef}>
+            <div className="topbar-profile-copy"><strong>{currentUser?.full_name || currentUser?.username}</strong><span>{ROLE_LABELS[role] || role}</span></div>
             <button className="topbar-avatar" onClick={() => setMenuOpen(v => !v)} aria-expanded={menuOpen} aria-label="Profil menyusi">
               {avatarUrl ? <img src={avatarUrl} alt="" /> : avatarLetter}
             </button>

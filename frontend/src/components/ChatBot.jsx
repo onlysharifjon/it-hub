@@ -1,8 +1,10 @@
+import { Initials } from './ui/Workspace'
+import { PageIntro } from './ui/Workspace'
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faComments, faMagnifyingGlass, faUserGraduate, faUserTie, faCircleQuestion,
-  faCircleCheck, faCircleXmark, faPaperPlane, faInbox,
+  faCircleCheck, faCircleXmark, faPaperPlane, faInbox, faArrowLeft,
 } from '@fortawesome/free-solid-svg-icons'
 import { fetchBotChats, fetchBotChatMessages } from '../api'
 import { tashkentDate, tashkentToday } from '../utils/datetime'
@@ -54,6 +56,7 @@ export default function ChatBot() {
   const [chats, setChats] = useState([])
   const [loadingChats, setLoadingChats] = useState(true)
   const [search, setSearch] = useState('')
+  const [chatKind, setChatKind] = useState('all')
   const [activeChat, setActiveChat] = useState(null)
   const [messages, setMessages] = useState([])
   const [loadingMessages, setLoadingMessages] = useState(false)
@@ -101,17 +104,12 @@ export default function ChatBot() {
   }
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faComments} className="page-icon" /> Chatbot</h1>
-          <p className="page-subtitle">Telegram bot orqali kelgan suhbatlar</p>
-        </div>
-      </div>
+    <div className="page chat-studio">
+      <PageIntro title={<>Chatbot</>} description={<>Telegram bot orqali kelgan suhbatlar</>}  />
 
-      <div className="chatbot-layout">
+      <div className={'chatbot-layout' + (activeChat ? ' has-active-chat' : '')}>
         {/* ── Suhbatlar ro'yxati ── */}
-        <div className="chatbot-list">
+        <div className="chatbot-list"><header className="chat-inbox-title"><h2>Suhbatlar</h2><span>{chats.length}</span></header><div className="chat-kind-tabs">{[['all','Barchasi'],['student','Talabalar'],['staff','Xodimlar']].map(([key,label]) => <button key={key} aria-pressed={chatKind === key} onClick={() => setChatKind(key)}>{label}</button>)}</div>
           <div className="chatbot-search">
             <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
             <input
@@ -125,12 +123,12 @@ export default function ChatBot() {
           <div className="chatbot-chats">
             {loadingChats ? (
               <div className="muted center py-8">Yuklanmoqda...</div>
-            ) : chats.length === 0 ? (
+            ) : chats.filter(c => chatKind === 'all' || c.kind === chatKind).length === 0 ? (
               <div className="muted center py-8">
                 <FontAwesomeIcon icon={faInbox} style={{ fontSize: 22, marginBottom: 8, display: 'block' }} />
                 Hozircha suhbatlar yo'q
               </div>
-            ) : chats.map(c => {
+            ) : chats.filter(c => chatKind === 'all' || c.kind === chatKind).map(c => {
               const meta = KIND_META[c.kind] || KIND_META.unknown
               const active = activeChat?.chat_id === c.chat_id
               return (
@@ -139,9 +137,7 @@ export default function ChatBot() {
                   className={`chatbot-chat-row ${active ? 'active' : ''}`}
                   onClick={() => setActiveChat(c)}
                 >
-                  <div className="chatbot-avatar" style={{ background: `${meta.color}1a`, color: meta.color }}>
-                    <FontAwesomeIcon icon={meta.icon} />
-                  </div>
+                  <Initials name={c.display_name} />
                   <div className="chatbot-chat-info">
                     <div className="chatbot-chat-top">
                       <span className="chatbot-chat-name">{c.display_name}</span>
@@ -173,6 +169,7 @@ export default function ChatBot() {
           ) : (
             <>
               <div className="chatbot-thread-header">
+                <button type="button" className="btn-icon chat-mobile-back" aria-label="Suhbatlar ro‘yxatiga qaytish" onClick={() => setActiveChat(null)}><FontAwesomeIcon icon={faArrowLeft} /></button>
                 {(() => {
                   const meta = KIND_META[activeChat.kind] || KIND_META.unknown
                   return (
@@ -211,7 +208,7 @@ export default function ChatBot() {
                               {m.direction === 'out' && (
                                 <FontAwesomeIcon
                                   icon={m.sent_ok ? faCircleCheck : faCircleXmark}
-                                  style={{ color: m.sent_ok ? 'var(--success-bg)' : 'var(--danger-border)', fontSize: 10 }}
+                                  style={{ color: m.sent_ok ? 'var(--success-text)' : 'var(--danger-text)', fontSize: 12 }}
                                 />
                               )}
                               {fmtTime(m.created_at)}

@@ -1,3 +1,7 @@
+import { PageIntro } from './ui/Workspace'
+import { SummaryRow, ViewTabs } from './ui/Workspace'
+import InsightChart from './ui/InsightChart'
+import DonutChart from './ui/DonutChart'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -13,7 +17,7 @@ import DataTable from './ui/DataTable'
 import Meter from './ui/Meter'
 import { Metric } from './ui/Metric'
 import SectionHead from './ui/SectionHead'
-import { MiniBars, StackedBar, short } from './ui/Chart'
+import { MiniBars, short } from './ui/Chart'
 import { tashkentNow } from '../utils/datetime'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
@@ -85,6 +89,7 @@ export default function Finance({ onNavigate }) {
   const [trend, setTrend] = useState(null)
   const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState(null)
+  const [financeView, setFinanceView] = useState('overview')
   const [debtorLimit, setDebtorLimit] = useState(8)
 
   useEffect(() => { load() }, [month, year])
@@ -189,7 +194,7 @@ export default function Finance({ onNavigate }) {
         id: 'worst-group', tone: 'warning',
         text: `${worst.group_name} guruhi qoldiqning ${Math.round(worst.debtShare)}% ini beryapti`,
         sub: `${money(worst.deficit)} · ${worst.unpaid_count} o'quvchi to'lamagan`,
-        action: () => setExpanded(worst.group_id),
+        action: () => { setFinanceView('groups'); setExpanded(worst.group_id) },
         actionLabel: "O'quvchilarni ko'rish",
       })
     }
@@ -303,16 +308,9 @@ export default function Finance({ onNavigate }) {
   }), { students: 0, expected: 0, actual: 0, deficit: 0, unpaid: 0 })
 
   return (
-    <div className="page page-dense fin-page">
+    <div className="page fin-page finance-studio">
       {/* ── 1. Sarlavha: davr tanlagichi sahifa bo'ylab yopishib turadi ── */}
-      <div className="page-header fin-header">
-        <div className="fin-header-text">
-          <h1><FontAwesomeIcon icon={faWallet} className="page-icon" /> Moliya</h1>
-          <p className="fin-header-sub">
-            {MONTHS[month - 1]} {year} · {isCurrentMonth ? 'oy davom etmoqda' : 'oy yakunlangan'}
-          </p>
-        </div>
-        <div className="header-actions fin-header-actions">
+      <PageIntro title={<>Moliya</>} description={<>{MONTHS[month - 1]} {year} · {isCurrentMonth ? 'oy davom etmoqda' : 'oy yakunlangan'}</>} actions={<><div className="header-actions fin-header-actions">
           <div className="fin-period" role="group" aria-label="Davr">
             <FontAwesomeIcon icon={faCalendarDays} className="fin-period-icon" />
             <select className="field-sm" value={month} onChange={e => setMonth(Number(e.target.value))} aria-label="Oy">
@@ -326,131 +324,25 @@ export default function Finance({ onNavigate }) {
           <button className="button secondary" onClick={() => openDownload(exportExcelUrl(month, year)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
             <FontAwesomeIcon icon={faFileExcel} /> Excel
           </button>
-        </div>
-      </div>
+        </div></>} />
 
       {loading ? (
         <TableSkeleton />
       ) : data ? (
         <>
           {/* ── 2. KPI: bitta yetakchi raqam + uchta yordamchi ── */}
-          <section className="fin-kpi" aria-label="Asosiy ko'rsatkichlar">
-            <div className={`fin-kpi-primary tone-${collectionTone}`}>
-              <span className="fin-kpi-label">Yig'ilish darajasi</span>
-              <span className="fin-kpi-figure">
-                <span className="fin-kpi-value num">{collectionPct.toFixed(1)}</span>
-                <span className="fin-kpi-suffix">%</span>
-                {ppChange != null && (
-                  <span className={`fin-kpi-delta${ppChange >= 0 ? ' is-good' : ' is-bad'}`}>
-                    <FontAwesomeIcon icon={ppChange >= 0 ? faArrowTrendUp : faArrowTrendDown} />
-                    {`${ppChange >= 0 ? '+' : '−'}${Math.abs(ppChange).toFixed(1)} p.p.`}
-                  </span>
-                )}
-              </span>
-              <Meter value={collectionPct} tone={collectionTone} size="md" />
-              <dl className="fin-kpi-facts">
-                <div>
-                  <dt>O'tgan oy</dt>
-                  <dd className="num">{prev?.collection_pct == null ? '—' : `${prev.collection_pct.toFixed(1)}%`}</dd>
-                </div>
-                <div>
-                  <dt>6 oy o'rtachasi</dt>
-                  <dd className="num">{avgCollection == null ? '—' : `${avgCollection.toFixed(1)}%`}</dd>
-                </div>
-                <div>
-                  <dt>Eng past oy</dt>
-                  <dd className="num">{worstMonth ? `${Math.round(worstMonth.collection_pct)}% · ${MONTHS_SHORT[worstMonth.month - 1]}` : '—'}</dd>
-                </div>
-              </dl>
-            </div>
-
-            <div className="fin-kpi-secondary">
-              <Metric
-                label="Kutilgan" value={fmt(data.total_expected)} unit="so'm"
-                delta={isCurrentMonth || !prev ? null : pctChange(data.total_expected, prev.expected)}
-                sub={`${groups.length} guruh · ${totals.students} o'quvchi`}
-                chart={<MiniBars values={series.map(m => m.expected)} labels={trendLabels} height="100%" tone="neutral" format={short} />}
-              />
-              <Metric
-                label="Yig'ilgan" value={fmt(data.total_actual)} unit="so'm" tone="success"
-                delta={isCurrentMonth || !prev ? null : pctChange(data.total_actual, prev.actual)}
-                sub={prev ? `O'tgan oy: ${fmt(prev.actual)}` : '—'}
-                chart={<MiniBars values={series.map(m => m.actual)} labels={trendLabels} height="100%" tone="success" format={short} />}
-              />
-              <Metric
-                label="Qoldiq" value={fmt(data.total_deficit)} unit="so'm" tone="danger"
-                sub={`${debtors.length} o'quvchi · kutilganning ${data.total_expected > 0 ? Math.round(data.total_deficit / data.total_expected * 100) : 0}%`}
-                chart={<MiniBars values={series.map(m => m.deficit)} labels={trendLabels} height="100%" tone="danger" format={short} />}
-              />
-            </div>
-          </section>
-
+          <SummaryRow items={[{ label: 'Kutilayotgan to‘lovlar', value: fmt(data.total_expected), unit: 'so‘m', sub: groups.length + ' guruh · ' + totals.students + ' talaba' }, { label: 'Yig‘ilgan', value: fmt(data.total_actual), unit: 'so‘m', tone: 'success', sub: collectionPct.toFixed(1) + '% yig‘ilish' }, { label: 'Qoldiq', value: fmt(data.total_deficit), unit: 'so‘m', sub: debtors.length + ' ta talaba', tone: 'danger' }]} />
+          <ViewTabs value={financeView} onChange={setFinanceView} items={[{ key: 'overview', label: 'Umumiy tahlil' }, { key: 'groups', label: 'Guruhlar kesimi', count: groups.length }, { key: 'debtors', label: 'Qarzdorlik', count: debtors.length }]} />
+          {financeView === 'overview' && <>
           {/* ── 3. Trend va tahlil: trend — sahifaning asosiy grafigi ── */}
           <section className="fin-analytics" aria-label="Trend va tahlil">
-            <div className="fin-card fin-card-trend">
-              <SectionHead
-                title="Yig'ilish trendi"
-                description="Oxirgi 6 oy · har bir ustun — o'sha oyda yig'ilgan ulush"
-                actions={avgCollection != null && (
-                  <span className="fin-legend">
-                    <span className="fin-legend-item"><i className="fin-legend-dash" /> O'rtacha {avgCollection.toFixed(1)}%</span>
-                  </span>
-                )}
-              />
-              {series.length ? (
-                <>
-                  <div className="fin-trend">
-                    <div className="fin-trend-plot">
-                      <div className="fin-trend-grid" aria-hidden="true">
-                        {[100, 75, 50, 25, 0].map(v => (
-                          <span key={v} className="fin-trend-gridline" style={{ bottom: `${v}%` }}>
-                            <i className="fin-trend-gridlabel">{v}</i>
-                          </span>
-                        ))}
-                        {avgCollection != null && (
-                          <span className="fin-trend-avg" style={{ bottom: `${Math.min(100, avgCollection)}%` }} />
-                        )}
-                      </div>
-                      <div className="fin-trend-cols">
-                        {series.map((m, i) => {
-                          const v = m.collection_pct
-                          const isLast = i === series.length - 1
-                          const band = v == null ? 'is-empty' : v >= 80 ? 'is-good' : v >= 50 ? 'is-mid' : 'is-bad'
-                          return (
-                            <div
-                              key={`${m.year}-${m.month}`}
-                              className={`fin-trend-col${isLast ? ' is-current' : ''}`}
-                              title={`${MONTHS[m.month - 1]} ${m.year}: ${v == null ? '—' : v + '%'} · ${money(m.actual)} / ${money(m.expected)}`}
-                            >
-                              <div className={`fin-trend-fill ${band}`} style={{ height: v == null ? '0%' : `${Math.max(v, v > 0 ? 1.5 : 0)}%` }}>
-                                <span className="fin-trend-val num">{v == null ? '—' : `${Math.round(v)}%`}</span>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                    <div className="fin-trend-axis" aria-hidden="true">
-                      {series.map((m, i) => (
-                        <span key={`${m.year}-${m.month}`} className={`fin-trend-label${i === series.length - 1 ? ' is-current' : ''}`}>
-                          {MONTHS_SHORT[m.month - 1]}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <p className="fin-note">
-                    Oxirgi ustun — {MONTHS[month - 1]} {year}. Kutilgan summa har bir o'quvchining
-                    to'liq oylik tarifidan hisoblanadi (davomatga bog'liq emas).
-                  </p>
-                </>
-              ) : (
-                <div className="fin-trend-loading">Trend yuklanmoqda…</div>
-              )}
-            </div>
+            <InsightChart title="To‘lovlar dinamikasi" subtitle="Oxirgi 6 oy · oylik ko‘rsatkichlar" unit="so‘m" data={series.map(m => ({ label: MONTHS_SHORT[m.month - 1], value: m.actual, compare: m.expected }))} series={[{ key: 'value', label: 'Yig‘ilgan', color: 'var(--viz-1)' }, { key: 'compare', label: 'Kutilgan', color: 'var(--viz-3)' }]} footnote={<>Yig‘ilish darajasi: <strong>{collectionPct.toFixed(1)}%</strong>{avgCollection != null && <> · 6 oy o‘rtachasi <strong>{avgCollection.toFixed(1)}%</strong></>}</>} />
 
             <div className="fin-card fin-card-split">
               <SectionHead title="Oy tarkibi" description={`${MONTHS[month - 1]} ${year}`} />
-              <StackedBar
+              <DonutChart
+                value={`${collectionPct.toFixed(0)}%`}
+                label="Yig‘ilish darajasi"
                 segments={[
                   { label: "Yig'ilgan", value: data.total_actual, tone: 'success' },
                   { label: 'Qoldiq', value: data.total_deficit, tone: 'danger' },
@@ -506,6 +398,8 @@ export default function Finance({ onNavigate }) {
             </section>
           )}
 
+          </>}
+          {financeView === 'groups' && <>
           {/* ── 5. Diqqat talab qiladigan guruhlar ── */}
           {watchList.length > 0 && (
             <section aria-label="Diqqat talab qiladigan guruhlar">
@@ -549,6 +443,9 @@ export default function Finance({ onNavigate }) {
             </section>
           )}
 
+          </>}
+          {financeView === 'debtors' && <>
+          {debtors.length === 0 && <EmptyState title="Qarzdorlik yo‘q" description="Tanlangan davrda to‘lov kutilayotgan talabalar yo‘q." />}
           {/* ── 6. To'lov kutilmoqda ── */}
           {debtors.length > 0 && (
             <section className="fin-card fin-debtors" aria-label="Qarzdorlar">
@@ -608,6 +505,8 @@ export default function Finance({ onNavigate }) {
             </section>
           )}
 
+          </>}
+          {financeView === 'groups' && <>
           {/* ── 7. Guruhlar kesimi ── */}
           <section className="fin-table-section" aria-label="Guruhlar kesimi">
             <SectionHead
@@ -702,6 +601,7 @@ export default function Finance({ onNavigate }) {
               )
             })()}
           </section>
+          </>}
         </>
       ) : null}
     </div>

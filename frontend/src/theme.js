@@ -45,7 +45,7 @@ function apply(theme) {
   else root.removeAttribute('data-theme')
   // Brauzer UI (manzil paneli, form boshqaruvlari) ham moslashsin
   document.querySelector('meta[name="theme-color"]')
-    ?.setAttribute('content', theme === 'dark' ? '#0B0F19' : '#FFFFFF')
+    ?.setAttribute('content', theme === 'dark' ? '#0b1125' : '#f4f6fd')
 }
 
 /** Rejimni o'rnatadi va eslab qoladi. */

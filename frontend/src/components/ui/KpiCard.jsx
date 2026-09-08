@@ -45,10 +45,10 @@ export default function KpiCard({
         {unit && <span className="ui-kpi-unit">{unit}</span>}
       </div>
 
-      <div className="ui-kpi-foot">
+      {(trend != null || sub) && <div className="ui-kpi-foot">
         {trend != null && <TrendIndicator value={trend} invert={trendInvert} label={trendLabel} />}
         {sub && <span className="ui-kpi-sub">{sub}</span>}
-      </div>
+      </div>}
 
       {spark?.length > 1 && (
         <div className="ui-kpi-spark">

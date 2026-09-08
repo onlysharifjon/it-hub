@@ -1,39 +1,39 @@
-﻿import { useEffect, useState } from 'react'
+﻿import { lazy, Suspense, useEffect, useState } from 'react'
 import { Toaster } from 'react-hot-toast'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import Login from './components/Login'
-import Lessons from './components/Lessons'
-import Students from './components/Students'
-import StudentDetail from './components/StudentDetail'
-import Groups from './components/Groups'
-import GroupDetail from './components/GroupDetail'
-import Payments from './components/Payments'
-import Dashboard from './components/Dashboard'
-import Tariffs from './components/Tariffs'
-import Courses from './components/Courses'
-import Finance from './components/Finance'
-import TodayAttendance from './components/TodayAttendance'
-import Users from './components/Users'
-import TeacherSalaries from './components/TeacherSalaries'
-import Salary from './components/Salary'
-import TeacherDashboard from './components/TeacherDashboard'
-import Expenses from './components/Expenses'
-import Leads from './components/Leads'
-import Tree from './components/Tree'
-import WorkCenter from './components/WorkCenter'
-import TeamActivity from './components/TeamActivity'
-import Special from './components/Special'
-import Academic from './components/Academic'
-import FeedbackInbox from './components/FeedbackInbox'
-import Notifications from './components/Notifications'
-import ChatBot from './components/ChatBot'
-import Parents from './components/Parents'
+const Lessons = lazy(() => import('./components/Lessons'))
+const Students = lazy(() => import('./components/Students'))
+const StudentDetail = lazy(() => import('./components/StudentDetail'))
+const Groups = lazy(() => import('./components/Groups'))
+const GroupDetail = lazy(() => import('./components/GroupDetail'))
+const Payments = lazy(() => import('./components/Payments'))
+const Dashboard = lazy(() => import('./components/Dashboard'))
+const Tariffs = lazy(() => import('./components/Tariffs'))
+const Courses = lazy(() => import('./components/Courses'))
+const Finance = lazy(() => import('./components/Finance'))
+const TodayAttendance = lazy(() => import('./components/TodayAttendance'))
+const Users = lazy(() => import('./components/Users'))
+const TeacherSalaries = lazy(() => import('./components/TeacherSalaries'))
+const Salary = lazy(() => import('./components/Salary'))
+const TeacherDashboard = lazy(() => import('./components/TeacherDashboard'))
+const Expenses = lazy(() => import('./components/Expenses'))
+const Leads = lazy(() => import('./components/Leads'))
+const Tree = lazy(() => import('./components/Tree'))
+const WorkCenter = lazy(() => import('./components/WorkCenter'))
+const TeamActivity = lazy(() => import('./components/TeamActivity'))
+const Special = lazy(() => import('./components/Special'))
+const Academic = lazy(() => import('./components/Academic'))
+const FeedbackInbox = lazy(() => import('./components/FeedbackInbox'))
+const Notifications = lazy(() => import('./components/Notifications'))
+const ChatBot = lazy(() => import('./components/ChatBot'))
+const Parents = lazy(() => import('./components/Parents'))
 import PublicIntake from './components/PublicIntake'
-import Employees from './components/Employees'
-import AuditWarnings from './components/AuditWarnings'
-import MyWarnings from './components/MyWarnings'
-import BotAdmin from './components/BotAdmin'
+const Employees = lazy(() => import('./components/Employees'))
+const AuditWarnings = lazy(() => import('./components/AuditWarnings'))
+const MyWarnings = lazy(() => import('./components/MyWarnings'))
+const BotAdmin = lazy(() => import('./components/BotAdmin'))
 import { fetchMe, login as apiLogin, setToken } from './api'
 
 function readHash() {
@@ -199,6 +199,11 @@ function App() {
     setSidebarOpen(false)
   }
 
+  useEffect(() => {
+    const content = document.querySelector('.content')
+    if (content) content.scrollTop = 0
+  }, [activePage])
+
   // Ommaviy qabul formasi — auth talab qilinmaydi
   if (intakeSlug) {
     return (
@@ -219,8 +224,8 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <a href="#main-content" className="skip-link">Asosiy kontentga o'tish</a>
+    <div className="app-shell" data-role={currentUser?.role}>
+      <a href="#main-content" className="skip-link" onClick={e => { e.preventDefault(); document.getElementById('main-content')?.focus() }}>Asosiy kontentga o'tish</a>
       <Toaster position="top-right" />
 
       {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
@@ -232,11 +237,13 @@ function App() {
         activePage={activePage}
         onNavigate={handleNavigate}
         isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
       />
 
       <ScrollToTop />
-      <main className="content" id="main-content">
+      <main className="content" id="main-content" tabIndex={-1}>
         <Topbar
+          activePage={activePage}
           currentUser={currentUser}
           onNavigate={handleNavigate}
           onAvatarUpdate={setCurrentUser}
@@ -248,9 +255,10 @@ function App() {
             dagi [data-module] qoidalari). Sarlavha ikonkasi va sahifaga xos
             urg'ular shu bitta atributdan rang oladi; hech bir sahifa o'z
             rangini qo'lda yozmaydi. */}
+        <Suspense fallback={<div className="workspace-route-loading" role="status"><span /><p>Sahifa yuklanmoqda…</p></div>}>
         <div className="page-anim" data-module={activePage} key={activePage}>
           {activePage === 'lessons' && (
-            <Lessons category={selectedCategory} currentUser={currentUser} />
+            <Lessons category={selectedCategory} onSelectCategory={setSelectedCategory} currentUser={currentUser} />
           )}
           {activePage === 'students' && (
             <Students currentUser={currentUser} onOpenStudent={s => {
@@ -308,7 +316,7 @@ function App() {
           {activePage === 'courses' && <Courses />}
           {activePage === 'finance' && <Finance onNavigate={handleNavigate} />}
           {activePage === 'teacher_dashboard' && (
-            <TeacherDashboard currentUser={currentUser} onOpenGroup={g => {
+            <TeacherDashboard currentUser={currentUser} onNavigate={handleNavigate} onOpenGroup={g => {
               sessionStorage.setItem('selectedGroup', JSON.stringify(g))
               sessionStorage.setItem('groupDetailOrigin', 'teacher_dashboard')
               setSelectedGroup(g)
@@ -343,6 +351,7 @@ function App() {
           {activePage === 'my_warnings' && <MyWarnings />}
           {activePage === 'bot_admin' && <BotAdmin />}
         </div>
+        </Suspense>
       </main>
     </div>
   )

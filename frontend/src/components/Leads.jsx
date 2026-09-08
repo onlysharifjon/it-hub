@@ -1,3 +1,6 @@
+import LeadBoard from './LeadBoard'
+import { PageIntro, SummaryRow, Initials, ViewTabs } from './ui/Workspace'
+import Overlay from './ui/Overlay'
 import { useEffect, useState, useRef, useMemo, Fragment } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -349,13 +352,9 @@ export default function Leads({ currentUser }) {
 
 
   return (
-    <div className="page">
+    <div className="page leads-studio">
       {confirmUI}
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faBullseye} className="page-icon" /> Lidlar</h1>
-          <p className="page-subtitle">Savdo quvuri — qo'ng'iroqdan to'lovgacha</p>
-        </div>
+      <div className="page-header studio-intro"><div><span className="studio-eyebrow">Aloqalar markazi</span><h1>Lidlar</h1><p className="page-subtitle">Har bir qiziqishdan yangi imkoniyatga.</p></div>
         <div className="header-actions">
           {isAdmin && (
             <button className="button secondary" onClick={() => setFormModal(true)}>
@@ -376,6 +375,7 @@ export default function Leads({ currentUser }) {
       </div>
 
       {/* Toolbar */}
+      <div className="lead-pipeline-summary"><div><span>Tanlangan ro‘yxatda</span><strong>{leads.length}<small> ta lid</small></strong></div><div><span>Jarayonda</span><strong>{leads.filter(l => !['won', 'lost'].includes(stages.find(s => s.id === l.stage_id)?.kind)).length}</strong></div><div><span>To‘lovga yetgan</span><strong className="tone-success">{leads.filter(l => stages.find(s => s.id === l.stage_id)?.kind === 'won').length}</strong></div><div><span>Kechikkan aloqa</span><strong className={leads.some(l => l.is_overdue) ? 'tone-danger' : ''}>{leads.filter(l => l.is_overdue).length}</strong></div></div>
       <div className="toolbar">
         <div className="search-wrap">
           <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
@@ -421,7 +421,7 @@ export default function Leads({ currentUser }) {
           }}>
           <button role="tab" data-tab="kanban" aria-selected={view === 'kanban'} tabIndex={view === 'kanban' ? 0 : -1}
             className={view === 'kanban' ? 'active' : ''} onClick={() => setView('kanban')}>
-            <FontAwesomeIcon icon={faTableColumns} /> Board
+            <FontAwesomeIcon icon={faTableColumns} /> Ish maydoni
           </button>
           <button role="tab" data-tab="list" aria-selected={view === 'list'} tabIndex={view === 'list' ? 0 : -1}
             className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>
@@ -487,112 +487,8 @@ export default function Leads({ currentUser }) {
       ) : loading ? (
         <KanbanSkeleton count={visibleStages.length || 4} />
       ) : view === 'kanban' ? (
-        leads.length === 0 && (search || hasActiveFilters) ? (
-        <div className="board-empty-state">
-          <FontAwesomeIcon icon={faMagnifyingGlass} />
-          <div className="be-title">Hech qanday lid topilmadi</div>
-          <div className="be-sub">Qidiruv yoki filterlarni o'zgartirib ko'ring.</div>
-        </div>
-        ) : (
-        <div className="kanban">
-          {visibleStages.map(stage => {
-            const items = byStage(stage.id)
-            const shown = colLimit[stage.id] || COL_PAGE
-            const visibleItems = items.slice(0, shown)
-            return (
-              <div key={stage.id}
-                className={`kanban-col${dragOver === stage.id ? ' drag-over' : ''}`}
-                onDragOver={e => { if (canMove) { e.preventDefault(); setDragOver(stage.id) } }}
-                onDragLeave={() => setDragOver(o => o === stage.id ? null : o)}
-                onDrop={() => canMove && onDrop(stage.id)}>
-                <div className="kanban-col-head">
-                  <span className="dot" style={{ background: hex(stage.color) }} />
-                  <span className="title">{stage.name}</span>
-                  <span className="count">{items.length}</span>
-                </div>
-                <div className="kanban-col-body">
-                  {visibleItems.map(lead => (
-                    <div key={lead.id}
-                      className={`kanban-card${dragId === lead.id ? ' dragging' : ''}`}
-                      style={{ '--card-accent': hex(stage.color) }}
-                      draggable={canMove}
-                      tabIndex={0}
-                      role="button"
-                      aria-label={`${lead.full_name} — lidni ochish`}
-                      onDragStart={() => setDragId(lead.id)}
-                      onDragEnd={() => { setDragId(null); setDragOver(null) }}
-                      onClick={() => openDrawer(lead)}
-                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDrawer(lead) } }}>
-                      <div className="kc-name">
-                        {lead.full_name}
-                        {lead.is_shared && !lead.claimed_by_id && <span className="kc-badge pool" style={{ marginLeft: 6 }}>havza</span>}
-                        {lead.claimed_by_id === currentUser?.id && <span className="kc-badge mine" style={{ marginLeft: 6 }}>meniki</span>}
-                      </div>
-                      <div className="kc-row kc-phone"><FontAwesomeIcon icon={faPhone} /> {lead.phone_display || lead.phone}</div>
-                      <div className="kc-meta">
-                        {lead.course_interest && <span className="kc-tag">{lead.course_interest}</span>}
-                        {lead.source_name && <span className="kc-tag">{lead.source_name}</span>}
-                        {lead.interested_group_name && <span className="kc-tag">{lead.interested_group_name}</span>}
-                        {canSeeOwner && lead.claimed_by_name && <span className="kc-tag">👤 {lead.claimed_by_name}</span>}
-                        {canSeeOwner && !lead.claimed_by_name && lead.created_by_name && <span className="kc-tag">{lead.created_by_name}</span>}
-                      </div>
-                      {lead.callback_at ? (
-                        <div className={`kc-row kc-callback${lead.is_overdue ? ' tone-danger' : ''}`} style={{ marginTop: 6 }}>
-                          <FontAwesomeIcon icon={lead.is_overdue ? faTriangleExclamation : faClockRotateLeft} />
-                          {' '}{fmtDate(lead.callback_at)}
-                          {lead.is_overdue && <strong style={{ marginLeft: 4 }}>· kechikdi</strong>}
-                        </div>
-                      ) : (
-                        <div className="kc-row text-muted" style={{ marginTop: 6, fontSize: 12 }}>
-                          <FontAwesomeIcon icon={faClock} /> {fmtDate(lead.created_at)}
-                        </div>
-                      )}
-                      {lead.notes && (
-                        <div className="kc-row text-muted kc-clamp2" style={{ marginTop: 6, fontSize: 12 }}
-                          title={lead.notes}>
-                          <FontAwesomeIcon icon={faCommentDots} style={{ marginTop: 2, flex: 'none' }} />
-                          {' '}{lead.notes}
-                        </div>
-                      )}
-                      {lead.next_reminder_body && (
-                        <div className="kc-row kc-callback kc-clamp2" style={{ marginTop: 6, fontSize: 12 }}
-                          title={lead.next_reminder_body}>
-                          <FontAwesomeIcon icon={faClock} style={{ marginTop: 2, flex: 'none' }} />
-                          {' '}{lead.next_reminder_body}
-                          {lead.next_reminder_due_at && <> ({fmtDate(lead.next_reminder_due_at)})</>}
-                        </div>
-                      )}
-                      {lead.is_shared && !lead.claimed_by_id && canMove && (
-                        <button className="kc-claim" disabled={claimingId === lead.id}
-                          aria-label={`${lead.full_name} lidini band qilish`}
-                          onClick={e => { e.stopPropagation(); handleClaim(lead) }}>
-                          {claimingId === lead.id
-                            ? <><FontAwesomeIcon icon={faSpinner} className="kc-spin" /> Band qilinmoqda...</>
-                            : <><FontAwesomeIcon icon={faHandHolding} /> Band qilish</>}
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                  {items.length > visibleItems.length && (
-                    <button className="button secondary" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }}
-                      onClick={() => setColLimit(m => ({ ...m, [stage.id]: shown + COL_PAGE }))}>
-                      Yana {Math.min(COL_PAGE, items.length - visibleItems.length)} ta
-                      <span className="text-muted"> ({visibleItems.length}/{items.length})</span>
-                    </button>
-                  )}
-                  {items.length === 0 && (
-                    <div className="kanban-empty">
-                      <FontAwesomeIcon icon={faInbox} />
-                      <div className="ke-title">Lidlar yo'q</div>
-                      <div className="ke-sub">Statusni o'zgartirish uchun lidni shu yerga tashlang</div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-        )
+        <LeadBoard leads={leads} stages={visibleStages} canMove={canMove} canSeeOwner={canSeeOwner} currentUser={currentUser}
+          onOpen={openDrawer} onDragStart={setDragId} onDrop={onDrop} onClaim={handleClaim} claimingId={claimingId} onAdd={canAddLead ? () => setAddModal(true) : undefined} />
       ) : (
         <ListView leads={leads} stages={stages} canSeeOwner={canSeeOwner}
           canDelete={canDelete} canEdit={canMove} onOpen={openDrawer}
@@ -885,6 +781,7 @@ export function LeadDrawer({ lead, stages, activities, canMove, canDelete, canCo
   // Tree kabi tahlil ekranlarida bosqichni o'zgartirish o'chirilgan (ko'rsatkichlar
   // ko'z oldida o'zgarib ketmasin), lekin izoh qoldirish baribir kerak.
   const canNote = allowNote ?? canMove
+  const [detailTab, setDetailTab] = useState('details')
   const [confirmUI, ask] = useConfirm()
   const [cb, setCb] = useState(isoToInput(lead.callback_at))
   const [reminders, setReminders] = useState([])
@@ -960,48 +857,25 @@ export function LeadDrawer({ lead, stages, activities, canMove, canDelete, canCo
   }
 
   return (
-    <div className="drawer-overlay" onClick={onClose}>
+    <Overlay className="drawer-overlay" onClick={onClose}>
       {confirmUI}
-      <div className="drawer" ref={drawerRef} role="dialog" aria-modal="true" aria-label={`${lead.full_name} — lid ma'lumotlari`} onClick={e => e.stopPropagation()}>
+      <div className="drawer lead-dossier" ref={drawerRef} role="dialog" aria-modal="true" aria-label={`${lead.full_name} — lid ma'lumotlari`} onClick={e => e.stopPropagation()}>
         <div className="drawer-head">
-          <h3>{lead.full_name}</h3>
+          <h3>Lid kartasi</h3>
           <span style={{ flex: 1 }} />
           {canMove && <button className="btn-icon" title="Tahrirlash" aria-label="Lidni tahrirlash" onClick={() => onEdit(lead)}><FontAwesomeIcon icon={faPen} /></button>}
           {canDelete && <button className="btn-icon danger" title="O'chirish" aria-label="Lidni o'chirish" onClick={onDelete}><FontAwesomeIcon icon={faTrash} /></button>}
           <button className="modal-close" aria-label="Yopish" onClick={onClose}><FontAwesomeIcon icon={faXmark} /></button>
         </div>
         <div className="drawer-body">
-          <div className="kc-row" style={{ marginBottom: 6 }}><FontAwesomeIcon icon={faPhone} /> {lead.phone_display || lead.phone}</div>
-          <a className="button secondary" style={{ width: '100%', justifyContent: 'center', marginBottom: 12 }}
-            href={`tel:${lead.phone}`}>
-            <FontAwesomeIcon icon={faPhone} /> Qo'ng'iroq qilish
-          </a>
-          {lead.is_overdue && (
-            <div className="rem-item overdue" style={{ marginBottom: 12 }}>
-              <FontAwesomeIcon icon={faTriangleExclamation} style={{ marginTop: 3 }} />
-              <div style={{ flex: 1 }}>
-                <div className="rem-when">Kelish vaqti o'tib ketgan: {fmtDate(lead.callback_at)}</div>
-              </div>
-            </div>
-          )}
-          <div className="kc-meta" style={{ marginBottom: 12 }}>
-            {lead.course_interest && <span className="kc-tag">{lead.course_interest}</span>}
-            {lead.source_name && <span className="kc-tag">Manba: {lead.source_name}</span>}
-            {lead.interested_group_name && <span className="kc-tag">Guruh: {lead.interested_group_name}</span>}
-            {lead.claimed_by_name && <span className="kc-tag">👤 {lead.claimed_by_name}</span>}
-            {lead.created_by_name && <span className="kc-tag">Yaratdi: {lead.created_by_name}</span>}
-            {lead.referred_by_name && <span className="kc-tag">Taklif qilgan: {lead.referred_by_name}</span>}
-          </div>
-
-          {/* Rich fields */}
-          {(lead.parent_phone || lead.parent2_phone || lead.date_of_birth) && (
-            <div className="kc-meta" style={{ marginBottom: 14, flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}>
-              {lead.date_of_birth && <span className="text-muted" style={{ fontSize: 12.5 }}>🎂 {lead.date_of_birth}</span>}
-              {lead.parent_phone && <span className="text-muted" style={{ fontSize: 12.5 }}>👪 {lead.parent_phone}</span>}
-              {lead.parent2_phone && <span className="text-muted" style={{ fontSize: 12.5 }}>📞 {lead.parent2_phone}</span>}
-            </div>
-          )}
-
+          <header className="lead-dossier-profile"><Initials name={lead.full_name} /><div><span className={'map-stage-pill kind-' + lead.stage_kind}>{lead.stage_name || 'Bosqich belgilanmagan'}</span><h2>{lead.full_name}</h2><p>{lead.course_interest || 'Kurs tanlanmagan'}</p></div></header>
+          <a className="lead-dossier-phone" href={'tel:' + lead.phone}><span><FontAwesomeIcon icon={faPhone} /></span><span><small>Telefon raqami</small><strong>{lead.phone_display || lead.phone}</strong></span><span>Qo‘ng‘iroq qilish</span></a>
+          {lead.is_overdue && <div className="lead-overdue"><FontAwesomeIcon icon={faTriangleExclamation} /><span>Kelish vaqti o‘tgan <strong>{fmtDate(lead.callback_at)}</strong></span></div>}
+          <ViewTabs label="Lid kartasi bo‘limlari" value={detailTab} onChange={setDetailTab} items={[{ key: 'details', label: 'Ma’lumot' }, { key: 'notes', label: 'Izohlar', count: notes.length }, { key: 'reminders', label: 'Eslatmalar', count: reminders.length }, { key: 'history', label: 'Tarix' }]} />
+          <section className="lead-dossier-section" hidden={detailTab !== 'details'}>
+          <dl className="lead-facts">{[
+            ['Manba', lead.source_name], ['Qiziqqan guruh', lead.interested_group_name], ['Mas’ul', lead.claimed_by_name], ['Yaratgan', lead.created_by_name], ['Taklif qilgan', lead.referred_by_name], ['Yaratilgan', fmtDate(lead.created_at)], ['Tug‘ilgan sana', lead.date_of_birth], ['Ota-ona telefoni', lead.parent_phone], ['Qo‘shimcha telefon', lead.parent2_phone], ['Keyingi aloqa', lead.callback_at ? fmtDate(lead.callback_at) : null],
+          ].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
           {/* Claim / release */}
           {canMove && (
             <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -1028,7 +902,7 @@ export function LeadDrawer({ lead, stages, activities, canMove, canDelete, canCo
                   return (
                     <button key={s.id}
                       className={`leads-status-opt${on ? ' selected' : ''}`}
-                      style={on ? { background: c + '18', borderColor: c, color: c } : {}}
+                      style={on ? { background: soft(c), borderColor: c, color: c } : {}}
                       onClick={() => onMove(s.id, cb ? { callback_at: inputToIso(cb) } : {})}>
                       <FontAwesomeIcon icon={faCircle} style={{ color: c, fontSize: 8 }} />
                       {s.name}
@@ -1057,6 +931,8 @@ export function LeadDrawer({ lead, stages, activities, canMove, canDelete, canCo
             </button>
           )}
 
+          </section>
+          <section className="lead-dossier-section" hidden={detailTab !== 'notes'}>
           {/* Izohlar — bitta lidga cheklovsiz izoh qoldirish mumkin,
               vaqt bo'yicha tartiblangan holda ko'rsatiladi. */}
           <div className="lc-head">
@@ -1113,6 +989,8 @@ export function LeadDrawer({ lead, stages, activities, canMove, canDelete, canCo
             </ul>
           )}
 
+          </section>
+          <section className="lead-dossier-section" hidden={detailTab !== 'reminders'}>
           {/* Reminders */}
           <h4 style={{ margin: '22px 0 10px' }}><FontAwesomeIcon icon={faClock} /> Eslatmalar</h4>
           {reminders.map(r => (
@@ -1150,6 +1028,8 @@ export function LeadDrawer({ lead, stages, activities, canMove, canDelete, canCo
             </div>
           )}
 
+          </section>
+          <section className="lead-dossier-section" hidden={detailTab !== 'history'}>
           <h4 style={{ margin: '22px 0 12px' }}><FontAwesomeIcon icon={faClockRotateLeft} /> Tarix</h4>
           {events.length === 0 ? (
             <div className="muted" style={{ fontSize: 13 }}>Hozircha yozuv yo'q</div>
@@ -1163,9 +1043,10 @@ export function LeadDrawer({ lead, stages, activities, canMove, canDelete, canCo
               ))}
             </ul>
           )}
+          </section>
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }
 
@@ -1269,7 +1150,7 @@ function StageManager({ stages, onClose, onChanged }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <Overlay className="modal-overlay" onClick={onClose}>
       {confirmUI}
       <div className="modal" ref={modalRef} onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
         <div className="modal-header">
@@ -1320,7 +1201,7 @@ function StageManager({ stages, onClose, onChanged }) {
           <button className="button secondary" onClick={onClose}>Yopish</button>
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }
 
@@ -1470,7 +1351,7 @@ function FunnelBoard({ referrer, onClose }) {
   }
 
   return (
-    <div className="ff-overlay">
+    <Overlay className="ff-overlay">
       <div className="ff-header">
         <div>
           <h2>{referrer.referrer_name} — taklif qilingan bolalar</h2>
@@ -1558,7 +1439,7 @@ function FunnelBoard({ referrer, onClose }) {
           </div>
         )}
       </div>
-    </div>
+    </Overlay>
   )
 }
 
@@ -1805,7 +1686,7 @@ function IntakeFormManager({ sources, onClose }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <Overlay className="modal-overlay" onClick={onClose}>
       {confirmUI}
       <div className="modal" ref={modalRef} onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
         <div className="modal-header">
@@ -1848,6 +1729,6 @@ function IntakeFormManager({ sources, onClose }) {
           <button className="button secondary" onClick={onClose}>Yopish</button>
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }

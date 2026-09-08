@@ -1,3 +1,5 @@
+import { PageIntro } from './ui/Workspace'
+import Overlay from './ui/Overlay'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -398,16 +400,9 @@ export default function Academic({ currentUser }) {
   }
 
   return (
-    <div className="page">
+    <div className="page academic-studio">
       {confirmUI}
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faGraduationCap} className="page-icon" /> Baholar va izohlar</h1>
-          <p className="page-subtitle">
-            Bu yerdagi baholar, izohlar va sertifikatlar ota-onalar mobil ilovasida ko'rinadi.
-          </p>
-        </div>
-        <div className="header-actions">
+      <PageIntro title={<>Baholar va izohlar</>} description={<>Bu yerdagi baholar, izohlar va sertifikatlar ota-onalar mobil ilovasida ko'rinadi.</>} actions={<><div className="header-actions">
           {tab === 'coins' && isAdmin && (
             <button className="button secondary" onClick={openDeduct} style={{ color: 'var(--danger-text)' }}>
               <FontAwesomeIcon icon={faCoins} /> Coin yechish
@@ -421,17 +416,16 @@ export default function Academic({ currentUser }) {
                 : tab === 'feedback' ? "Izoh qo'shish" : tab === 'certificates' ? "Sertifikat qo'shish" : "Tadbir qo'shish"}
             </button>
           )}
-        </div>
-      </div>
+        </div></>} />
 
-      <div className="tab-bar">
+      <div className="academic-workspace"><aside className="academic-nav"><span className="studio-eyebrow">Ta’lim bo‘limlari</span><div className="tab-bar">
         {TABS.map(t => (
           <button key={t.key} className={`tab-btn ${tab === t.key ? 'active' : ''}`}
             onClick={() => { setTab(t.key); setItems([]) }}>
             <FontAwesomeIcon icon={t.icon} /> {t.label}
           </button>
         ))}
-      </div>
+      </div></aside><div className="academic-content"><div className="academic-content-title"><h2>{TABS.find(t => t.key === tab)?.label}</h2><span>{items.length} yozuv</span></div>
 
       {tab === 'coins' && coinSummary && (
         <div style={{
@@ -455,16 +449,6 @@ export default function Academic({ currentUser }) {
               </span>
             </>
           )}
-        </div>
-      )}
-
-      {tab !== 'events' && (
-        <div style={{ margin: '12px 0' }}>
-          <select className="field" style={{ maxWidth: 320 }} value={filterStudent}
-            onChange={e => setFilterStudent(e.target.value)}>
-            <option value="">Barcha talabalar</option>
-            {allStudents.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
-          </select>
         </div>
       )}
 
@@ -515,8 +499,10 @@ export default function Academic({ currentUser }) {
         </section>
       )}
 
+      </div></div>
+
       {modal && (
-        <div className="modal-overlay" onClick={() => setModal(false)}>
+        <Overlay className="modal-overlay" onClick={() => setModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>
@@ -689,7 +675,7 @@ export default function Academic({ currentUser }) {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   )

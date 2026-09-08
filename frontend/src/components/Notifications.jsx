@@ -1,3 +1,5 @@
+import { PageIntro } from './ui/Workspace'
+import { SummaryRow, ViewTabs } from './ui/Workspace'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -15,6 +17,7 @@ export default function Notifications() {
   const [students, setStudents] = useState([])
   const [visits, setVisits] = useState([])
   const [search, setSearch] = useState('')
+  const [visitView, setVisitView] = useState('checkin')
   const [loading, setLoading] = useState(false)
   const [sendingId, setSendingId] = useState(null)   // "studentId-kind"
   const [uploadingId, setUploadingId] = useState(null)
@@ -182,15 +185,8 @@ export default function Notifications() {
   ]
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faBell} className="page-icon" /> Kelish-ketish</h1>
-          <p className="page-subtitle">
-            Talaba kelganda/ketganda ota-onasiga Telegram orqali xabar boradi · bugun {visits.length} ta belgi
-          </p>
-        </div>
-      </div>
+    <div className="page visits-studio">
+      <PageIntro title={<>Kelish-ketish</>} description={<>Talaba kelganda/ketganda ota-onasiga Telegram orqali xabar boradi · bugun {visits.length} ta belgi</>}  />
 
       <input
         ref={fileInputRef}
@@ -200,7 +196,9 @@ export default function Notifications() {
         onChange={handlePhotoFile}
       />
 
-      <DataTable
+      <SummaryRow items={[{ label: 'Bugungi belgilar', value: visits.length }, { label: 'Kelgan', value: visits.filter(v => v.kind === 'arrived').length, tone: 'success' }, { label: 'Ketgan', value: visits.filter(v => v.kind === 'left').length }, { label: 'Telegramga yuborilgan', value: visits.filter(v => v.telegram_sent).length }]} />
+      <ViewTabs value={visitView} onChange={setVisitView} items={[{ key: 'checkin', label: 'Kelish-ketishni belgilash' }, { key: 'history', label: 'Bugungi tarix', count: visits.length }]} />
+      {visitView === 'checkin' && <section className="studio-section ledger-records"><div className="studio-section-head"><h2>Talabalar ro‘yxati</h2><span>Talabani toping va holatini belgilang</span></div><DataTable
         columns={studentColumns}
         rows={filtered}
         clientPageSize={20}
@@ -218,7 +216,9 @@ export default function Notifications() {
         empty={{ icon: faMagnifyingGlass, title: 'Talaba topilmadi', description: "Qidiruv so'zini o'zgartirib ko'ring." }}
       />
 
-      <section>
+      </section>}
+
+      {visitView === 'history' && <section className="studio-section visit-history">
         <div className="ui-section-head">
           <div className="ui-section-head-text">
             <h2>Bugungi tarix</h2>
@@ -232,7 +232,7 @@ export default function Notifications() {
           clientPageSize={25}
           empty={{ icon: faBell, title: "Bugun hali belgi yo'q", description: 'Yuqoridagi ro\'yxatdan talabani belgilang.' }}
         />
-      </section>
+      </section>}
 
     </div>
   )

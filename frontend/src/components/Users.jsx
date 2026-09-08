@@ -1,3 +1,4 @@
+import Overlay from './ui/Overlay'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -275,7 +276,7 @@ export default function Users() {
 
       {/* ── Create / Edit Modal ── */}
       {modal && (
-        <div className="modal-overlay" onClick={() => setModal(null)}>
+        <Overlay className="modal-overlay" onClick={() => setModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
             <div className="modal-header">
               <h3>{modal === 'create' ? 'Yangi foydalanuvchi' : 'Foydalanuvchini tahrirlash'}</h3>
@@ -336,12 +337,12 @@ export default function Users() {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {/* ── Block Modal ── */}
       {blockModal && (
-        <div className="modal-overlay" onClick={() => setBlockModal(null)}>
+        <Overlay className="modal-overlay" onClick={() => setBlockModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
             <div className="modal-header">
               <h3>Akkountni bloklash</h3>
@@ -376,12 +377,12 @@ export default function Users() {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {/* ── Permanent Delete Modal ── */}
       {deleteModal && (
-        <div className="modal-overlay" onClick={() => setDeleteModal(null)}>
+        <Overlay className="modal-overlay" onClick={() => setDeleteModal(null)}>
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
             <div className="modal-header">
               <h3>Akkauntni butunlay o'chirish</h3>
@@ -411,11 +412,11 @@ export default function Users() {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       {broadcastModal && (
-        <div className="modal-overlay" onClick={() => setBroadcastModal(false)}>
+        <Overlay className="modal-overlay" onClick={() => setBroadcastModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faPaperPlane} /> Barcha xodimlarga xabar</h3>
@@ -437,7 +438,7 @@ export default function Users() {
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   )

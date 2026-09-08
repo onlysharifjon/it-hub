@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { ViewTabs } from './ui/Workspace'
 
 function LessonDetail({ lesson, onSave, saving, canEdit }) {
+  const [sectionView, setSectionView] = useState('guide')
   const [form, setForm] = useState({
     section: '',
     guide: '',
@@ -32,16 +34,21 @@ function LessonDetail({ lesson, onSave, saving, canEdit }) {
     ? `${lesson.updated_by_username || 'Noma\u02bclum'} tomonidan ${new Date(lesson.updated_at).toLocaleString('uz-UZ')}`
     : null
 
+  const sectionLabels = { guide: 'Dars qo‘llanmasi', homework: 'Uyga vazifa', extra_notes: 'Qo‘shimcha eslatmalar' }
+  const changed = Object.keys(form).some(key => form[key] !== (lesson[key] || ''))
+  if (!canEdit) return <article className="lesson-reader">
+    <header><span className="studio-eyebrow">{lesson.lesson_number ? `${lesson.lesson_number}-dars` : 'Dars rejasi'}</span><h2>{lesson.title}</h2>{lesson.section && <span className="lesson-reader-section">{lesson.section}</span>}</header>
+    <ViewTabs value={sectionView} onChange={setSectionView} label="Dars materiali" items={[{ key: 'guide', label: 'Qo‘llanma' }, { key: 'homework', label: 'Uyga vazifa' }, { key: 'extra_notes', label: 'Eslatmalar' }]} />
+    <section className="lesson-reader-content"><h3>{sectionLabels[sectionView]}</h3><div>{lesson[sectionView] || 'Bu bo‘limga hali material kiritilmagan.'}</div></section>
+    {updatedInfo && <footer className="updated-info">{updatedInfo}</footer>}
+  </article>
   return (
-    <form className="form" onSubmit={handleSubmit}>
-      <div className="field">
-        <label>Dars nomi</label>
-        <div className="field-value-static">{lesson.title}</div>
-      </div>
-
-      <div className="field">
-        <label>Bo'lim</label>
+    <form className="form lesson-document" onSubmit={handleSubmit}>
+      <header className="lesson-document-head"><span className="studio-eyebrow">{lesson.lesson_number ? `${lesson.lesson_number}-dars` : 'Dars rejasi'}</span><h2 className="field-value-static">{lesson.title}</h2><span className="lesson-document-state">{changed ? 'Saqlanmagan o‘zgarishlar' : 'Dars materiallari'}</span></header>
+      <div className="field lesson-section-field">
+        <label htmlFor="lesson-section">Bo‘lim</label>
         <input
+          id="lesson-section"
           type="text"
           name="section"
           value={form.section}
@@ -51,38 +58,15 @@ function LessonDetail({ lesson, onSave, saving, canEdit }) {
           className={!canEdit ? 'readonly' : ''}
         />
       </div>
-
+      <ViewTabs value={sectionView} onChange={setSectionView} label="Dars materiali" items={[{ key: 'guide', label: 'Qo‘llanma' }, { key: 'homework', label: 'Uyga vazifa' }, { key: 'extra_notes', label: 'Eslatmalar' }]} />
       <div className="field">
-        <label>Qo'llanma</label>
+        <label className="sr-only" htmlFor="lesson-material">{sectionLabels[sectionView]}</label>
         <textarea
-          name="guide"
-          value={form.guide}
+          id="lesson-material"
+          name={sectionView}
+          value={form[sectionView]}
           onChange={handleChange}
-          placeholder={canEdit ? "Bosqichma-bosqich ko'rsatmalar" : 'Kiritilmagan'}
-          disabled={!canEdit}
-          className={!canEdit ? 'readonly' : ''}
-        />
-      </div>
-
-      <div className="field">
-        <label>Uyga vazifa</label>
-        <textarea
-          name="homework"
-          value={form.homework}
-          onChange={handleChange}
-          placeholder={canEdit ? 'Uyga vazifa matni' : 'Kiritilmagan'}
-          disabled={!canEdit}
-          className={!canEdit ? 'readonly' : ''}
-        />
-      </div>
-
-      <div className="field">
-        <label>Qo'shimcha fikr</label>
-        <textarea
-          name="extra_notes"
-          value={form.extra_notes}
-          onChange={handleChange}
-          placeholder={canEdit ? 'Izohlar' : 'Kiritilmagan'}
+          placeholder={canEdit ? sectionLabels[sectionView] + ' matnini kiriting...' : 'Kiritilmagan'}
           disabled={!canEdit}
           className={!canEdit ? 'readonly' : ''}
         />

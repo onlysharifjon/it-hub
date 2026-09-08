@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import BrandLogo from './ui/BrandLogo'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faChevronDown, faAnglesLeft, faAnglesRight, faHeadset } from '@fortawesome/free-solid-svg-icons'
 import { fetchFeedbackNewCount } from '../api'
 import { navForRole, groupIdForPage } from '../constants/nav'
+import { ROLE_LABELS } from '../constants/domain'
+import useFocusTrap from './ui/useFocusTrap'
 
 const CATEGORIES = [
   { key: 'foundation', label: 'Foundation' },
@@ -16,8 +18,10 @@ const RAIL_KEY = 'sidebar:rail'
 
 function Sidebar({
   selectedCategory, onSelectCategory,
-  currentUser, activePage, onNavigate, isOpen,
+  currentUser, activePage, onNavigate, isOpen, onClose,
 }) {
+  const sidebarRef = useRef(null)
+  useFocusTrap(isOpen, sidebarRef, onClose)
   const role = currentUser?.role
   const groups = navForRole(role)
 
@@ -85,13 +89,13 @@ function Sidebar({
   }
 
   return (
-    <aside className={`sidebar${isOpen ? ' mobile-open' : ''}${rail ? ' is-rail' : ''}`}>
+    <aside ref={sidebarRef} className={`sidebar${isOpen ? ' mobile-open' : ''}${rail ? ' is-rail' : ''}`}>
       <div className="brand">
         {/* Yig'ilgan holatda to'liq lokap o'qilmaydigan darajada kichrayadi —
             shuning uchun CSS bilan siqilmaydi, balki BELGIGA almashtiriladi. */}
         {rail
-          ? <BrandLogo variant="mark" size="lg" />
-          : <BrandLogo variant="full" height={24} />}
+          ? <BrandLogo variant="mark" tone="white" size="lg" />
+          : <BrandLogo variant="full" tone="white" height={29} />}
         {/* Yig'ilgan holatda 64px kenglikka logotip ham, tugma ham sig'maydi —
             tugma pastdagi qatorga o'tadi, brend qatori esa faqat belgiga
             qoladi va u markazda turadi. */}
@@ -107,23 +111,28 @@ function Sidebar({
         )}
       </div>
 
+      {!rail && <div className="workspace-label"><span className="workspace-dot" /> Ta’lim boshqaruvi <span className="workspace-tag">LMS</span></div>}
+
       <nav className="sidebar-nav" aria-label="Asosiy menyu">
         {groups.map(group => {
           const isCollapsed = collapsed.has(group.id) && !rail
           return (
-            <div key={group.id} className="nav-group">
+            <div key={group.id} className={`nav-group${isCollapsed ? ' is-collapsed' : ''}`}>
               {!rail && (
                 <button
                   className={`nav-section-label is-toggle${isCollapsed ? ' collapsed' : ''}`}
                   onClick={() => toggleGroup(group.id)}
                   aria-expanded={!isCollapsed}
+                  aria-controls={`nav-section-${group.id}`}
                 >
                   <span>{group.label}</span>
                   <FontAwesomeIcon icon={faChevronDown} className="nav-group-chevron" />
                 </button>
               )}
 
-              <div className={`nav-group-items${isCollapsed ? ' collapsed' : ''}`}>
+              <div id={`nav-section-${group.id}`} className={`nav-group-items${isCollapsed ? ' collapsed' : ''}`} inert={isCollapsed ? '' : undefined} aria-hidden={isCollapsed || undefined}>
+                {/* One grid child lets the entire section animate from 1fr to 0fr. */}
+                <div className="nav-group-content">
                 {group.items.map(item => {
                   const active = isActive(item)
                   // Lidlar ikonkasi rolga qarab (eski xatti-harakat saqlandi)
@@ -153,7 +162,7 @@ function Sidebar({
                       </button>
 
                       {item.expandable === 'categories' && !rail && (
-                        <div className={`category-list-wrap${catOpen && activePage === 'lessons' ? ' open' : ''}`}>
+                        <div className={`category-list-wrap${catOpen && activePage === 'lessons' ? ' open' : ''}`} inert={catOpen && activePage === 'lessons' ? undefined : ''} aria-hidden={catOpen && activePage === 'lessons' ? undefined : true}>
                           <div className="category-list">
                             {CATEGORIES.map((c, i) => (
                               <button
@@ -174,6 +183,7 @@ function Sidebar({
                     </div>
                   )
                 })}
+                </div>
               </div>
             </div>
           )
@@ -193,8 +203,9 @@ function Sidebar({
         </div>
       ) : (
         <div className="sidebar-foot">
-          <span>Minar Academy LMS</span>
-          <span>v3.0</span>
+          <span className="sidebar-user-avatar">{(currentUser?.full_name || currentUser?.username || 'M').slice(0, 1).toUpperCase()}</span>
+          <div className="sidebar-user-copy"><strong>{currentUser?.full_name || currentUser?.username || 'Minar Academy'}</strong><span>{ROLE_LABELS[role] || role}</span></div>
+          <span className="workspace-dot" />
         </div>
       )}
     </aside>

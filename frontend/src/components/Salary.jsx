@@ -1,3 +1,6 @@
+import { PageIntro } from './ui/Workspace'
+import { SummaryRow, ProgressRing, ViewTabs } from './ui/Workspace'
+import PersonName from './ui/PersonName'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -116,14 +119,16 @@ export default function Salary() {
     }
   }
 
+  const [salaryView, setSalaryView] = useState('all')
   const rows = data?.rows || []
+  const shownRows = rows.filter(r => salaryView === 'all' || (salaryView === 'teachers' ? r.role === 'teacher' : r.role !== 'teacher'))
   const totalSalary = Number(data?.total_salary || 0)
   const totalPaid = Number(data?.total_paid || 0)
   const overallPct = totalSalary > 0 ? Math.min(100, Math.round((totalPaid / totalSalary) * 100)) : 0
   const pctColor = pct => (pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : pct > 0 ? 'var(--danger)' : 'var(--border-2)')
 
   const columns = [
-    { key: 'full_name', header: 'F.I.O', sortable: true, render: r => <strong>{r.full_name}</strong> },
+    { key: 'full_name', header: 'F.I.O', sortable: true, render: r => <PersonName name={r.full_name} /> },
     {
       key: 'role', header: 'Rol', sortable: true,
       sortValue: r => ROLE_LABELS[r.role] || r.role,
@@ -212,45 +217,31 @@ export default function Salary() {
   ]
 
   return (
-    <div className="page">
+    <div className="page salary-studio">
       {confirmUI}
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faMoneyBillWave} className="page-icon" /> Ish haqi</h1>
-          <p className="page-subtitle">{MONTHS[month - 1]} {year} · barcha xodimlar bo'yicha oylik va to'lov holati</p>
-        </div>
-        <div className="header-actions">
+      <PageIntro title={<>Ish haqi</>} description={<>{MONTHS[month - 1]} {year} · barcha xodimlar bo'yicha oylik va to'lov holati</>} actions={<><div className="header-actions">
           <select className="field-sm" value={month} onChange={e => setMonth(Number(e.target.value))} aria-label="Oy">
             {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
           </select>
           <select className="field-sm" value={year} onChange={e => setYear(Number(e.target.value))} aria-label="Yil">
             {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-        </div>
-      </div>
+        </div></>} />
 
-      <MetricStrip columns={4}>
-        <Metric label="Jami belgilangan oylik" value={fmt(data?.total_salary)} unit="so'm"
-          sub={`${MONTHS[month - 1]} ${year}`} />
-        <Metric label="Shu oy to'langan" tone="success" value={fmt(data?.total_paid)} unit="so'm"
-          sub={'"Xodim oyligi" xarajatlari'} />
-        <Metric label="Qolgan" tone={overallPct >= 80 ? 'success' : 'warning'}
-          value={fmt(Number(data?.total_salary || 0) - Number(data?.total_paid || 0))} unit="so'm"
-          sub="hali to'lanmagan" />
-        <Metric label="To'lov darajasi" value={`${overallPct}%`}
-          tone={overallPct >= 80 ? 'success' : overallPct >= 50 ? 'warning' : 'danger'}
-          sub={`${rows.length} xodim`} />
-      </MetricStrip>
-
+      <section className="ledger-overview"><div className="ledger-balance"><span className="studio-eyebrow">Oylik ish haqi fondi</span><strong>{fmt(data?.total_salary)}<small>so‘m</small></strong><div><ProgressRing value={overallPct} label="To‘lov darajasi" size={52} /><p>{overallPct}% to‘landi<span>{rows.length} xodim · {MONTHS[month - 1]} {year}</span></p></div></div><div className="ledger-balance-details"><div><span>Shu oy to‘langan</span><strong className="tone-success">{fmt(data?.total_paid)} <small>so‘m</small></strong></div><div><span>Qolgan summa</span><strong>{fmt(Number(data?.total_salary || 0) - Number(data?.total_paid || 0))} <small>so‘m</small></strong></div><div><span>Hisoblangan xodimlar</span><strong>{rows.length} <small>kishi</small></strong></div></div></section>
+      <ViewTabs value={salaryView} onChange={setSalaryView} items={[{ key: 'all', label: 'Barcha xodimlar', count: rows.length }, { key: 'teachers', label: 'O‘qituvchilar', count: rows.filter(r => r.role === 'teacher').length }, { key: 'staff', label: 'Boshqa xodimlar', count: rows.filter(r => r.role !== 'teacher').length }]} />
+      <section className="studio-section ledger-records"><div className="studio-section-head"><h2>Xodimlar bo‘yicha hisob-kitob</h2><span>{MONTHS[month - 1]} {year}</span></div>
       <DataTable
         columns={columns}
-        rows={rows}
+        rows={shownRows}
         loading={loading}
         rowKey={r => r.staff_id}
         clientPageSize={30}
         densityToggle densityKey="salary"
         empty={{ icon: faMoneyBillWave, title: "Xodimlar yo'q", description: 'Shu davr uchun oylik yozuvi topilmadi.' }}
       />
+
+      </section>
 
       <Modal
         open={!!breakdownFor}

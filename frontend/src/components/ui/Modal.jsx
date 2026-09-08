@@ -1,4 +1,5 @@
-import { useRef } from 'react'
+import Overlay from './Overlay'
+import { useId, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faXmark } from '@fortawesome/free-solid-svg-icons'
 import useFocusTrap from './useFocusTrap'
@@ -27,23 +28,25 @@ export default function Modal({
   size = 'md',
   closeOnOverlay = true,
   labelledBy,
+  role = 'dialog',
 }) {
   const ref = useRef(null)
+  const generatedId = useId()
   useFocusTrap(open, ref, () => onClose?.())
 
   if (!open) return null
 
-  const titleId = labelledBy || 'modal-title'
+  const titleId = labelledBy || `modal-${generatedId}`
 
   return (
-    <div
+    <Overlay
       className="modal-overlay"
       onClick={closeOnOverlay ? onClose : undefined}
     >
       <div
         ref={ref}
         className={`modal modal-${size}`}
-        role="dialog"
+        role={role}
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
         onClick={e => e.stopPropagation()}
@@ -59,7 +62,7 @@ export default function Modal({
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}
       </div>
-    </div>
+    </Overlay>
   )
 }
 
@@ -69,14 +72,15 @@ export default function Modal({
  */
 export function Drawer({ open, title, onClose, children, footer, width = 460, labelledBy }) {
   const ref = useRef(null)
+  const generatedId = useId()
   useFocusTrap(open, ref, () => onClose?.())
 
   if (!open) return null
 
-  const titleId = labelledBy || 'drawer-title'
+  const titleId = labelledBy || `drawer-${generatedId}`
 
   return (
-    <div className="drawer-overlay" onClick={onClose}>
+    <Overlay className="drawer-overlay" onClick={onClose}>
       <aside
         ref={ref}
         className="drawer"
@@ -97,6 +101,6 @@ export function Drawer({ open, title, onClose, children, footer, width = 460, la
         <div className="drawer-body">{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}
       </aside>
-    </div>
+    </Overlay>
   )
 }

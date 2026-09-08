@@ -1,3 +1,4 @@
+import { PageIntro } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -8,6 +9,7 @@ import Modal from './ui/Modal'
 import ConfirmDialog from './ui/ConfirmDialog'
 import Badge from './ui/Badge'
 import { Input, Textarea } from './ui/Field'
+import Catalog from './ui/Catalog'
 
 const EMPTY = { name: '', price: '100000', description: '' }
 
@@ -135,18 +137,26 @@ export default function Tariffs() {
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faTag} className="page-icon" /> Tariflar</h1>
-          <p className="page-subtitle">Guruhga biriktiriladigan oylik narxlar</p>
-        </div>
-        <div className="header-actions">
+      <PageIntro title={<>Tariflar</>} description={<>Guruhga biriktiriladigan oylik narxlar</>} actions={<><div className="header-actions">
           <button className="button" onClick={openAdd}>
             <FontAwesomeIcon icon={faPlus} /> Tarif qo'shish
           </button>
-        </div>
-      </div>
+        </div></>} />
 
+      <Catalog rows={tariffs} loading={loading} error={error} label="ta tarif" renderCard={(t, i) => (
+        <article key={t.id} className={`catalog-card tariff-card${t.is_active ? '' : ' is-inactive'}`}>
+          <div className="catalog-card-top"><span className="catalog-icon"><FontAwesomeIcon icon={faTag} /></span><Badge variant={t.is_active ? 'success' : 'neutral'}>{t.is_active ? 'Faol' : 'Nofaol'}</Badge></div>
+          <span className="catalog-eyebrow">OYLIK TARIF · {String(i + 1).padStart(2, '0')}</span>
+          <h2>{t.name}</h2>
+          <div className="catalog-price">{Number(t.price).toLocaleString('uz-UZ')}<span>so‘m / oy</span></div>
+          <p className="catalog-description">{t.description || 'Guruhlar uchun oylik to‘lov'}</p>
+          <div className="catalog-card-footer">
+            <button className="button secondary small" onClick={() => openEdit(t)}><FontAwesomeIcon icon={faPen} /> Tahrirlash</button>
+            <button className="btn-icon" onClick={() => handleToggle(t)} aria-label={t.is_active ? 'Nofaol qilish' : 'Faol qilish'} title={t.is_active ? 'Nofaol qilish' : 'Faol qilish'}><FontAwesomeIcon icon={t.is_active ? faToggleOn : faToggleOff} /></button>
+            <button className="btn-icon danger" onClick={() => setConfirmTarget(t)} aria-label="O‘chirish" title="O‘chirish"><FontAwesomeIcon icon={faTrash} /></button>
+          </div>
+        </article>
+      )}>
       <DataTable
         columns={columns}
         rows={tariffs}
@@ -165,6 +175,8 @@ export default function Tariffs() {
           ),
         }}
       />
+
+      </Catalog>
 
       <Modal
         open={!!modal}

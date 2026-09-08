@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -9,7 +9,7 @@ import {
 import {
   fetchWorkCenter, createWorkTask, updateWorkTask, logCall, fetchUsers,
 } from '../api'
-import KpiCard from './ui/KpiCard'
+import { PageIntro, ViewTabs, Initials, ProgressRing } from './ui/Workspace'
 import Modal from './ui/Modal'
 import { Input, Textarea, Select } from './ui/Field'
 import { EmptyState, ErrorState, CardSkeleton, Skeleton } from './ui/States'
@@ -48,6 +48,8 @@ export default function WorkCenter({ currentUser }) {
   const [postponeFor, setPostponeFor] = useState(null)
   const [users, setUsers] = useState([])
   const [scopeUser, setScopeUser] = useState('')
+  const [workView, setWorkView] = useState('queue')
+  const [focusedKey, setFocusedKey] = useState(null)
 
   const isAdmin = currentUser?.role === 'admin'
 
@@ -168,10 +170,12 @@ export default function WorkCenter({ currentUser }) {
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
+  const focusPanelRef = useRef(null)
+
   if (err) {
     return (
       <div className="page">
-        <div className="page-head"><h2><FontAwesomeIcon icon={faListCheck} /> Ishlarim</h2></div>
+        <div className="page-header"><h1><FontAwesomeIcon icon={faListCheck} className="page-icon" /> Ishlarim</h1></div>
         <ErrorState title="Ish ro'yxatini yuklab bo'lmadi" onRetry={load} />
       </div>
     )
@@ -179,152 +183,44 @@ export default function WorkCenter({ currentUser }) {
 
   const kpi = data?.kpi
   const daily = data?.daily
+  const selectedTask = filtered.find(t => t.source_key === focusedKey) || PRIORITY_ORDER.flatMap(p => byPriority[p])[0]
+  function focusTask(key) {
+    setFocusedKey(key)
+    if (window.matchMedia('(max-width: 900px)').matches) requestAnimationFrame(() => {
+      focusPanelRef.current?.focus({ preventScroll: true })
+      focusPanelRef.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+    })
+  }
+  const completion = kpi?.total ? kpi.completed / kpi.total * 100 : 0
 
   return (
-    <div className="page">
+    <div className="page work-studio">
       {confirmUI}
-      <div className="page-head">
-        <div>
-          <h2><FontAwesomeIcon icon={faListCheck} /> Ishlarim</h2>
-          <p className="page-sub">Bugun kim bilan bog'lanish kerakligi — avtomatik ro'yxat</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {isAdmin && users.length > 0 && (
-            <select className="field wc-user-pick" value={scopeUser} aria-label="Xodim"
-              onChange={e => { setLoading(true); setScopeUser(e.target.value) }}>
-              <option value="">Mening navbatim</option>
-              {users.map(u => <option key={u.id} value={u.id}>{u.full_name || u.username}</option>)}
-            </select>
-          )}
-          <button className="button secondary" onClick={load} aria-label="Yangilash">
-            <FontAwesomeIcon icon={faRotate} /> Yangilash
-          </button>
-          <button className="button" onClick={() => setNewTask({ title: '', reason: '', priority: 'normal', due_at: '' })}>
-            <FontAwesomeIcon icon={faPlus} /> Vazifa
-          </button>
-        </div>
+      <PageIntro title="Ishlarim" eyebrow="Kundalik ish maydoni" description="Bir vazifaga e’tibor. Har bir aloqa — keyingi qadam." actions={<>
+        {isAdmin && users.length > 0 && <select className="field-sm" value={scopeUser} aria-label="Xodim" onChange={e => { setLoading(true); setScopeUser(e.target.value) }}><option value="">Mening navbatim</option>{users.map(u => <option key={u.id} value={u.id}>{u.full_name || u.username}</option>)}</select>}
+        <button className="button secondary" onClick={load} aria-label="Yangilash"><FontAwesomeIcon icon={faRotate} /></button>
+        <button className="button" onClick={() => setNewTask({ title: '', reason: '', priority: 'normal', due_at: '' })}><FontAwesomeIcon icon={faPlus} /> Yangi vazifa</button>
+      </>} />
+      <div className="work-overview">
+        <div className="work-progress"><ProgressRing value={completion} label="Vazifalar bajarilishi" /><div><span className="studio-eyebrow">Bugungi reja</span><h2>{kpi?.completed ?? '—'} <span>/ {kpi?.total ?? '—'} bajarildi</span></h2><p>{kpi?.remaining ?? '—'} ta vazifa navbatda</p></div></div>
+        <div className="work-pulse"><span><FontAwesomeIcon icon={faPhone} /> Qo‘ng‘iroqlar</span><strong>{daily?.calls ?? '—'}</strong><small>{daily?.connected ?? 0} ta bog‘lanildi</small></div>
+        <div className="work-pulse"><span><FontAwesomeIcon icon={faClock} /> Qayta aloqa</span><strong>{daily?.callbacks ?? '—'}</strong><small>{daily?.no_answer ?? 0} ta javobsiz</small></div>
+        <button className={'work-urgent' + (prioFilter === 'critical' ? ' is-active' : '')} onClick={() => { setPrioFilter(prioFilter === 'critical' ? '' : 'critical'); setWorkView('queue') }}><span><FontAwesomeIcon icon={faTriangleExclamation} /> E’tibor talab qiladi</span><strong>{kpi?.critical ?? '—'}</strong><small>{overdue.length} ta kechikkan vazifa →</small></button>
       </div>
-
-      <div className="kpi-grid">
-        {loading ? <CardSkeleton count={4} /> : (
-          <>
-            <KpiCard label="Bugungi vazifalar" value={kpi.total} icon={faListCheck} tone="primary" />
-            <KpiCard label="Bajarildi" value={kpi.completed} icon={faCircleCheck} tone="success" />
-            <KpiCard label="Qoldi" value={kpi.remaining} icon={faClock} tone="info" />
-            <KpiCard label="Shoshilinch" value={kpi.critical} icon={faTriangleExclamation}
-              tone={kpi.critical > 0 ? 'danger' : 'default'}
-              sub={kpi.overdue ? `${kpi.overdue} ta kechikkan` : undefined} />
-          </>
-        )}
-      </div>
-
-      {!loading && overdue.length > 0 && (
-        <div className="wc-overdue">
-          <FontAwesomeIcon icon={faTriangleExclamation} />
-          <div>
-            <strong>Kechikkan ishlar: {overdue.length} ta</strong>
-            {oldestOverdue?.due_at && (
-              <span> — eng eskisi {fmtDateTime(oldestOverdue.due_at)} ({fmtRelative(oldestOverdue.due_at)})</span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {!loading && (
-        <div className="wc-filters">
-          <FontAwesomeIcon icon={faFilter} className="muted" />
-          <button className={`chip${!typeFilter ? ' is-on' : ''}`} onClick={() => setTypeFilter('')}>
-            Hammasi <span>{tasks.length}</span>
-          </button>
-          {typeCounts.map(([type, n]) => (
-            <button key={type} className={`chip${typeFilter === type ? ' is-on' : ''}`}
-              onClick={() => setTypeFilter(typeFilter === type ? '' : type)}>
-              <FontAwesomeIcon icon={TYPE_ICON[type] || faListCheck} />
-              {' '}{tasks.find(t => t.task_type === type)?.task_label} <span>{n}</span>
-            </button>
-          ))}
-          <span style={{ flex: 1 }} />
-          {PRIORITY_ORDER.map(p => {
-            const n = tasks.filter(t => t.priority === p).length
-            if (!n) return null
-            return (
-              <button key={p} className={`chip prio-${p}${prioFilter === p ? ' is-on' : ''}`}
-                onClick={() => setPrioFilter(prioFilter === p ? '' : p)}>
-                {PRIORITY_LABEL[p]} <span>{n}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      {loading ? (
-        <div className="wc-grid">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} height={150} radius="var(--radius-lg)" />
-          ))}
-        </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={faCircleCheck}
-          title={tasks.length ? 'Bu filtrda vazifa yo\'q' : 'Bugun hammasi bajarilgan'}
-          description={tasks.length
-            ? 'Filterni o\'zgartiring'
-            : "Yangi callback, qarz yoki davomat muammosi paydo bo'lsa, shu yerda ko'rinadi."}
-        />
-      ) : (
-        PRIORITY_ORDER.map(p => byPriority[p].length > 0 && (
-          <section key={p} className="wc-section">
-            <h4 className={`wc-section-head prio-${p}`}>
-              <span className="wc-dot" /> {PRIORITY_LABEL[p]}
-              <span className="wc-count">{byPriority[p].length}</span>
-            </h4>
-            <div className="wc-grid">
-              {byPriority[p].map(t => (
-                <TaskCard key={t.source_key} task={t}
-                  onCall={() => setCallFor(t)}
-                  onDone={() => markDone(t)}
-                  onSkip={() => skip(t)}
-                  onPostpone={() => setPostponeFor({ task: t, when: '' })} />
-              ))}
-            </div>
-          </section>
-        ))
-      )}
-
-      {!loading && daily && (
-        <section className="wc-section">
-          <h4 className="wc-section-head"><FontAwesomeIcon icon={faPhone} /> Bugungi natija</h4>
-          <div className="wc-daily">
-            <Stat n={daily.calls} label="qo'ng'iroq" />
-            <Stat n={daily.connected} label="bog'landi" tone="success" />
-            <Stat n={daily.no_answer} label="javobsiz" tone="muted" />
-            <Stat n={daily.callbacks} label="callback" />
-            <Stat n={daily.payment_calls} label="to'lov" />
-            <Stat n={daily.absence_calls} label="davomat" />
-            <Stat n={daily.completed_tasks} label="bajarilgan vazifa" tone="success" />
-          </div>
+      <ViewTabs value={workView} onChange={setWorkView} items={[{ key: 'queue', label: 'Ish navbati', count: tasks.length }, { key: 'done', label: 'Bajarilgan', count: data?.completed?.length || 0 }]} />
+      {loading ? <div className="work-loading"><Skeleton height={460} radius="16px" /></div> : workView === 'done' ? (
+        <section className="studio-section"><div className="studio-section-head"><h2>Bugun bajarilgan vazifalar</h2><FontAwesomeIcon icon={faCircleCheck} /></div>
+          {data?.completed?.length ? <ul className="work-completed">{data.completed.map(t => <li key={t.source_key}><span className="work-done-check"><FontAwesomeIcon icon={faCheck} /></span><div><strong>{t.title}</strong><p>{t.task_label}{t.last_note && ' · ' + t.last_note}</p></div><time>{fmtRelative(t.completed_at)}</time></li>)}</ul> : <EmptyState title="Bajarilgan vazifalar shu yerda ko‘rinadi" icon={faCircleCheck} compact />}
         </section>
-      )}
-
-      {!loading && data?.completed?.length > 0 && (
-        <section className="wc-section">
-          <h4 className="wc-section-head">
-            <FontAwesomeIcon icon={faCircleCheck} /> Bugun bajarilgan
-            <span className="wc-count">{data.completed.length}</span>
-          </h4>
-          <ul className="wc-done">
-            {data.completed.map(t => (
-              <li key={t.source_key}>
-                <FontAwesomeIcon icon={faCheck} className="wc-done-icon" />
-                <span className="wc-done-title">{t.title}</span>
-                <span className="muted">{t.task_label}</span>
-                {t.last_note && <span className="wc-done-note">{t.last_note}</span>}
-                <span className="muted wc-done-when">{fmtRelative(t.completed_at)}</span>
-              </li>
-            ))}
-          </ul>
+      ) : <div className="work-desk">
+        <section className="work-queue">
+          <div className="work-queue-head"><h2>Vazifalar <span>{filtered.length}</span></h2><select className="field-sm" value={prioFilter} aria-label="Muhimlik" onChange={e => setPrioFilter(e.target.value)}><option value="">Barcha muhimliklar</option>{PRIORITY_ORDER.map(p => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}</select></div>
+          <div className="work-types"><button className={!typeFilter ? 'is-active' : ''} onClick={() => setTypeFilter('')}>Hammasi</button>{typeCounts.map(([type, n]) => <button key={type} className={typeFilter === type ? 'is-active' : ''} onClick={() => setTypeFilter(typeFilter === type ? '' : type)} title={tasks.find(t => t.task_type === type)?.task_label}><FontAwesomeIcon icon={TYPE_ICON[type] || faListCheck} />{tasks.find(t => t.task_type === type)?.task_label}<span>{n}</span></button>)}</div>
+          {filtered.length ? <div className="work-queue-list">{PRIORITY_ORDER.map(p => byPriority[p].length > 0 && <div key={p}><div className="work-priority-label"><i className={'prio-' + p} />{PRIORITY_LABEL[p]}<span>{byPriority[p].length}</span></div>{byPriority[p].map(t => <button key={t.source_key} type="button" className={'work-row' + (selectedTask?.source_key === t.source_key ? ' is-selected' : '')} aria-pressed={selectedTask?.source_key === t.source_key} onClick={() => focusTask(t.source_key)}><span className="work-row-icon"><FontAwesomeIcon icon={TYPE_ICON[t.task_type] || faListCheck} /></span><span className="work-row-copy"><strong>{t.title}</strong><span>{t.reason || t.task_label}</span></span><span className="work-row-end">{t.overdue ? <small className="tone-danger">Kechikkan</small> : <small>{t.due_at ? fmtRelative(t.due_at) : t.task_label}</small>}<span>→</span></span></button>)}</div>)}</div> : <EmptyState icon={faCircleCheck} title={tasks.length ? 'Bu filtrda vazifa yo‘q' : 'Bugun hammasi bajarilgan'} description={tasks.length ? 'Boshqa filtrni tanlang.' : 'Yangi vazifalar shu yerda ko‘rinadi.'} compact />}
         </section>
-      )}
+        <aside className="work-focus" ref={focusPanelRef} tabIndex={-1} aria-label="Vazifa tafsilotlari">{selectedTask ? <TaskCard key={selectedTask.source_key} task={selectedTask} onCall={() => setCallFor(selectedTask)} onDone={() => markDone(selectedTask)} onSkip={() => skip(selectedTask)} onPostpone={() => setPostponeFor({ task: selectedTask, when: '' })} /> : <div className="work-focus-empty"><FontAwesomeIcon icon={faListCheck} /><h3>Ish navbati tayyor</h3><p>Tafsilotlarni ko‘rish uchun vazifani tanlang.</p></div>}</aside>
+      </div>}
+      {!loading && daily && <div className="work-day-footer"><span>Bugungi natija</span><span><strong>{daily.payment_calls}</strong> to‘lov bo‘yicha aloqa</span><span><strong>{daily.absence_calls}</strong> davomat bo‘yicha aloqa</span><span><strong>{daily.completed_tasks}</strong> yopilgan vazifa</span></div>}
 
       {callFor && (
         <CallOutcomeDialog task={callFor} saving={saving}
@@ -389,58 +285,13 @@ function TaskCard({ task, onCall, onDone, onSkip, onPostpone }) {
   const m = task.meta || {}
   const phones = [task.phone, task.phone2].filter(Boolean)
   return (
-    <article className={`wc-card prio-${task.priority}${task.overdue ? ' is-overdue' : ''}`}>
-      <header className="wc-card-head">
-        <span className="wc-type">
-          <FontAwesomeIcon icon={TYPE_ICON[task.task_type] || faListCheck} />
-          {' '}{task.task_label}
-        </span>
-        {task.overdue && <span className="wc-badge-late">kechikkan</span>}
-      </header>
-
-      <div className="wc-name">{task.title}</div>
-      {m.groups?.length > 0 && <div className="wc-sub">{m.groups.join(', ')}</div>}
-      {m.group && <div className="wc-sub">{m.group}</div>}
-      {m.stage && <div className="wc-sub">Bosqich: {m.stage}</div>}
-
-      {task.reason && <div className="wc-reason">{task.reason}</div>}
-
-      {task.due_at && (
-        <div className="wc-due">
-          <FontAwesomeIcon icon={faClock} /> {fmtDateTime(task.due_at)}
-          <span className="muted"> · {fmtRelative(task.due_at)}</span>
-        </div>
-      )}
-
-      {phones.length > 0 && (
-        <div className="wc-phones">
-          {phones.map(p => (
-            <a key={p} className="wc-phone" href={`tel:${p}`}>
-              <FontAwesomeIcon icon={faPhone} /> {p}
-            </a>
-          ))}
-        </div>
-      )}
-
-      <footer className="wc-actions">
-        {task.entity_id && task.phone ? (
-          <a className="button" href={`tel:${task.phone}`} onClick={() => setTimeout(onCall, 400)}>
-            <FontAwesomeIcon icon={faPhone} /> Qo'ng'iroq
-          </a>
-        ) : null}
-        {task.entity_id && (
-          <button className="button secondary" onClick={onCall}>Natijani yozish</button>
-        )}
-        <button className="btn-icon" onClick={onDone} title="Bajarildi" aria-label="Bajarildi">
-          <FontAwesomeIcon icon={faCheck} />
-        </button>
-        <button className="btn-icon" onClick={onPostpone} title="Keyinga surish" aria-label="Keyinga surish">
-          <FontAwesomeIcon icon={faClock} />
-        </button>
-        <button className="btn-icon" onClick={onSkip} title="O'tkazib yuborish" aria-label="O'tkazib yuborish">
-          <FontAwesomeIcon icon={faForward} />
-        </button>
-      </footer>
+    <article className="task-focus-card">
+      <header><span className="studio-eyebrow">Vazifa tafsilotlari</span><span className={'task-priority prio-' + task.priority}>{PRIORITY_LABEL[task.priority]}</span></header>
+      <div className="task-person"><Initials name={task.title} /><h2>{task.title}</h2><p>{task.task_label}</p></div>
+      <div className="task-reason"><span>Sabab</span><p>{task.reason || 'Vazifani ko‘rib chiqing va natijani belgilang.'}</p></div>
+      <dl className="task-facts">{(m.groups?.length > 0 || m.group) && <div><dt>Guruh</dt><dd>{m.groups?.join(', ') || m.group}</dd></div>}{m.stage && <div><dt>Bosqich</dt><dd>{m.stage}</dd></div>}{task.due_at && <div><dt>Muddat</dt><dd className={task.overdue ? 'tone-danger' : ''}>{fmtDateTime(task.due_at)}</dd></div>}{phones.map((p, i) => <div key={p}><dt>{i ? 'Qo‘shimcha telefon' : 'Telefon'}</dt><dd><a href={'tel:' + p}>{p}</a></dd></div>)}</dl>
+      <div className="task-primary-actions">{task.entity_id && task.phone && <a className="button" href={'tel:' + task.phone} onClick={() => setTimeout(onCall, 400)}><FontAwesomeIcon icon={faPhone} /> Qo‘ng‘iroq qilish</a>}{task.entity_id && <button className="button secondary" onClick={onCall}>Natijani yozish</button>}<button className="button secondary" onClick={onDone}><FontAwesomeIcon icon={faCheck} /> Bajarildi</button></div>
+      <footer><button onClick={onPostpone}><FontAwesomeIcon icon={faClock} /> Keyinga surish</button><button onClick={onSkip}><FontAwesomeIcon icon={faForward} /> O‘tkazib yuborish</button></footer>
     </article>
   )
 }

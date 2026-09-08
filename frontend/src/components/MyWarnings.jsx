@@ -1,82 +1,37 @@
 import { useEffect, useState } from 'react'
-import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faTriangleExclamation, faCircleCheck } from '@fortawesome/free-solid-svg-icons'
+import { faTriangleExclamation, faCircleCheck, faClock } from '@fortawesome/free-solid-svg-icons'
 import { fetchMyWarnings } from '../api'
-import DataTable from './ui/DataTable'
+import { PageIntro, ViewTabs } from './ui/Workspace'
+import { EmptyState, ErrorState, CardSkeleton } from './ui/States'
 import Badge from './ui/Badge'
+import { fmtDateTime } from '../utils/datetime'
 
-const SEVERITY = {
-  gray:   { label: 'Kulrang', variant: 'neutral', rank: 1 },
-  yellow: { label: 'Sariq',   variant: 'warning', rank: 2 },
-  red:    { label: 'Qizil',   variant: 'danger',  rank: 3 },
-}
+const SEVERITY = { gray: { label: 'Kulrang', variant: 'neutral' }, yellow: { label: 'Sariq', variant: 'warning' }, red: { label: 'Qizil', variant: 'danger' } }
 
 export default function MyWarnings() {
   const [items, setItems] = useState([])
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    setLoading(true)
-    fetchMyWarnings()
-      .then(setItems)
-      .catch(() => toast.error("Yuklab bo'lmadi"))
-      .finally(() => setLoading(false))
-  }, [])
-
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [view, setView] = useState('all')
+  const [limit, setLimit] = useState(25)
+  async function load() {
+    setLoading(true); setError(null)
+    try { setItems(await fetchMyWarnings()) } catch (e) { setError(e.message) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
   const active = items.filter(w => !w.cancelled_at)
-
-  const columns = [
-    {
-      key: 'severity', header: 'Daraja', sortable: true,
-      sortValue: w => SEVERITY[w.severity]?.rank ?? 0,
-      render: w => {
-        const s = SEVERITY[w.severity] || SEVERITY.gray
-        return <Badge variant={s.variant} size="sm">{w.code ? `${w.code} — ${s.label}` : s.label}</Badge>
-      },
-    },
-    { key: 'reason', header: 'Sabab', render: w => <span className="cell-clamp">{w.reason}</span> },
-    { key: 'issued_by_name', header: 'Kim berdi', sortable: true, render: w => <span className="text-muted">{w.issued_by_name || '—'}</span> },
-    {
-      key: 'created_at', header: 'Sana', sortable: true,
-      render: w => <span className="muted-sm">{new Date(w.created_at).toLocaleString('uz-UZ')}</span>,
-    },
-    {
-      key: 'status', header: 'Holat', sortable: true,
-      sortValue: w => (w.cancelled_at ? 1 : 0),
-      render: w => (
-        <span className={`status-badge ${w.cancelled_at ? 'inactive' : 'active'}`}>
-          {w.cancelled_at ? 'Bekor qilingan' : 'Faol'}
-        </span>
-      ),
-    },
-  ]
-
-  return (
-    <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faTriangleExclamation} className="page-icon" /> Mening ogohlantirishlarim</h1>
-          <p className="page-subtitle">
-            {active.length > 0
-              ? `${active.length} ta faol ogohlantirish`
-              : 'Faol ogohlantirish yo‘q'}
-          </p>
-        </div>
-      </div>
-
-      <DataTable
-        columns={columns}
-        rows={items}
-        loading={loading}
-        rowClassName={w => (w.cancelled_at ? 'row-inactive' : undefined)}
-        clientPageSize={25}
-        empty={{
-          icon: faCircleCheck,
-          title: 'Ogohlantirish yo‘q',
-          description: 'Sizga hech qanday intizomiy ogohlantirish berilmagan.',
-        }}
-      />
-    </div>
-  )
+  const rows = items.filter(w => view === 'all' || (view === 'active' ? !w.cancelled_at : w.cancelled_at)).slice().sort((a,b) => new Date(b.created_at) - new Date(a.created_at))
+  return <div className="page warning-inbox">
+    <PageIntro title="Mening ogohlantirishlarim" description="Shaxsiy ogohlantirishlar va ularning holati." />
+    {error ? <ErrorState title="Ogohlantirishlarni yuklab bo‘lmadi" onRetry={load} /> : loading ? <CardSkeleton count={2} /> : <>
+      <section className={'warning-status-banner' + (active.length ? ' has-warnings' : '')}><span><FontAwesomeIcon icon={active.length ? faTriangleExclamation : faCircleCheck} /></span><div><h2>{active.length ? `${active.length} ta faol ogohlantirish` : 'Faol ogohlantirish yo‘q'}</h2><p>{active.length ? 'Tafsilotlar va sabablar quyida keltirilgan.' : 'Barcha yangi ogohlantirishlar shu yerda ko‘rinadi.'}</p></div><span className="warning-total">{items.length}<small>jami yozuv</small></span></section>
+      <ViewTabs value={view} onChange={v => { setView(v); setLimit(25) }} items={[{ key: 'all', label: 'Barchasi', count: items.length }, { key: 'active', label: 'Faol', count: active.length }, { key: 'cancelled', label: 'Bekor qilingan', count: items.length - active.length }]} />
+      {!rows.length ? <EmptyState icon={faCircleCheck} title="Ogohlantirish yo‘q" description={items.length ? 'Tanlangan holat bo‘yicha yozuv topilmadi.' : 'Sizga intizomiy ogohlantirish berilmagan.'} /> : <div className="warning-records">{rows.slice(0,limit).map(w => {
+        const severity = SEVERITY[w.severity] || SEVERITY.gray
+        return <article className={'warning-record severity-' + w.severity + (w.cancelled_at ? ' is-cancelled' : '')} key={w.id}><header><Badge variant={severity.variant} size="sm">{w.code ? `${w.code} · ` : ''}{severity.label}</Badge><time><FontAwesomeIcon icon={faClock} />{fmtDateTime(w.created_at)}</time></header><p>{w.reason || 'Sabab ko‘rsatilmagan'}</p><footer><span>Mas’ul: <strong>{w.issued_by_name || '—'}</strong></span><span className="warning-record-state">{w.cancelled_at ? 'Bekor qilingan' : 'Faol'}</span></footer></article>
+      })}{limit < rows.length && <button className="button secondary" onClick={() => setLimit(n => n + 25)}>Ko‘proq ko‘rsatish</button>}</div>}
+    </>}
+  </div>
 }

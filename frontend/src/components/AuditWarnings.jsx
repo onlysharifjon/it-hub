@@ -1,3 +1,4 @@
+import { PageIntro } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -125,17 +126,11 @@ export default function AuditWarnings({ currentUser }) {
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faTriangleExclamation} className="page-icon" /> Ogohlantirishlar</h1>
-          <p className="page-subtitle">{items.length} yozuv · {activeCount} tasi faol</p>
-        </div>
-        <div className="header-actions">
+      <PageIntro title={<>Ogohlantirishlar</>} description={<>{items.length} yozuv · {activeCount} tasi faol</>} actions={<><div className="header-actions">
           <button className="button" onClick={() => setModal(true)}>
             <FontAwesomeIcon icon={faPlus} /> Ogohlantirish berish
           </button>
-        </div>
-      </div>
+        </div></>} />
 
       <DataTable
         columns={columns}

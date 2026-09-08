@@ -1,3 +1,5 @@
+import Overlay from './ui/Overlay'
+import useFocusTrap from './ui/useFocusTrap'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMagnifyingGlass, faArrowTurnDown, faUserGraduate, faUsers, faBullseye } from '@fortawesome/free-solid-svg-icons'
@@ -20,6 +22,8 @@ export default function CommandPalette({ open, onClose, role, onNavigate }) {
   const [active, setActive] = useState(0)
   const inputRef = useRef(null)
   const listRef = useRef(null)
+  const paletteRef = useRef(null)
+  useFocusTrap(open, paletteRef, onClose)
 
   const pages = useMemo(() => flatNav(role), [role])
 
@@ -82,7 +86,6 @@ export default function CommandPalette({ open, onClose, role, onNavigate }) {
   }
 
   function onKeyDown(e) {
-    if (e.key === 'Escape') { onClose(); return }
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, items.length - 1)) }
     if (e.key === 'ArrowUp')   { e.preventDefault(); setActive(a => Math.max(a - 1, 0)) }
     if (e.key === 'Enter' && items[active]) { e.preventDefault(); choose(items[active]) }
@@ -91,8 +94,8 @@ export default function CommandPalette({ open, onClose, role, onNavigate }) {
   if (!open) return null
 
   return (
-    <div className="cmdk-overlay" onClick={onClose}>
-      <div className="cmdk" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Qidiruv">
+    <Overlay layer={1200} className="cmdk-overlay" onClick={onClose}>
+      <div className="cmdk" ref={paletteRef} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Qidiruv">
         <div className="cmdk-input-wrap">
           <FontAwesomeIcon icon={faMagnifyingGlass} className="cmdk-icon" />
           <input
@@ -160,6 +163,6 @@ export default function CommandPalette({ open, onClose, role, onNavigate }) {
           <span><kbd>ESC</kbd> yopish</span>
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }

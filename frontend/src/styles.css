@@ -19,21 +19,21 @@
 :root {
   /* ══ 1. PRIMITIVLAR — mavzudan qat'i nazar bir xil ══════════════════════ */
 
-  /* Brend shkalasi. Binafsha — amal va tanlov rangi, bezak emas. */
-  --purple-50:  #FAF5FF;
-  --purple-100: #F3E8FF;
-  --purple-200: #E9D5FF;
-  --purple-300: #D8B4FE;
-  --purple-400: #C084FC;
-  --purple-500: #A855F7;
-  --purple-600: #9333EA;
-  --purple-700: #7E22CE;
-  --purple-800: #6B21A8;
-  --purple-900: #581C87;
-  /* Yorug' rejimdagi amal rangi (violet oilasi) */
-  --violet-600: #7C3AED;
-  --violet-700: #6D28D9;
-  --violet-800: #5B21B6;
+  /* Brend shkalasi. Indigo — amal va tanlov rangi, bezak emas. */
+  --purple-50:  #EEF2FF;
+  --purple-100: #E0E7FF;
+  --purple-200: #C7D2FE;
+  --purple-300: #A5B4FC;
+  --purple-400: #818CF8;
+  --purple-500: #6366F1;
+  --purple-600: #4F46E5;
+  --purple-700: #4338CA;
+  --purple-800: #3730A3;
+  --purple-900: #312E81;
+  /* Yorug' rejimdagi amal rangi (indigo oilasi) */
+  --violet-600: #4F46E5;
+  --violet-700: #4338CA;
+  --violet-800: #3730A3;
 
   --gray-25:  #FCFCFD;
   --gray-50:  #FAFAFC;
@@ -95,7 +95,7 @@
 
   --border:        #E4E7EC;
   --border-2:      #D0D5DD;
-  --border-focus:  #7C3AED;
+  --border-focus:  #4F46E5;
 
   --text:          #101828;
   --text-2:        #475467;
@@ -105,22 +105,22 @@
   --muted-2:       #98A2B3;
   --neutral-text:  #475467;
 
-  --primary:        #7C3AED;
-  --primary-hover:  #6D28D9;
-  --primary-active: #5B21B6;
-  --primary-light:  #F5F3FF;
-  --primary-mid:    #F3E8FF;
-  --primary-border: #DDD6FE;
-  --primary-text:   #6D28D9;
+  --primary:        #4F46E5;
+  --primary-hover:  #4338CA;
+  --primary-active: #3730A3;
+  --primary-light:  #EEF2FF;
+  --primary-mid:    #E0E7FF;
+  --primary-border: #C7D2FE;
+  --primary-text:   #4338CA;
   /* Rangli to'ldirish USTIDAGI matn. Yorug' rejimda to'ldirish to'q —
-     matn oq; qorong'ida esa to'ldirish yorug' (#A855F7, #F87171 …) va
+     matn oq; qorong'ida esa to'ldirish yorug' (#818CF8, #F87171 …) va
      oq matn 4.5:1 dan o'tmaydi, shuning uchun matn to'q bo'ladi. */
   --primary-on:     #FFFFFF;
   --success-on:     #FFFFFF;
   --warning-on:     #FFFFFF;
   --danger-on:      #FFFFFF;
   --info-on:        #FFFFFF;
-  --ring:           rgba(124, 58, 237, .16);
+  --ring:           rgba(79, 70, 229, .16);
 
   --accent:       #0E9384;
   --accent-hover: #107569;
@@ -133,16 +133,16 @@
   --info:    #2563EB;  --info-bg:    #EFF6FF;  --info-text:    #1849A9;  --info-border:    #B2DDFF;
 
   /* Modul (bo'lim) ranglari */
-  --mod-dashboard: #7C3AED;  --mod-leads: #2563EB;   --mod-students: #4F46E5;
+  --mod-dashboard: #4F46E5;  --mod-leads: #2563EB;   --mod-students: #4F46E5;
   --mod-groups: #0891B2;     --mod-attendance: #16A34A; --mod-payments: #059669;
-  --mod-finance: #7C3AED;    --mod-salary: #D97706;  --mod-expenses: #EA580C;
-  --mod-academic: #8B5CF6;   --mod-notifications: #E11D48; --mod-chatbot: #2563EB;
+  --mod-finance: #4F46E5;    --mod-salary: #D97706;  --mod-expenses: #EA580C;
+  --mod-academic: #6366F1;   --mod-notifications: #E11D48; --mod-chatbot: #2563EB;
   --mod-users: #475569;      --mod-audit: #DC2626;   --mod-settings: #64748B;
 
   /* Modul yumshoq konteynerlari */
-  --soft-purple: #F3E8FF; --soft-blue:   #EFF6FF; --soft-indigo: #EEF2FF;
+  --soft-purple: #EEF2FF; --soft-blue:   #EFF6FF; --soft-indigo: #EEF2FF;
   --soft-cyan:   #ECFEFF; --soft-green:  #ECFDF3; --soft-amber:  #FFFAEB;
-  --soft-orange: #FFF6ED; --soft-violet: #F5F3FF; --soft-rose:   #FFF1F3;
+  --soft-orange: #FFF6ED; --soft-violet: #E0E7FF; --soft-rose:   #FFF1F3;
   --soft-slate:  #F2F4F7; --soft-red:    #FEF3F2;
 
   --mod:      var(--mod-settings);
@@ -155,19 +155,19 @@
      Ilgari bittasi ikkalasiga ishlatilardi va, masalan, `#0E9384` oq ustida
      3.8:1 bo'lib, bosqich yorlig'i o'qilmasdi. */
   --stage-sky: #0EA5E9;    --stage-indigo: #4F46E5; --stage-amber: #D97706;
-  --stage-violet: #7C3AED; --stage-emerald: #059669; --stage-red: #DC2626;
-  --stage-slate: #64748B;  --stage-purple: #8B5CF6; --stage-teal: #0E9384;
+  --stage-violet: #4F46E5; --stage-emerald: #059669; --stage-red: #DC2626;
+  --stage-slate: #64748B;  --stage-purple: #6366F1; --stage-teal: #0E9384;
   --stage-rose: #E11D48;   --stage-blue: #2563EB;   --stage-green: #16A34A;
   --stage-orange: #EA580C; --stage-cyan: #0891B2;
 
   --stage-sky-text: #0369A1;    --stage-indigo-text: #4338CA; --stage-amber-text: #B45309;
-  --stage-violet-text: #6D28D9; --stage-emerald-text: #047857; --stage-red-text: #B91C1C;
-  --stage-slate-text: #475569;  --stage-purple-text: #7C3AED; --stage-teal-text: #0F766E;
+  --stage-violet-text: #4338CA; --stage-emerald-text: #047857; --stage-red-text: #B91C1C;
+  --stage-slate-text: #475569;  --stage-purple-text: #4F46E5; --stage-teal-text: #0F766E;
   --stage-rose-text: #BE123C;   --stage-blue-text: #1D4ED8;   --stage-green-text: #15803D;
   --stage-orange-text: #C2410C; --stage-cyan-text: #0E7490;
 
   /* Ma'lumot vizualizatsiyasi */
-  --viz-1: #7C3AED; --viz-2: #0E9384; --viz-3: #2563EB;
+  --viz-1: #4F46E5; --viz-2: #0E9384; --viz-3: #2563EB;
   --viz-4: #D97706; --viz-5: #DB2777; --viz-6: #65A30D;
   --viz-grid: #E4E7EC;          /* grafik to'r chiziqlari */
   --viz-track: #F2F4F7;         /* ustun/meter yo'li */
@@ -188,10 +188,10 @@
   --nav-text:          #667085;
   --nav-text-muted:    #98A2B3;
   --nav-hover-bg:      #F8F9FC;
-  --nav-active-bg:     #F3E8FF;
-  --nav-active-text:   #6D28D9;
-  --nav-active-icon:   #7C3AED;
-  --nav-active-marker: #7C3AED;
+  --nav-active-bg:     #EEF2FF;
+  --nav-active-text:   #4338CA;
+  --nav-active-icon:   #4F46E5;
+  --nav-active-marker: #4F46E5;
 
   /* Yuqori panel */
   --topbar-bg:     #FFFFFF;
@@ -240,7 +240,7 @@
 
   --border:        #273244;
   --border-2:      #344054;
-  --border-focus:  #A855F7;
+  --border-focus:  #818CF8;
 
   --text:          #F9FAFB;
   --text-2:        #D0D5DD;
@@ -248,20 +248,20 @@
   --muted-2:       #667085;
   --neutral-text:  #D0D5DD;
 
-  --primary:        #A855F7;
-  --primary-hover:  #C084FC;
-  --primary-active: #D8B4FE;
-  --primary-light:  #221434;
-  --primary-mid:    #2E1A47;
-  --primary-border: #3F2A63;
-  --primary-text:   #D8B4FE;
-  /* Qorong'i rejimda binafsha yorug'roq — ustidagi matn qora bo'lishi kerak */
-  --primary-on:     #1A0B2E;
+  --primary:        #818CF8;
+  --primary-hover:  #A5B4FC;
+  --primary-active: #C7D2FE;
+  --primary-light:  #1E1B4B;
+  --primary-mid:    #2A2565;
+  --primary-border: #3F3A78;
+  --primary-text:   #C7D2FE;
+  /* Qorong'i rejimda indigo yorug'roq — ustidagi matn qora bo'lishi kerak */
+  --primary-on:     #1B1740;
   --success-on:     #05200F;
   --warning-on:     #241802;
   --danger-on:      #2A0B0D;
   --info-on:        #071426;
-  --ring:           rgba(168, 85, 247, .30);
+  --ring:           rgba(129, 140, 248, .30);
 
   --accent:       #2DD4BF;
   --accent-hover: #5EEAD4;
@@ -275,15 +275,15 @@
   --danger:  #F87171;  --danger-bg:  #2A1416;  --danger-text:  #FCA5A5;  --danger-border:  #4C2226;
   --info:    #60A5FA;  --info-bg:    #0E1D33;  --info-text:    #93C5FD;  --info-border:    #1E3A5F;
 
-  --mod-dashboard: #8B5CF6;  --mod-leads: #60A5FA;   --mod-students: #818CF8;
+  --mod-dashboard: #818CF8;  --mod-leads: #60A5FA;   --mod-students: #818CF8;
   --mod-groups: #22D3EE;     --mod-attendance: #4ADE80; --mod-payments: #34D399;
-  --mod-finance: #A78BFA;    --mod-salary: #FBBF24;  --mod-expenses: #FB923C;
-  --mod-academic: #C084FC;   --mod-notifications: #FB7185; --mod-chatbot: #60A5FA;
+  --mod-finance: #A5B4FC;    --mod-salary: #FBBF24;  --mod-expenses: #FB923C;
+  --mod-academic: #6366F1;   --mod-notifications: #FB7185; --mod-chatbot: #60A5FA;
   --mod-users: #94A3B8;      --mod-audit: #F87171;   --mod-settings: #94A3B8;
 
-  --soft-purple: #2E1A47; --soft-blue:   #12243D; --soft-indigo: #1B1F42;
+  --soft-purple: #1E1B4B; --soft-blue:   #12243D; --soft-indigo: #1B1F42;
   --soft-cyan:   #0C2B33; --soft-green:  #0F2A1D; --soft-amber:  #2A1F0A;
-  --soft-orange: #2C1B0E; --soft-violet: #241640; --soft-rose:   #2E1420;
+  --soft-orange: #2C1B0E; --soft-violet: #2A2565; --soft-rose:   #2E1420;
   --soft-slate:  #1B2230; --soft-red:    #2A1416;
 
   --mod-soft: var(--surface-3);
@@ -291,18 +291,18 @@
   /* Qorong'ida yorug' variantlar to'q yuzada allaqachon AA dan o'tadi,
      shuning uchun to'ldirish va matn bir xil. */
   --stage-sky: #38BDF8;    --stage-indigo: #818CF8; --stage-amber: #FBBF24;
-  --stage-violet: #A78BFA; --stage-emerald: #34D399; --stage-red: #F87171;
-  --stage-slate: #94A3B8;  --stage-purple: #C084FC; --stage-teal: #2DD4BF;
+  --stage-violet: #818CF8; --stage-emerald: #34D399; --stage-red: #F87171;
+  --stage-slate: #94A3B8;  --stage-purple: #A5B4FC; --stage-teal: #2DD4BF;
   --stage-rose: #FB7185;   --stage-blue: #60A5FA;   --stage-green: #4ADE80;
   --stage-orange: #FB923C; --stage-cyan: #22D3EE;
 
   --stage-sky-text: #38BDF8;    --stage-indigo-text: #818CF8; --stage-amber-text: #FBBF24;
-  --stage-violet-text: #A78BFA; --stage-emerald-text: #34D399; --stage-red-text: #F87171;
-  --stage-slate-text: #94A3B8;  --stage-purple-text: #C084FC; --stage-teal-text: #2DD4BF;
+  --stage-violet-text: #818CF8; --stage-emerald-text: #34D399; --stage-red-text: #F87171;
+  --stage-slate-text: #94A3B8;  --stage-purple-text: #A5B4FC; --stage-teal-text: #2DD4BF;
   --stage-rose-text: #FB7185;   --stage-blue-text: #60A5FA;   --stage-green-text: #4ADE80;
   --stage-orange-text: #FB923C; --stage-cyan-text: #22D3EE;
 
-  --viz-1: #A78BFA; --viz-2: #2DD4BF; --viz-3: #60A5FA;
+  --viz-1: #818CF8; --viz-2: #2DD4BF; --viz-3: #60A5FA;
   --viz-4: #FBBF24; --viz-5: #F472B6; --viz-6: #A3E635;
   --viz-grid: #273244;
   --viz-track: #202938;
@@ -323,10 +323,10 @@
   --nav-text:          #98A2B3;
   --nav-text-muted:    #667085;
   --nav-hover-bg:      #151B28;
-  --nav-active-bg:     #2E1A47;
-  --nav-active-text:   #E9D5FF;
-  --nav-active-icon:   #C084FC;
-  --nav-active-marker: #A855F7;
+  --nav-active-bg:     #1E1B4B;
+  --nav-active-text:   #C7D2FE;
+  --nav-active-icon:   #A5B4FC;
+  --nav-active-marker: #818CF8;
 
   --topbar-bg:     #0F1420;
   --topbar-search: #111827;
@@ -1453,14 +1453,14 @@ select.field-sm { padding-right: var(--space-6); }
 }
 
 /* ── CHAP: brend paneli ──────────────────────────────────────────────────
-   Ilova ichida binafsha o'lchov bilan ishlatiladi; kirish ekrani esa —
+   Ilova ichida indigo o'lchov bilan ishlatiladi; kirish ekrani esa —
    brendning yagona "ovoz balandligi" joyi. Shuning uchun bu yerda to'liq
-   binafsha gradient, ish maydonida esa hech qachon emas. */
+   indigo→ko'k gradient, ish maydonida esa hech qachon emas. */
 .lp-left {
   background:
-    radial-gradient(120% 90% at 15% 0%, #6D28D9 0%, transparent 55%),
-    radial-gradient(100% 80% at 100% 100%, #4C1D95 0%, transparent 60%),
-    #2E1065;
+    radial-gradient(120% 90% at 15% 0%, #4338CA 0%, transparent 55%),
+    radial-gradient(100% 80% at 100% 100%, #1E40AF 0%, transparent 60%),
+    #1E1B4B;
   display: flex;
   align-items: stretch;
   position: relative;
@@ -1488,7 +1488,7 @@ select.field-sm { padding-right: var(--space-6); }
   right: -120px;
   width: 360px;
   height: 360px;
-  background: radial-gradient(circle, rgba(216,180,254,.20) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(165,180,252,.22) 0%, transparent 70%);
   pointer-events: none;
 }
 
@@ -1521,7 +1521,7 @@ select.field-sm { padding-right: var(--space-6); }
   margin-bottom: 20px;
 }
 .lp-hero-sub {
-  color: rgba(233,213,255,.72);
+  color: rgba(199,210,254,.72);
   font-size: 14px;
   line-height: 1.7;
   max-width: 320px;
@@ -1538,20 +1538,20 @@ select.field-sm { padding-right: var(--space-6); }
   display: flex;
   align-items: center;
   gap: 10px;
-  color: rgba(243,232,255,.78);
+  color: rgba(224,231,255,.78);
   font-size: 13px;
 }
 .lp-feature-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #A78BFA;
+  background: #818CF8;
   flex-shrink: 0;
 }
 
 /* Footer */
 .lp-copy {
-  color: rgba(216,180,254,.45);
+  color: rgba(199,210,254,.45);
   font-size: 12px;
 }
 

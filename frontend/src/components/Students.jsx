@@ -1,3 +1,5 @@
+import Overlay from './ui/Overlay'
+import PersonName from './ui/PersonName'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -200,7 +202,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
     { key: 'index', header: '#', width: 52, className: 'text-muted',
       render: (_s, i) => (page - 1) * 20 + i + 1 },
     { key: 'full_name', header: 'Ism Familiya', sortable: true, width: 190,
-      render: s => <strong>{s.full_name}</strong> },
+      render: s => <PersonName name={s.full_name} /> },
     { key: 'phone1', header: <><FontAwesomeIcon icon={faPhone} /> Telefon</>, sortable: true,
       sortValue: s => s.phone1,
       render: s => <a href={`tel:${s.phone1}`} onClick={e => e.stopPropagation()}>{s.phone1}</a> },
@@ -356,7 +358,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
 
       {/* ── Davomat modali ── */}
       {attendanceModal && (
-        <div className="modal-overlay" onClick={() => setAttendanceModal(null)}>
+        <Overlay className="modal-overlay" onClick={() => setAttendanceModal(null)}>
           <div className="modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>
@@ -429,7 +431,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
               )}
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
 
       <Modal
@@ -571,7 +573,7 @@ function VacationModal({ student, onClose }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <Overlay className="modal-overlay" onClick={onClose}>
       {confirmUI}
       <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
         <div className="modal-header">
@@ -624,7 +626,7 @@ function VacationModal({ student, onClose }) {
           )}
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }
 
@@ -655,7 +657,7 @@ function AttachGroupModal({ student, onClose, onAttached }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <Overlay className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
         <div className="modal-header">
           <h3><FontAwesomeIcon icon={faLayerGroup} /> Guruhga biriktirish — {student.full_name}</h3>
@@ -686,6 +688,6 @@ function AttachGroupModal({ student, onClose, onAttached }) {
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }

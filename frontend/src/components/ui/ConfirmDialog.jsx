@@ -43,6 +43,7 @@ export default function ConfirmDialog({
   return (
     <Modal
       open={open}
+      role="alertdialog"
       title={title}
       onClose={handleClose}
       size="sm"

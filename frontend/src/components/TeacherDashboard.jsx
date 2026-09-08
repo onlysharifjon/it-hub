@@ -1,10 +1,12 @@
+import { SummaryRow, ViewTabs, Initials, ProgressRing } from './ui/Workspace'
+import { PageIntro } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faUsers, faWallet, faChalkboardTeacher,
   faArrowRight, faChevronLeft, faChevronRight,
-  faCalendarDays, faChartLine, faMoneyBillWave,
+  faCalendarDays, faChartLine, faMoneyBillWave, faBookOpen, faClipboardCheck, faGraduationCap,
   faChevronDown, faChevronUp, faMagnifyingGlass, faXmark, faAward,
 } from '@fortawesome/free-solid-svg-icons'
 import {
@@ -17,7 +19,7 @@ import Meter from './ui/Meter'
 import Modal from './ui/Modal'
 import DataTable from './ui/DataTable'
 import { Input } from './ui/Field'
-import { EmptyState, CardSkeleton } from './ui/States'
+import { EmptyState, CardSkeleton, ErrorState } from './ui/States'
 import { tashkentNow } from '../utils/datetime'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun',
@@ -35,11 +37,12 @@ function fmt(n) {
   return Number(n).toLocaleString('uz-UZ') + ' so\'m'
 }
 
-export default function TeacherDashboard({ currentUser, onOpenGroup }) {
+export default function TeacherDashboard({ currentUser, onOpenGroup, onNavigate }) {
   const now = tashkentNow()
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [year,  setYear]  = useState(now.getFullYear())
   const [data,  setData]  = useState(null)
+  const [error, setError] = useState(null)
   const [salaryInfo, setSalaryInfo] = useState(null)
   const [salaryBreakdown, setSalaryBreakdown] = useState(null)
   const [showBreakdown, setShowBreakdown] = useState(false)
@@ -113,7 +116,7 @@ export default function TeacherDashboard({ currentUser, onOpenGroup }) {
   }
 
   async function load() {
-    setLoading(true)
+    setLoading(true); setError(null)
     try {
       const [d, s, b] = await Promise.all([
         fetchTeacherDashboard(month, year),
@@ -123,7 +126,7 @@ export default function TeacherDashboard({ currentUser, onOpenGroup }) {
       setData(d)
       setSalaryInfo(s)
       setSalaryBreakdown(b)
-    } finally {
+    } catch (e) { setError(e.message); setData(null) } finally {
       setLoading(false)
     }
   }
@@ -158,29 +161,20 @@ export default function TeacherDashboard({ currentUser, onOpenGroup }) {
     : []
 
   return (
-    <div className="page td-page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1>
-            <FontAwesomeIcon icon={faChalkboardTeacher} className="page-icon" />
-            Salom, {currentUser?.full_name || currentUser?.username}
-          </h1>
-          <p className="page-subtitle">O'qituvchi paneli · {MONTHS[month - 1]} {year}</p>
+    <div className="page td-page teacher-studio">
+      <header className="teacher-welcome">
+        <div className="teacher-welcome-copy"><span className="teacher-kicker"><i /> O‘qituvchi kabineti</span><h1>Salom, {currentUser?.full_name || currentUser?.username}.</h1><p>Har bir dars — yangi imkoniyat.<br /> Guruhlaringiz va natijalaringiz shu yerda.</p>
+          <button className="button" onClick={() => onNavigate?.('today_attendance')}><FontAwesomeIcon icon={faCalendarDays} /> Bugungi darslar <FontAwesomeIcon icon={faArrowRight} /></button>
         </div>
-        <div className="header-actions">
-          <div className="td-monthnav">
-            <button className="btn-icon" onClick={prevMonth} aria-label="Oldingi oy">
-              <FontAwesomeIcon icon={faChevronLeft} />
-            </button>
-            <span className="td-monthnav-label">{MONTHS[month - 1]} {year}</span>
-            <button className="btn-icon" onClick={nextMonth} aria-label="Keyingi oy">
-              <FontAwesomeIcon icon={faChevronRight} />
-            </button>
-          </div>
-        </div>
-      </div>
+        <div className="teacher-welcome-side"><div className="teacher-date"><span>Hisobot davri</span><div className="td-monthnav"><button className="btn-icon" onClick={prevMonth} aria-label="Oldingi oy"><FontAwesomeIcon icon={faChevronLeft} /></button><span className="td-monthnav-label">{MONTHS[month - 1]} {year}</span><button className="btn-icon" onClick={nextMonth} aria-label="Keyingi oy"><FontAwesomeIcon icon={faChevronRight} /></button></div></div><div className="teacher-profile-stamp"><Initials name={currentUser?.full_name || currentUser?.username} /><div><strong>Bilim. Amaliyot. Natija.</strong><span>MINAR Academy · ustozlar maydoni</span></div></div></div>
+      </header>
+      <nav className="teacher-shortcuts" aria-label="O‘qituvchi tezkor amallari">
+        {[{ page: 'today_attendance', icon: faClipboardCheck, title: 'Davomat', text: 'Bugungi darslar va qatnashuv' }, { page: 'academic', icon: faGraduationCap, title: 'Baholar va izohlar', text: 'Talabalar natijalarini kuzatish' }, { page: 'lessons', icon: faBookOpen, title: 'Dars rejalari', text: 'Qo‘llanma va uyga vazifalar' }].map(item => <button key={item.page} onClick={() => onNavigate?.(item.page)}><span className="teacher-shortcut-icon"><FontAwesomeIcon icon={item.icon} /></span><span><strong>{item.title}</strong><small>{item.text}</small></span><FontAwesomeIcon icon={faArrowRight} /></button>)}
+      </nav>
+      {error && <ErrorState title="Kabinet ma’lumotlarini yuklab bo‘lmadi" onRetry={load} />}
 
-      {/* O'quvchini ismi bo'yicha qidirish — o'qituvchi eng ko'p qiladigan amal */}
+      {data && <SummaryRow items={[{ label: 'Faol guruhlar', value: data.total_groups, sub: 'Sizga biriktirilgan' }, { label: 'Jami talabalar', value: data.total_students, sub: 'Barcha guruhlarda' }, { label: MONTHS[month - 1] + ' maoshi', value: Number(salaryInfo?.salary ?? data.total_salary ?? 0).toLocaleString('uz-UZ'), unit: 'so‘m', tone: 'success', sub: salaryInfo?.is_internship ? 'Stajirovka' : salaryInfo?.auto ? 'Avtomatik hisoblangan' : 'Qo‘lda belgilangan' }]} />}
+      <div className="teacher-workspace-bar"><ViewTabs value={tab} onChange={setTab} items={[{ key: 'groups', label: 'Guruhlarim', count: groups.length }, { key: 'salary', label: 'Maosh hisobi' }, { key: 'certificates', label: 'Sertifikatlar' }]} />      {/* O'quvchini ismi bo'yicha qidirish — o'qituvchi eng ko'p qiladigan amal */}
       <div className="td-search">
         <div className="search-wrap">
           <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
@@ -219,24 +213,7 @@ export default function TeacherDashboard({ currentUser, onOpenGroup }) {
         )}
       </div>
 
-      {data && (
-        <MetricStrip columns={3}>
-          <Metric label="Faol guruhlar" value={data.total_groups} sub="sizga biriktirilgan" />
-          <Metric label="Jami talabalar" value={data.total_students} sub="barcha guruhlarda" />
-          <Metric
-            label={`${MONTHS[month - 1]} maoshi`}
-            tone="success"
-            value={fmt(salaryInfo?.salary ?? data.total_salary)}
-            sub={salaryInfo?.is_internship ? 'stajirovka' : salaryInfo?.auto ? 'avtomatik hisoblangan' : "qo'lda belgilangan"}
-          />
-        </MetricStrip>
-      )}
-
-      <div className="tab-bar">
-        <TabBtn active={tab === 'groups'} onClick={() => setTab('groups')} icon={faUsers}>Guruhlarim</TabBtn>
-        <TabBtn active={tab === 'salary'} onClick={() => setTab('salary')} icon={faMoneyBillWave}>Maosh hisobi</TabBtn>
-        <TabBtn active={tab === 'certificates'} onClick={() => setTab('certificates')} icon={faAward}>Sertifikatlar</TabBtn>
-      </div>
+</div>
 
       {!loading && tab !== 'certificates' && groups.length > 0 && (
         <div className="toolbar">
@@ -261,38 +238,16 @@ export default function TeacherDashboard({ currentUser, onOpenGroup }) {
               : 'Boshqa kun filtrini tanlab ko\'ring.'}
           />
         ) : (
-          <div className="td-grouplist">
-            {filteredGroups.map(g => {
+          <div className="teacher-class-grid">
+            {filteredGroups.map((g, index) => {
               const st = STAGE_STYLE[g.stage] || STAGE_STYLE.foundation
-              return (
-                <article key={g.id} className="td-group">
-                  <span className="td-group-strip" style={{ background: st.bar }} />
-                  <div className="td-group-body">
-                    <header className="td-group-head">
-                      <span className="ui-badge ui-badge-sm" style={{ background: st.bg, color: st.color }}>{st.label}</span>
-                      {g.is_active === false && <span className="status-badge inactive">Yopiq</span>}
-                      <h3 className="td-group-name">{g.name}</h3>
-                      <button className="button small" onClick={() => onOpenGroup(g)}>
-                        Ochish <FontAwesomeIcon icon={faArrowRight} />
-                      </button>
-                    </header>
-
-                    <div className="td-group-chips">
-                      <InfoChip icon={faUsers} text={`${g.student_count} talaba`} />
-                      <InfoChip icon={faCalendarDays} text={g.schedule ? `${g.schedule}${g.lesson_time ? ` — soat ${g.lesson_time}` : ''}` : 'Jadvalsiz'} />
-                      <InfoChip icon={faChartLine} text={`Boshlangan: ${g.start_date || '—'}`} />
-                      <InfoChip icon={faMoneyBillWave} text={`${MONTHS[month - 1]}: ${fmt(g.month_salary)}`} tone="success" />
-                    </div>
-
-                    <Meter
-                      value={g.progress_pct}
-                      tone="primary"
-                      label={`Kurs progressi — ${g.completed_lessons}/${g.total_lessons} dars`}
-                      showValue
-                    />
-                  </div>
-                </article>
-              )
+              return <article className="teacher-class" key={g.id} style={{ '--class-color': st.bar, '--class-index': index }}>
+                <header><span className="teacher-class-icon"><FontAwesomeIcon icon={faChalkboardTeacher} /></span><span className="teacher-course-tag">{st.label}</span>{g.is_active === false && <span className="status-badge inactive">Yopiq</span>}<span className="teacher-class-number">{String(index + 1).padStart(2,'0')}</span></header>
+                <h2>{g.name}</h2><p className="teacher-class-schedule"><FontAwesomeIcon icon={faCalendarDays} />{g.schedule || 'Jadval belgilanmagan'}<span>{g.lesson_time || '—'}</span></p>
+                <div className="teacher-class-progress"><ProgressRing value={g.progress_pct} size={74} label={g.name + ' kurs progressi'} /><div><strong>{g.completed_lessons ?? 0}<small> / {g.total_lessons ?? 0} dars</small></strong><span>Kurs davomiyligi</span></div><span className="teacher-class-students"><FontAwesomeIcon icon={faUsers} /><b>{g.student_count ?? 0}</b> talaba</span></div>
+                <div className="teacher-class-facts"><span>Boshlangan<strong>{g.start_date || '—'}</strong></span><span>{MONTHS[month - 1]} ulushi<strong>{fmt(g.month_salary)}</strong></span></div>
+                <footer><span>Guruh bilan ishlash</span><button className="button secondary" onClick={() => onOpenGroup(g)}>Guruhni ochish <FontAwesomeIcon icon={faArrowRight} /></button></footer>
+              </article>
             })}
           </div>
         )

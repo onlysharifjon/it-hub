@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faLayerGroup, faCode, faServer, faClockRotateLeft } from '@fortawesome/free-solid-svg-icons'
 import LessonList from './LessonList'
 import LessonDetail from './LessonDetail'
 import AuditLogPanel from './AuditLogPanel'
@@ -16,7 +16,7 @@ const CATEGORY_LABELS = {
   backend: 'Backend',
 }
 
-export default function Lessons({ category, currentUser }) {
+export default function Lessons({ category, onSelectCategory, currentUser }) {
   const [confirmUI, ask] = useConfirm()
   const [lessons, setLessons] = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -109,22 +109,34 @@ export default function Lessons({ category, currentUser }) {
       <div className="lessons-header">
         <div>
           <p className="eyebrow">O'quv metodikasi</p>
-          <h1>{CATEGORY_LABELS[category] || category}</h1>
+          <h1>Dars rejalari</h1>
+          <p className="page-subtitle">Dasturlar, dars qo‘llanmalari va uy vazifalari</p>
         </div>
         <div className="header-right">
           {isMetodist && (
             <button className="button secondary icon-btn" onClick={() => setShowAudit(true)}>
-              &#9679; Tarix
+              <FontAwesomeIcon icon={faClockRotateLeft} /> Tarix
             </button>
           )}
-          <ProgressBar value={progress} />
+          <div className="lesson-completion"><span>Reja tayyorligi <strong>{progress}%</strong></span><ProgressBar value={progress} /></div>
         </div>
+      </div>
+
+      <div className="lesson-tracks" aria-label="O‘quv dasturi">
+        {Object.entries(CATEGORY_LABELS).map(([key, label], i) => (
+          <button key={key} type="button" className={`lesson-track${key === category ? ' is-active' : ''}`}
+            aria-pressed={key === category} onClick={() => onSelectCategory?.(key)}>
+            <span className="lesson-track-icon"><FontAwesomeIcon icon={[faLayerGroup, faCode, faServer][i]} /></span>
+            <span><strong>{label}</strong><small>{['Dasturlash asoslari', 'Veb interfeyslar', 'Server va ma’lumotlar'][i]}</small></span>
+            <span className="lesson-track-index">0{i + 1}</span>
+          </button>
+        ))}
       </div>
 
       <div className="lessons-body">
         <section className="lesson-panel">
           <div className="panel-head">
-            <h2>{lessons.length} ta dars</h2>
+            <h2>{CATEGORY_LABELS[category]} <span className="lesson-count">{lessons.length} dars</span></h2>
             <div className="panel-head-actions">
               {loading && <span className="tag">Yuklanmoqda...</span>}
               {isMetodist && (

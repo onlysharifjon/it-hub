@@ -1,3 +1,4 @@
+import Overlay from './ui/Overlay'
 import { useState } from 'react'
 
 const CATEGORY_LABELS = {
@@ -38,7 +39,7 @@ function AddLessonModal({ category, onSave, onClose, existingNumbers }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <Overlay className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-header">
           <h3>{CATEGORY_LABELS[category]} — yangi dars</h3>
@@ -86,7 +87,7 @@ function AddLessonModal({ category, onSave, onClose, existingNumbers }) {
           </div>
         </form>
       </div>
-    </div>
+    </Overlay>
   )
 }
 

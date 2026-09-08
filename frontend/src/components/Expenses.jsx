@@ -1,3 +1,5 @@
+import { PageIntro } from './ui/Workspace'
+import { SummaryRow } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -134,16 +136,9 @@ export default function Expenses({ currentUser }) {
   ]
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="page-header-text">
-          <h1><FontAwesomeIcon icon={faReceipt} className="page-icon" /> Tashqi xarajatlar</h1>
-          <p className="page-subtitle">
-            {MONTHS[month - 1]} {year} · {expenses.length} yozuv · jami{' '}
-            <strong className="tone-danger">{fmt(total)} so'm</strong>
-          </p>
-        </div>
-        {canAdd && (
+    <div className="page expense-studio">
+      <PageIntro title={<>Tashqi xarajatlar</>} description={<>{MONTHS[month - 1]} {year} · {expenses.length} yozuv · jami{' '}
+            <strong className="tone-danger">{fmt(total)} so'm</strong></>} actions={<>{canAdd && (
           <div className="header-actions">
             <select className="field-sm" value={month} onChange={e => setMonth(Number(e.target.value))} aria-label="Oy">
               {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
@@ -155,10 +150,10 @@ export default function Expenses({ currentUser }) {
               <FontAwesomeIcon icon={faPlus} /> Qo'shish
             </button>
           </div>
-        )}
-      </div>
+        )}</>} />
 
-      <div className="chart-card is-flush">
+      <SummaryRow items={[{ label: 'Jami xarajat', value: fmt(total), unit: 'so‘m', sub: MONTHS[month - 1] + ' ' + year }, { label: 'Xodim oyligi', value: fmt(expenses.filter(e => e.category === 'salary').reduce((n,e) => n + Number(e.amount), 0)), unit: 'so‘m' }, { label: 'Boshqa xarajatlar', value: fmt(expenses.filter(e => e.category !== 'salary').reduce((n,e) => n + Number(e.amount), 0)), unit: 'so‘m' }]} />
+      <div className="studio-section"><div className="studio-section-head"><div><h2>Xarajatlar daftari</h2><p>Har bir chiqimning sababi va hisoboti.</p></div><span>{expenses.length} yozuv</span></div>
         <DataTable
           columns={columns}
           rows={expenses}
