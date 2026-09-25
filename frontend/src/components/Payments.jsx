@@ -6,11 +6,12 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faTrash, faFileExcel, faCreditCard,
   faFilter, faPrint, faMoneyBillWave, faPen,
-  faTriangleExclamation, faList, faBolt, faBullseye,
+  faTriangleExclamation, faList, faBolt, faBullseye, faComment,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchPayments, createPayment, updatePayment, deletePayment, fetchStudents, fetchGroups,
   exportExcelUrl, receiptUrl, openDownload, fetchPaymentExpected, fetchStudentPaymentSummary,
+  fetchPaymentNotes, createPaymentNote, deletePaymentNote,
 } from '../api'
 import DateFilter from './DateFilter'
 import DataTable, { RowActions } from './ui/DataTable'
@@ -18,7 +19,7 @@ import ConfirmDialog from './ui/ConfirmDialog'
 import Badge from './ui/Badge'
 import { Metric, MetricStrip } from './ui/Metric'
 import Modal from './ui/Modal'
-import { Input, Select } from './ui/Field'
+import { Input, Select, Textarea } from './ui/Field'
 import { tashkentNow } from '../utils/datetime'
 
 const MONTHS = ['Yanvar','Fevral','Mart','Aprel','May','Iyun','Iyul','Avgust','Sentyabr','Oktyabr','Noyabr','Dekabr']
@@ -50,6 +51,41 @@ export default function Payments({ currentUser }) {
   const [quickPayLoading, setQuickPayLoading] = useState(null)   // student_id
   const [voidTarget, setVoidTarget] = useState(null)             // bekor qilinayotgan to'lov
 
+  // ── Qarzdorlik izohlari (hunter/call_center qo'ng'iroq eslatmalari) ──
+  const [noteStudent, setNoteStudent] = useState(null)   // izoh oynasi ochilgan talaba
+  const [notes, setNotes] = useState([])
+  const [notesLoading, setNotesLoading] = useState(false)
+  const [newNote, setNewNote] = useState('')
+  const [noteSaving, setNoteSaving] = useState(false)
+
+  async function openNotes(student) {
+    setNoteStudent(student)
+    setNewNote('')
+    setNotesLoading(true)
+    try {
+      setNotes(await fetchPaymentNotes(student.id))
+    } catch (e) { toast.error(e.message) }
+    finally { setNotesLoading(false) }
+  }
+
+  async function submitNote() {
+    if (!newNote.trim()) return
+    setNoteSaving(true)
+    try {
+      await createPaymentNote({ student_id: noteStudent.id, comment: newNote.trim() })
+      setNewNote('')
+      setNotes(await fetchPaymentNotes(noteStudent.id))
+    } catch (e) { toast.error(e.message) }
+    finally { setNoteSaving(false) }
+  }
+
+  async function removeNote(id) {
+    try {
+      await deletePaymentNote(id)
+      setNotes(prev => prev.filter(n => n.id !== id))
+    } catch (e) { toast.error(e.message) }
+  }
+
   useEffect(() => {
     fetchStudents({ page_size: 100 }).then(r => setStudents(r.items || []))
     fetchGroups({ page_size: 100 }).then(r => setGroups(r.items || []))
@@ -61,8 +97,20 @@ export default function Payments({ currentUser }) {
   async function loadStats(month = filter.month, year = filter.year) {
     setStatsLoading(true)
     try {
-      const r = await fetchStudents({ is_active: true, month, year, page_size: 100 })
-      setMonthStudents(r.items || [])
+      // page_size backendda 100 bilan cheklangan (le=100) — 100 dan ortiq faol
+      // talabasi bor markazda statistika noto'g'ri (kamaytirilgan) chiqmasligi
+      // uchun barcha sahifalar yig'ib olinadi.
+      const first = await fetchStudents({ is_active: true, month, year, page: 1, page_size: 100 })
+      let items = first.items || []
+      const totalPages = first.meta?.total_pages || 1
+      if (totalPages > 1) {
+        const rest = await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, i) =>
+            fetchStudents({ is_active: true, month, year, page: i + 2, page_size: 100 })),
+        )
+        for (const r of rest) items = items.concat(r.items || [])
+      }
+      setMonthStudents(items)
     } catch { /* jim — statistika ixtiyoriy */ }
     finally { setStatsLoading(false) }
   }
@@ -245,12 +293,12 @@ export default function Payments({ currentUser }) {
       key: 'actions', header: '', align: 'right', className: 'actions',
       render: p => (
         <RowActions>
-          <button className="btn-icon" title="Chek ko'rish" aria-label="Chek ko'rish"
-            onClick={() => openDownload(receiptUrl(p.id)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
-            <FontAwesomeIcon icon={faPrint} />
-          </button>
           {isAdmin && (
             <>
+              <button className="btn-icon" title="Chek ko'rish" aria-label="Chek ko'rish"
+                onClick={() => openDownload(receiptUrl(p.id)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
+                <FontAwesomeIcon icon={faPrint} />
+              </button>
               <button className="btn-icon" title="Tahrirlash" aria-label="Tahrirlash" onClick={() => handleEdit(p)}>
                 <FontAwesomeIcon icon={faPen} />
               </button>
@@ -301,9 +349,14 @@ export default function Payments({ currentUser }) {
     {
       key: 'actions', header: '', align: 'right', className: 'actions',
       render: s => (
-        <button className="btn-sm primary" disabled={quickPayLoading === s.id} onClick={() => quickPay(s)}>
-          <FontAwesomeIcon icon={faBolt} /> {quickPayLoading === s.id ? '...' : "To'liq to'lash"}
-        </button>
+        <span className="row-actions">
+          <button className="btn-sm" title="Izoh qoldirish" onClick={() => openNotes(s)}>
+            <FontAwesomeIcon icon={faComment} /> Izoh
+          </button>
+          <button className="btn-sm primary" disabled={quickPayLoading === s.id} onClick={() => quickPay(s)}>
+            <FontAwesomeIcon icon={faBolt} /> {quickPayLoading === s.id ? '...' : "To'liq to'lash"}
+          </button>
+        </span>
       ),
     },
   ]
@@ -321,9 +374,11 @@ export default function Payments({ currentUser }) {
             onChange={e => setFilter(p => ({ ...p, year: parseInt(e.target.value) }))}>
             {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-          <button className="button secondary" onClick={() => openDownload(exportExcelUrl(filter.month, filter.year)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
-            <FontAwesomeIcon icon={faFileExcel} /> Excel
-          </button>
+          {isAdmin && (
+            <button className="button secondary" onClick={() => openDownload(exportExcelUrl(filter.month, filter.year)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}>
+              <FontAwesomeIcon icon={faFileExcel} /> Excel
+            </button>
+          )}
           <button className="button" onClick={() => { setEditing(null); setForm(EMPTY); setModal(true) }}>
             <FontAwesomeIcon icon={faPlus} /> To'lov qo'shish
           </button>
@@ -480,6 +535,41 @@ export default function Payments({ currentUser }) {
 
         <Input label="Izoh" value={form.notes}
           onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} placeholder="Ixtiyoriy" />
+      </Modal>
+
+      <Modal
+        open={!!noteStudent}
+        title={noteStudent ? `Izohlar — ${noteStudent.full_name}` : 'Izohlar'}
+        onClose={() => setNoteStudent(null)}
+        footer={<button className="button secondary" onClick={() => setNoteStudent(null)}>Yopish</button>}
+      >
+        <Textarea label="Yangi izoh" rows={2} value={newNote}
+          placeholder="Masalan: 2 kundan keyin to'layman dedi / telefonni ko'tarmadi"
+          onChange={e => setNewNote(e.target.value)} />
+        <button className="button small" style={{ marginTop: 8 }} disabled={noteSaving || !newNote.trim()} onClick={submitNote}>
+          <FontAwesomeIcon icon={faPlus} /> {noteSaving ? 'Saqlanmoqda...' : "Qo'shish"}
+        </button>
+
+        <div className="note-list" style={{ marginTop: 16 }}>
+          {notesLoading ? (
+            <p className="text-muted">Yuklanmoqda...</p>
+          ) : notes.length === 0 ? (
+            <p className="text-muted">Hali izoh yo'q.</p>
+          ) : (
+            notes.map(n => (
+              <div key={n.id} className="note-item" style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <strong className="muted-sm">{n.created_by_name || '—'}</strong>
+                  <span className="muted-sm">{new Date(n.created_at).toLocaleString('uz-UZ')}</span>
+                </div>
+                <p style={{ margin: '4px 0 0' }}>{n.comment}</p>
+                <button className="btn-icon danger" title="O'chirish" onClick={() => removeNote(n.id)}>
+                  <FontAwesomeIcon icon={faTrash} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
       </Modal>
 
     </div>

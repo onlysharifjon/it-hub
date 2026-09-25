@@ -19,6 +19,8 @@ const TeacherSalaries = lazy(() => import('./components/TeacherSalaries'))
 const Salary = lazy(() => import('./components/Salary'))
 const TeacherDashboard = lazy(() => import('./components/TeacherDashboard'))
 const Expenses = lazy(() => import('./components/Expenses'))
+const Cashbox = lazy(() => import('./components/Cashbox'))
+const Computers = lazy(() => import('./components/Computers'))
 const Leads = lazy(() => import('./components/Leads'))
 const Tree = lazy(() => import('./components/Tree'))
 const WorkCenter = lazy(() => import('./components/WorkCenter'))
@@ -29,6 +31,7 @@ const FeedbackInbox = lazy(() => import('./components/FeedbackInbox'))
 const Notifications = lazy(() => import('./components/Notifications'))
 const ChatBot = lazy(() => import('./components/ChatBot'))
 const Parents = lazy(() => import('./components/Parents'))
+const MinarAccounts = lazy(() => import('./components/MinarAccounts'))
 import PublicIntake from './components/PublicIntake'
 const Employees = lazy(() => import('./components/Employees'))
 const AuditWarnings = lazy(() => import('./components/AuditWarnings'))
@@ -60,6 +63,7 @@ const PAGE_ACCESS = {
   teacher_salaries: ['admin'],
   salary:           ['admin'],
   expenses:         ['admin', 'hunter'],
+  cashbox:          ['admin'],
   tariffs:          ['admin'],
   courses:          ['admin'],
   finance:          ['admin'],
@@ -75,6 +79,8 @@ const PAGE_ACCESS = {
   notifications:    ['admin', 'hunter', 'sales', 'call_center'],
   chatbot:          ['admin', 'hunter'],
   parents:          ['admin', 'hunter'],
+  minar_accounts:   ['admin', 'support_teacher'],
+  computers:        ['admin', 'hunter'],
   feedbacks:        ['admin', 'call_center'],
   academic:         ['admin', 'support_teacher', 'teacher'],
   employees:        ['admin', 'audit'],
@@ -312,6 +318,8 @@ function App() {
           {activePage === 'teacher_salaries' && <TeacherSalaries />}
           {activePage === 'salary' && <Salary />}
           {activePage === 'expenses' && <Expenses currentUser={currentUser} />}
+          {activePage === 'cashbox' && <Cashbox onNavigate={handleNavigate} />}
+          {activePage === 'computers' && <Computers />}
           {activePage === 'tariffs' && <Tariffs />}
           {activePage === 'courses' && <Courses />}
           {activePage === 'finance' && <Finance onNavigate={handleNavigate} />}
@@ -345,6 +353,7 @@ function App() {
           {activePage === 'notifications' && <Notifications />}
           {activePage === 'chatbot' && <ChatBot />}
           {activePage === 'parents' && <Parents currentUser={currentUser} />}
+          {activePage === 'minar_accounts' && <MinarAccounts currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
           {activePage === 'employees' && <Employees currentUser={currentUser} />}
           {activePage === 'audit_warnings' && <AuditWarnings currentUser={currentUser} />}

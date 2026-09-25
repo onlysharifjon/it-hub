@@ -9,10 +9,12 @@ Har bir kelgan lid ikki joyga yoziladi:
   1. facebook_leads — xom capture jadvali (dedup/audit uchun).
   2. leads (CRM) — Lidlar bo'limida hunter/sales/call_center ko'radigan asosiy
      jadval, "Facebook" manba (LeadSource) bilan, umumiy havzaga (is_shared=True).
-CRM lead faqat BIRINCHI (dublikat bo'lmagan) so'rovda yaratiladi — keyingi
-takroriy so'rovlar xodimlar tomonidan kiritilgan qo'lda ma'lumotlarni
-(masalan yozgan izohlarini) bosib yozib yubormasligi uchun CRM tomonini
-qayta yangilamaydi, faqat xom facebook_leads yozuvini merge qiladi.
+CRM lead faqat raqam bazada YO'Q bo'lsa yaratiladi. Raqam allaqachon bo'lsa
+(qaysi bosqichda bo'lishidan qat'i nazar — "Demo"da ham, "Rad etildi"da ham)
+yangi lid OCHILMAYDI: takroriy ariza mavjud lidning tarixiga va izohiga
+yoziladi, xodimlarga bildirishnoma ketadi. Aks holda bitta odam bir vaqtning
+o'zida "Yangi" va "Demo" ustunlarida turib, ikki xodim unga qo'ng'iroq qilardi.
+Xodim qo'lda yozgan izohlar hech qachon bosib yozilmaydi.
 
 Telefon raqami: ba'zi Facebook formalar faqat email so'raydi, telefon
 umuman kelmasligi mumkin — bunday holda ham lid rad etilmaydi (422 emas),
@@ -164,8 +166,7 @@ def _crm_recipient_ids(db: Session):
 
 def _create_crm_lead(db: Session, *, full_name: Optional[str], phone: str,
                       email: Optional[str], form_name: Optional[str],
-                      created_time_raw: Optional[str], phone_missing: bool = False,
-                      existing_lead: Optional[models.Lead] = None) -> models.Lead:
+                      created_time_raw: Optional[str], phone_missing: bool = False) -> models.Lead:
     source = _get_or_create_facebook_source(db)
     # Takroriy ariza ham oddiy lid — u birinchi bosqichga ("Yangi") tushadi.
     # Ilgari bu yerda avtomatik yaratiladigan "Qayta ariza" bosqichi bor edi:
@@ -176,11 +177,6 @@ def _create_crm_lead(db: Session, *, full_name: Optional[str], phone: str,
     owner_id = _system_user_id(db)
 
     notes_lines = ["Facebook Lead Ads orqali (Make.com webhook) avtomatik yaratildi."]
-    if existing_lead is not None:
-        notes_lines.append(
-            f"DIQQAT: bu raqam bazada allaqachon bor edi (lid #{existing_lead.id}, "
-            f"bosqich: {existing_lead.status}) — takroriy ariza."
-        )
     if phone_missing:
         notes_lines.append(
             "DIQQAT: Facebook'dan telefon raqami kelmagan (forma faqat email so'ragan bo'lishi mumkin) — "
@@ -231,6 +227,48 @@ def _create_crm_lead(db: Session, *, full_name: Optional[str], phone: str,
                 is_read=False, created_at=now,
             ))
     return lead
+
+
+def _register_repeat_application(db: Session, lead: models.Lead, *, full_name: Optional[str],
+                                 phone: str, email: Optional[str], form_name: Optional[str],
+                                 created_time_raw: Optional[str]) -> None:
+    """Raqam bazada allaqachon bor — YANGI lid ochilmaydi.
+
+    Bir raqam CRM'da faqat bitta qator bo'lishi kerak: aks holda o'sha odam
+    "Demo"da ham, "Yangi"da ham turib, ikki xodim bir mijozga qo'ng'iroq
+    qiladi. Shuning uchun takroriy ariza mavjud lidning tarixiga (timeline)
+    va izohiga yoziladi, xodimlarga bildirishnoma ketadi — lid esa o'z
+    bosqichida qoladi, "Yangi"ga qaytmaydi.
+    """
+    now = datetime.utcnow()
+    bits = [f"Facebook'dan takroriy ariza ({now.strftime('%Y-%m-%d %H:%M')} UTC) — yangi lid ochilmadi."]
+    if full_name and full_name != lead.full_name:
+        bits.append(f"Formada ko'rsatilgan ism: {full_name}")
+    if email:
+        bits.append(f"Email: {email}")
+    if form_name:
+        bits.append(f"Forma: {form_name}")
+    if created_time_raw:
+        bits.append(f"Facebook'da yaratilgan vaqt: {created_time_raw}")
+    note_block = "\n".join(bits)
+    lead.notes = f"{lead.notes}\n\n{note_block}" if lead.notes else note_block
+
+    db.add(models.LeadActivity(
+        lead_id=lead.id,
+        action="duplicate",
+        description=note_block,
+        author_id=None,
+        created_at=now,
+    ))
+    recipients = _crm_recipient_ids(db)
+    for uid in set(recipients):
+        db.add(models.Notification(
+            user_id=uid, notification_type="new_lead",
+            title="Takroriy ariza (raqam bazada bor)",
+            body=f"{lead.full_name} · {phone} — lid #{lead.id}, bosqich: {lead.status}",
+            link=f"/leads?lead={lead.id}",
+            is_read=False, created_at=now,
+        ))
 
 
 @router.post("/leads/facebook")
@@ -303,17 +341,28 @@ def receive_facebook_lead(
         phone_missing = fb_lead.phone is None
         crm_phone = fb_lead.phone or f"no-phone-{fb_lead.id}"
         existing_lead = None if phone_missing else _existing_lead_by_phone(db, crm_phone)
-        crm_lead = _create_crm_lead(
-            db,
-            full_name=fb_lead.full_name,
-            phone=crm_phone,
-            email=fb_lead.email,
-            form_name=fb_lead.form_name,
-            created_time_raw=payload.created_time,
-            phone_missing=phone_missing,
-            existing_lead=existing_lead,
-        )
-        fb_lead.lead_id = crm_lead.id
+        if existing_lead is not None:
+            # Bir raqam — bitta lid. Takroriy ariza mavjud lidga yoziladi.
+            _register_repeat_application(
+                db, existing_lead,
+                full_name=fb_lead.full_name,
+                phone=crm_phone,
+                email=fb_lead.email,
+                form_name=fb_lead.form_name,
+                created_time_raw=payload.created_time,
+            )
+            fb_lead.lead_id = existing_lead.id
+        else:
+            crm_lead = _create_crm_lead(
+                db,
+                full_name=fb_lead.full_name,
+                phone=crm_phone,
+                email=fb_lead.email,
+                form_name=fb_lead.form_name,
+                created_time_raw=payload.created_time,
+                phone_missing=phone_missing,
+            )
+            fb_lead.lead_id = crm_lead.id
         db.commit()
         db.refresh(fb_lead)
     except SQLAlchemyError:
@@ -321,5 +370,8 @@ def receive_facebook_lead(
         logger.exception("Bazaga yozishda xatolik: phone=%s", raw_phone)
         raise HTTPException(status_code=400, detail="Lidni saqlab bo'lmadi")
 
-    logger.info("Saqlandi: facebook_lead_id=%s lead_id=%s phone=%s", fb_lead.id, fb_lead.lead_id, fb_lead.phone)
-    return {"status": "ok", "lead_id": fb_lead.id}
+    logger.info(
+        "Saqlandi: facebook_lead_id=%s lead_id=%s phone=%s duplicate_phone=%s",
+        fb_lead.id, fb_lead.lead_id, fb_lead.phone, existing_lead is not None,
+    )
+    return {"status": "ok", "lead_id": fb_lead.id, "duplicate_phone": existing_lead is not None}

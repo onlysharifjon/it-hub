@@ -5,6 +5,7 @@ from typing import Optional, List, Literal
 from pydantic import BaseModel, Field, validator
 
 from .models import UserRole, LeadStatus
+from . import uploads_sign
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -34,6 +35,11 @@ class UserRead(BaseModel):
     blocked_at:      Optional[datetime] = None
     expires_at:      Optional[datetime] = None
     created_at: datetime
+
+    # /uploads faqat imzoli havola bilan ochiladi (backend/uploads_sign.py)
+    @validator("avatar")
+    def _sign_avatar(cls, v):
+        return uploads_sign.sign(v)
 
     class Config:
         orm_mode = True
@@ -1074,6 +1080,10 @@ class PaymentCreate(BaseModel):
 
 
 class PaymentUpdate(BaseModel):
+    # student_id/group_id ataylab kiritilmagan: to'lov tahrirlanganda talaba/guruh
+    # o'zgartirib bo'lmasligi kerak (main.py:update_payment create_payment'dagi kabi
+    # a'zolik/guruh holatini qayta tekshirmaydi — shu maydonlarning yo'qligi
+    # yagona himoya). Kengaytirsangiz, update_payment'ga ham mos tekshiruv qo'shing.
     amount: Optional[Decimal] = Field(None, gt=0, le=_MAX_MONEY)
     month: Optional[int] = Field(None, ge=1, le=12)
     year: Optional[int] = Field(None, ge=2020)
@@ -1130,6 +1140,7 @@ class SalaryStaffRow(BaseModel):
     auto_salary: Optional[Decimal] = None         # faqat o'qituvchi uchun — formula bo'yicha hisob (override bo'lsa ham)
     is_internship: bool = False                   # shu oy uchun "stajirovka" belgilangan — oylik 0
     has_override: bool = False                    # shu oy uchun qo'lda override mavjud (auto emas)
+    is_active: bool = True                        # False — xodim bloklangan (qarzi yopilmagani uchun ro'yxatda)
 
 
 class SalaryOverview(BaseModel):
@@ -1563,6 +1574,20 @@ class TeacherFeedbackUpdate(BaseModel):
     comment: str = Field(..., min_length=2)
 
 
+class PaymentNoteRead(BaseModel):
+    id: int
+    student_id: int
+    student_name: Optional[str] = None
+    comment: str
+    created_by_name: Optional[str] = None
+    created_at: datetime
+
+
+class PaymentNoteCreate(BaseModel):
+    student_id: int
+    comment: str = Field(..., min_length=2)
+
+
 class CertificateRead(BaseModel):
     id: int
     student_id: int
@@ -1664,6 +1689,7 @@ class StaffOption(BaseModel):
     username: str
     role: str
     telegram_chat_id: Optional[str] = None
+    is_active: bool = True
 
     class Config:
         orm_mode = True
@@ -1792,3 +1818,31 @@ class BotMessageRead(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+# ── Kompyuter berish (bron) ──────────────────────────────────────────────────
+
+class ComputerCreate(BaseModel):
+    number: int = Field(..., ge=1, le=9999)
+    name: Optional[str] = Field(None, max_length=120)
+    note: Optional[str] = None
+
+
+class ComputerUpdate(BaseModel):
+    number: Optional[int] = Field(None, ge=1, le=9999)
+    name: Optional[str] = Field(None, max_length=120)
+    note: Optional[str] = None
+
+
+class ComputerGive(BaseModel):
+    student_id: int
+    note: Optional[str] = None
+
+
+class ComputerReturn(BaseModel):
+    note: Optional[str] = None
+
+
+class ComputerBulkCreate(BaseModel):
+    number_from: int = Field(..., ge=1, le=9999)
+    number_to: int = Field(..., ge=1, le=9999)

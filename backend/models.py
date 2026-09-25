@@ -169,6 +169,9 @@ class Group(Base):
     lesson_time = Column(String(5), nullable=True)  # dars boshlanish vaqti, masalan "14:00"
     start_date = Column(DateTime, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Guruh arxivlangan (is_active=False) payt. Qarz hisobi shu oygacha davom
+    # etadi — arxivlangan guruhning o'tgan oylari unutilmaydi (core_calc.group_billable_in).
+    closed_at = Column(DateTime, nullable=True)
     telegram_chat_id = Column(String(50), nullable=True)   # guruhning Telegram chat ID'si (uy vazifasi boti uchun)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
@@ -186,6 +189,10 @@ class GroupStudent(Base):
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
     tariff_id = Column(Integer, ForeignKey("tariffs.id"), nullable=True)
     joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # NULL = hozir ham faol a'zo. Talaba guruhdan chiqarilganda/o'tkazilganda
+    # qator o'CHIRILMAYDI — shu yerga vaqt belgilanadi (tarix saqlanishi uchun,
+    # ko'ring: core_calc.student_cumulative_owed, main.py:_finance_month).
+    left_at = Column(DateTime, nullable=True)
 
     group = relationship("Group", back_populates="members")
     student = relationship("Student", back_populates="group_memberships")
@@ -209,6 +216,22 @@ class Payment(Base):
     student = relationship("Student", back_populates="payments")
     group = relationship("Group", back_populates="payments")
     recorded_by = relationship("User", foreign_keys=[recorded_by_id])
+
+
+class PaymentNote(Base):
+    """To'lov/qarzdorlik bo'yicha izoh — hunter/call_center qo'ng'iroq natijasini
+    yozib qo'yishi uchun (masalan: "2 kundan keyin to'layman dedi",
+    "telefonni ko'tarmadi"). Muayyan to'lov emas, talabaga bog'liq."""
+    __tablename__ = "payment_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    comment = Column(Text, nullable=False)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    student = relationship("Student", foreign_keys=[student_id])
+    created_by = relationship("User", foreign_keys=[created_by_id])
 
 
 class CameraAttendance(Base):
@@ -950,3 +973,46 @@ class WorkTask(Base):
     assigned_to = relationship("User", foreign_keys=[assigned_to_id])
     created_by = relationship("User", foreign_keys=[created_by_id])
     completed_by = relationship("User", foreign_keys=[completed_by_id])
+
+
+class Computer(Base):
+    """Markazdagi kompyuter — talabaga vaqtincha (bron) beriladi.
+
+    `number` — kompyuter ustiga yopishtirilgan raqam ("5-kompyuter"), noyob.
+    O'chirilgan kompyuter bazadan ketmaydi (`is_active=False`) — eski berish
+    tarixida "qaysi raqamli kompyuter edi" degan javob saqlanib qolishi kerak.
+    """
+    __tablename__ = "computers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    number = Column(Integer, nullable=False, unique=True, index=True)
+    name = Column(String(120), nullable=True)          # masalan "Lenovo i5"
+    note = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    rentals = relationship("ComputerRental", back_populates="computer")
+
+
+class ComputerRental(Base):
+    """Bitta berish: qaysi kompyuter, kimga, soat nechida berildi va olindi.
+
+    `returned_at IS NULL` — kompyuter hozir talabada. Bir kompyuterda bir
+    vaqtda faqat bitta ochiq yozuv bo'ladi (endpoint tekshiradi).
+    """
+    __tablename__ = "computer_rentals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    computer_id = Column(Integer, ForeignKey("computers.id"), nullable=False, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False, index=True)
+    given_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    returned_at = Column(DateTime, nullable=True, index=True)
+    given_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    returned_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    note = Column(Text, nullable=True)
+    return_note = Column(Text, nullable=True)
+
+    computer = relationship("Computer", back_populates="rentals")
+    student = relationship("Student")
+    given_by = relationship("User", foreign_keys=[given_by_id])
+    returned_by = relationship("User", foreign_keys=[returned_by_id])

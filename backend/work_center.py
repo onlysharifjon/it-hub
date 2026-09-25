@@ -342,7 +342,8 @@ def _gen_debtors(db: Session, now_local: datetime, payment_map_fn) -> list:
         owed, paid, debt, status, _adv = pay.get(s.id, (Decimal(0),) * 5)
         if status not in ("debtor", "partial") or debt <= 0:
             continue
-        groups = [m.group.name for m in s.group_memberships if m.group and m.group.is_active]
+        groups = [m.group.name for m in s.group_memberships
+                 if m.group and m.group.is_active and m.left_at is None]
         out.append(Task(
             source_key=f"payment:student:{s.id}:{year}-{month:02d}",
             task_type=PAYMENT_REMINDER,

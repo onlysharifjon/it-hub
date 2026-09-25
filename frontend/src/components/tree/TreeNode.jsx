@@ -1,6 +1,6 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faUsers, faPhone, faCalendarCheck, faVideo, faGraduationCap,
+  faUsers, faPhone, faPhoneSlash, faCalendarCheck, faVideo, faGraduationCap,
   faCircleXmark, faCircleQuestion, faCircle,
 } from '@fortawesome/free-solid-svg-icons'
 import { NODE_W, NODE_H, stageColor } from './layout'
@@ -19,8 +19,9 @@ import { NODE_W, NODE_H, stageColor } from './layout'
 // Ikonka bosqich SLUG'iga qarab tanlanadi, nomiga emas: admin bosqichni
 // qayta nomlasa ham ikonka o'z joyida qoladi.
 const ICONS = {
-  new: faUsers, called: faPhone, callback: faPhone, will_come: faCalendarCheck,
-  demo: faVideo, enrolled: faGraduationCap, rejected: faCircleXmark,
+  new: faUsers, called: faPhone, no_answer: faPhoneSlash, callback: faPhone,
+  will_come: faCalendarCheck, demo: faVideo, enrolled: faGraduationCap,
+  rejected: faCircleXmark,
 }
 function iconFor(node) {
   if (node.slug && ICONS[node.slug]) return ICONS[node.slug]

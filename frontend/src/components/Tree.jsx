@@ -51,6 +51,10 @@ export default function Tree({ currentUser }) {
   const [err, setErr] = useState(null)
   const [selection, setSelection] = useState(null)
   const canvasLayout = useCanvasLayout('minar:conversion-layout:v1:' + (currentUser?.id ?? 'local'))
+  // Eksport — sales uchun yopiq. Sales voronkaning BUTUN kesimini ko'radi
+  // (bu jamoaviy oqim, shaxsiy natija emas), lekin uni fayl qilib olib
+  // chiqishi kerak emas: butun lid bazasining kesimi bitta faylga sig'adi.
+  const canExport = currentUser?.role !== 'sales'
   const [mapView, setMapView] = useState(() => window.matchMedia('(max-width:760px)').matches ? 'list' : 'canvas')
   const [full, setFull] = useState(false)
   const fullRef = useRef(null)
@@ -123,7 +127,7 @@ export default function Tree({ currentUser }) {
   }
 
   function exportCsv() {
-    if (!data) return
+    if (!data || !canExport) return
     const rows = [
       ['TREE — konversiya hisoboti'],
       ['Davr', `${MONTHS[month - 1]} ${year}`],
@@ -188,9 +192,11 @@ export default function Tree({ currentUser }) {
           <FontAwesomeIcon icon={faChevronRight} />
         </button>
       </div>
-      <button className="button secondary" onClick={exportCsv} disabled={!data}>
-        <FontAwesomeIcon icon={faFileArrowDown} /> Export
-      </button>
+      {canExport && (
+        <button className="button secondary" onClick={exportCsv} disabled={!data}>
+          <FontAwesomeIcon icon={faFileArrowDown} /> Export
+        </button>
+      )}
       <button className="button secondary" onClick={() => setFull(f => !f)}>
         <FontAwesomeIcon icon={full ? faCompress : faExpand} />
         {full ? ' Chiqish' : " To'liq ekran"}
@@ -212,11 +218,30 @@ export default function Tree({ currentUser }) {
     if (all.length <= 10) return { shownTransitions: all, minorCount: 0 }
     const threshold = Math.max(2, Math.round(data.total_leads * 0.01))
     const minor = all.filter(t => t.count < threshold && t.kind !== 'won')
-    if (showMinor || minor.length === 0) return { shownTransitions: all, minorCount: minor.length }
-    const hide = new Set(minor.map(t => `${t.from_key}->${t.to_key}`))
+    if (minor.length === 0) return { shownTransitions: all, minorCount: 0 }
+    const key = t => `${t.from_key}->${t.to_key}`
+    const hide = new Set(minor.map(key))
+
+    /* YETIM TUGUN BO'LMASIN.
+       Yangi bosqichga (masalan "Javob bermadi") birinchi lid o'tganda uning
+       yagona o'tishi DOIM 1 ta bo'ladi, ya'ni "kichik oqim" deb yashirilardi.
+       Natijada xaritada lidi bor tugun turardi-yu, unga boradigan chiziq
+       yo'q edi — bu shovqinni kamaytirish emas, xatoga o'xshab ko'rinadi.
+       Shuning uchun: lidi bor har bir tugun kamida BITTA chiziq bilan
+       bog'langan bo'lishi shart — agar barcha bog'lanishi yashirilgan
+       bo'lsa, eng kattasi qaytariladi. */
+    const touches = (t, k) => t.from_key === k || t.to_key === k
+    for (const st of data.stages) {
+      if (!st.count) continue                       // lidi yo'q bosqich — chizig'i ham yo'q
+      const linked = all.filter(t => touches(t, st.key))
+      if (!linked.length || linked.some(t => !hide.has(key(t)))) continue
+      const strongest = linked.reduce((a, b) => (b.count > a.count ? b : a))
+      hide.delete(key(strongest))
+    }
+
     return {
-      shownTransitions: all.filter(t => !hide.has(`${t.from_key}->${t.to_key}`)),
-      minorCount: minor.length,
+      shownTransitions: showMinor ? all : all.filter(t => !hide.has(key(t))),
+      minorCount: hide.size,
     }
   }, [data, showMinor])
 

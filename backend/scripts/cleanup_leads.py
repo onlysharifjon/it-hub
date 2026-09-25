@@ -3,6 +3,7 @@
 Bajaradi:
   1. Dublikat lidlarni birlashtiradi (telefon formatlash farqi tufayli
      to'plangan — Facebook webhook aynan matn bo'yicha solishtirar edi).
+  1b. Har bir lidning `phone_key` dedup kalitini telefondan qayta hisoblaydi.
   2. Egasi o'chirilgan foydalanuvchiga ishora qiluvchi lidlarni tizim
      adminiga bog'laydi.
   3. Yetim bildirishnoma va eslatmalarni o'chiradi.
@@ -23,19 +24,32 @@ from .. import models
 from ..models import UserRole
 from ..phone_utils import dedup_key
 
-# Bosqich turi bo'yicha ustunlik: to'lagan > jarayonda > rad etilgan
-KIND_RANK = {"won": 3, "lead": 2, "lost": 1}
+def _first_stage_id(db: Session):
+    """Voronkaning birinchi ("Yangi") ustuni — hali ishlanmagan lidlar shu yerda."""
+    st = (
+        db.query(models.LeadStage)
+        .filter(models.LeadStage.is_archived == False, models.LeadStage.kind == "lead")  # noqa: E712
+        .order_by(models.LeadStage.order.asc()).first()
+    )
+    return st.id if st else None
 
 
-def _rank(lead: models.Lead, stages: dict) -> tuple:
-    st = stages.get(lead.stage_id)
-    kind_rank = KIND_RANK.get(st.kind if st else "lead", 2)
-    order = st.order if st else 0
-    return (kind_rank, order, lead.created_at or datetime.min)
+def _rank(lead: models.Lead, first_stage_id) -> tuple:
+    """Dublikatlar ichidan qaysi yozuv ASOSIY bo'lib qolishi (kattasi yutadi).
+
+    1. "Yangi" ustunidagi yozuv har doim yutqazadi — bir raqam bo'yicha ish
+       allaqachon boshlangan bo'lsa (Demo, Rad etildi, To'landi...), takroriy
+       yozuv aynan "Yangi lidlar"dan yo'qolishi kerak.
+    2. Qolganida birinchi ro'yxatga olingani (eng eskisi) qoladi — qo'ng'iroq
+       tarixi, eslatmalar va izohlar o'shanda to'plangan.
+    """
+    worked = 0 if lead.stage_id == first_stage_id else 1
+    created = lead.created_at or datetime.max
+    return (worked, -created.timestamp())
 
 
 def merge_duplicates(db: Session, apply: bool) -> int:
-    stages = {s.id: s for s in db.query(models.LeadStage).all()}
+    first_stage_id = _first_stage_id(db)
     groups = defaultdict(list)
     for lead in db.query(models.Lead).all():
         key = dedup_key(lead.phone)
@@ -47,7 +61,7 @@ def merge_duplicates(db: Session, apply: bool) -> int:
         if len(leads) < 2:
             continue
         # Eng "uzoqqa borgan" yozuvni saqlaymiz, qolganlarini unga qo'shamiz
-        leads.sort(key=lambda l: _rank(l, stages), reverse=True)
+        leads.sort(key=lambda l: _rank(l, first_stage_id), reverse=True)
         keeper, losers = leads[0], leads[1:]
         for loser in losers:
             note_lines = [
@@ -72,6 +86,17 @@ def merge_duplicates(db: Session, apply: bool) -> int:
             db.query(models.FacebookLead).filter(
                 models.FacebookLead.lead_id == loser.id
             ).update({"lead_id": keeper.id}, synchronize_session=False)
+            # Qo'ng'iroq tarixi va Ish markazi vazifalari lidga FK bilan emas,
+            # (entity_type, entity_id) juftligi bilan bog'langan — ular ham
+            # ko'chirilmasa, lid o'chgach yetim qolib, tarixdan yo'qoladi.
+            db.query(models.CallActivity).filter(
+                models.CallActivity.entity_type == "lead",
+                models.CallActivity.entity_id == loser.id,
+            ).update({"entity_id": keeper.id}, synchronize_session=False)
+            db.query(models.WorkTask).filter(
+                models.WorkTask.entity_type == "lead",
+                models.WorkTask.entity_id == loser.id,
+            ).update({"entity_id": keeper.id}, synchronize_session=False)
 
             # Bo'sh maydonlarni dublikatdagi ma'lumot bilan to'ldiramiz
             for field in ("callback_at", "date_of_birth", "parent_phone",
@@ -92,6 +117,26 @@ def merge_duplicates(db: Session, apply: bool) -> int:
     if apply:
         db.commit()
     return merged
+
+
+def backfill_phone_keys(db: Session, apply: bool) -> int:
+    """`phone_key` bo'sh yoki telefondan farq qiladigan lidlarni to'g'rilaydi.
+
+    Dublikat tekshiruvi shu ustun indeksi bo'yicha ishlaydi: kaliti bo'sh lid
+    "ko'rinmas" bo'lib qoladi va o'sha raqam ikkinchi marta ro'yxatga tushadi.
+    """
+    fixed = 0
+    for lead in db.query(models.Lead).all():
+        want = dedup_key(lead.phone)
+        if lead.phone_key == want:
+            continue
+        print(f"  #{lead.id} {lead.phone!r}: {lead.phone_key!r} -> {want!r}")
+        fixed += 1
+        if apply:
+            lead.phone_key = want
+    if apply:
+        db.commit()
+    return fixed
 
 
 def fix_orphan_owners(db: Session, apply: bool) -> int:
@@ -220,13 +265,16 @@ def main():
         print("1. Dublikat lidlarni birlashtirish")
         n1 = merge_duplicates(db, apply)
         print(f"   -> {n1} ta yozuv birlashtirildi\n")
-        print("2. Egasi o'chirilgan lidlar")
+        print("2. phone_key (dedup kaliti) to'ldirish")
+        n0 = backfill_phone_keys(db, apply)
+        print(f"   -> {n0} ta lid to'g'rilandi\n")
+        print("3. Egasi o'chirilgan lidlar")
         n2 = fix_orphan_owners(db, apply)
         print()
-        print("3. Yetim bildirishnoma/eslatmalar")
+        print("4. Yetim bildirishnoma/eslatmalar")
         n3 = drop_orphan_rows(db, apply)
         print()
-        print("4. Referral statistikasini qayta hisoblash")
+        print("5. Referral statistikasini qayta hisoblash")
         n4 = recompute_referrals(db, apply)
         print(f"   -> {n4} ta qator o'zgardi\n")
         if not apply:

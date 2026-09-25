@@ -4,7 +4,8 @@ import {
   faChalkboardTeacher, faReceipt, faHeadset, faBullseye, faStar,
   faRightLeft, faBookOpen, faGraduationCap, faCommentDots, faPeopleRoof,
   faTriangleExclamation, faRobot, faComments, faMoneyBillWave,
-  faSitemap, faListCheck, faUsersGear,
+  faSitemap, faListCheck, faUsersGear, faCashRegister, faDesktop,
+  faRocket,
 } from '@fortawesome/free-solid-svg-icons'
 
 /**
@@ -68,6 +69,7 @@ export const NAV_GROUPS = [
       { key: 'chatbot',       label: 'Chatbot',       icon: faComments,    tone: TONE.chatbot,       roles: ['hunter', 'admin'] },
       { key: 'feedbacks',     label: 'Izohlar',       icon: faCommentDots, tone: TONE.notifications, roles: ['call_center', 'admin'], badge: 'feedback' },
       { key: 'parents',       label: 'Ota-onalar',    icon: faPeopleRoof,  tone: TONE.students,      roles: ['hunter', 'admin'] },
+      { key: 'computers',     label: 'Kompyuterlar',  icon: faDesktop,     tone: TONE.groups,        roles: ['hunter', 'admin'] },
     ],
   },
   {
@@ -79,6 +81,7 @@ export const NAV_GROUPS = [
       { key: 'today_attendance', label: 'Bugungi darslar', icon: faCalendarCheck,   tone: TONE.attendance, roles: EXCEPT('audit') },
       { key: 'academic',         label: 'Baholar va izohlar', icon: faGraduationCap, tone: TONE.academic,   roles: ['admin', 'support_teacher', 'teacher'] },
       { key: 'lessons',          label: 'Dars rejalari',  icon: faBook,             tone: TONE.academic,   roles: ['admin', 'support_teacher', 'teacher'], expandable: 'categories' },
+      { key: 'minar_accounts',   label: 'Minar Space',    icon: faRocket,           tone: TONE.students,   roles: ['admin', 'support_teacher'] },
     ],
   },
   {
@@ -87,6 +90,7 @@ export const NAV_GROUPS = [
     items: [
       { key: 'payments',         label: "To'lovlar",         icon: faCreditCard,     tone: TONE.payments, roles: ['admin', 'hunter'] },
       { key: 'expenses',         label: 'Xarajatlar',        icon: faReceipt,        tone: TONE.expenses, roles: ['admin', 'hunter'] },
+      { key: 'cashbox',          label: 'Kassa',             icon: faCashRegister,   tone: TONE.payments, roles: ['admin'] },
       { key: 'finance',          label: 'Moliya hisoboti',   icon: faWallet,         tone: TONE.finance,  roles: ['admin'] },
       { key: 'tariffs',          label: 'Tariflar',          icon: faTag,            tone: TONE.finance,  roles: ['admin'] },
       { key: 'courses',          label: 'Kurslar',           icon: faBookOpen,       tone: TONE.finance,  roles: ['admin'] },

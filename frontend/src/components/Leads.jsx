@@ -14,7 +14,7 @@ import {
   faHourglassHalf, faPaperPlane, faArrowDownWideShort, faArrowUpWideShort,
 } from '@fortawesome/free-solid-svg-icons'
 import {
-  fetchLeads, createLead, updateLead, addLeadNote, convertLead, moveLeadStage, deleteLead,
+  fetchLeads, createLead, updateLead, checkLeadPhone, addLeadNote, convertLead, moveLeadStage, deleteLead,
   fetchLeadStages, createLeadStage, updateLeadStage, reorderLeadStages, deleteLeadStage,
   fetchLeadSources, fetchLeadActivities, fetchLeadAnalytics, fetchCommentStats,
   fetchReminders, createReminder, updateReminder, deleteReminder,
@@ -109,6 +109,7 @@ export default function Leads({ currentUser }) {
   const [saving, setSaving] = useState(false)
 
   const [drawer, setDrawer]         = useState(null)   // lead object
+  const [metricModal, setMetricModal] = useState(null) // sarlavhadagi raqam bosilgani — tafsilot oynasi
   const [activities, setActivities] = useState([])
   const [stageModal, setStageModal] = useState(false)
   const [formModal, setFormModal]   = useState(false)
@@ -118,6 +119,7 @@ export default function Leads({ currentUser }) {
   const [groups, setGroups]         = useState([])
   const [tariffs, setTariffs]       = useState([])
   const [editLead, setEditLead]     = useState(null)   // tahrirlanayotgan lid
+  const [phoneDup, setPhoneDup]     = useState(null)   // shu raqam bilan bazada turgan lid
   const [convertFor, setConvertFor] = useState(null)   // talabaga aylantirilayotgan lid
 
   const [dragId, setDragId]       = useState(null)
@@ -132,6 +134,29 @@ export default function Leads({ currentUser }) {
   const searchSkipFirst = useRef(true)
 
   useEffect(() => { boot() }, [])
+
+  // Bir raqam — bitta lid. Raqam yozilayotgan paytda bazadagi mavjud yozuvni
+  // ko'rsatamiz: xodim butun formani to'ldirib bo'lib 409 xatoga urilmasin va
+  // ayni odam ikkinchi marta "Yangi lidlar"ga tushib qolmasin.
+  const dupPhone   = addModal ? form.phone : (editLead ? editLead.phone : '')
+  const dupExclude = addModal ? null : (editLead ? editLead.id : null)
+  useEffect(() => {
+    const digits = (dupPhone || '').replace(/\D/g, '')
+    if (digits.length < 7) { setPhoneDup(null); return }
+    let alive = true
+    const t = setTimeout(() => {
+      checkLeadPhone(dupPhone.trim(), dupExclude)
+        .then(r => { if (alive) setPhoneDup(r.duplicate ? r.lead : null) })
+        .catch(() => { if (alive) setPhoneDup(null) })
+    }, 400)
+    return () => { alive = false; clearTimeout(t) }
+  }, [dupPhone, dupExclude])
+
+  const dupMessage = phoneDup
+    ? `Bu raqam bazada bor: ${phoneDup.full_name} (#${phoneDup.id}` +
+      `${phoneDup.stage_name ? ', ' + phoneDup.stage_name : ''}` +
+      `${phoneDup.claimed_by_name ? ', mas’ul: ' + phoneDup.claimed_by_name : ''}) — takroriy lid ochilmaydi`
+    : null
 
   // Debounced live search (Enter still triggers immediately via onKeyDown)
   useEffect(() => {
@@ -202,6 +227,7 @@ export default function Leads({ currentUser }) {
     if (!form.phone.trim()) errs.phone = 'Telefon majburiy'
     setFormErrors(errs)
     if (Object.keys(errs).length) return
+    if (dupMessage) return toast.error(dupMessage)
     setSaving(true)
     try {
       await createLead({
@@ -260,6 +286,7 @@ export default function Leads({ currentUser }) {
     if (!editLead) return
     if (!editLead.full_name.trim()) return toast.error('Ism majburiy')
     if (!editLead.phone.trim()) return toast.error('Telefon majburiy')
+    if (dupMessage) return toast.error(dupMessage)
     setSaving(true)
     try {
       const updated = await updateLead(editLead.id, {
@@ -342,6 +369,38 @@ export default function Leads({ currentUser }) {
   const visibleStages = stages.filter(s => !s.is_archived)
   const byStage = (sid) => leads.filter(l => l.stage_id === sid)
 
+  // ── Sarlavhadagi ko'rsatkichlar ────────────────────────────────────────
+  // Har bir raqam bosiladi va ORTIDAGI LIDLARNI ko'rsatadi: raqamning o'zi
+  // "9 ta jarayonda" deydi, lekin menejerga kerak bo'ladigan savol —
+  // "aynan qaysi 9 tasi?". Ro'yxat joriy filtrlardan (qidiruv, manba,
+  // havza) keyingi `leads` to'plamidan olinadi, ya'ni ekrandagi raqam
+  // bilan oyna ichidagi ro'yxat har doim bir xil to'plam.
+  const kindOf = (lead) => stages.find(s => s.id === lead.stage_id)?.kind
+  const metrics = useMemo(() => {
+    const active = leads.filter(l => !['won', 'lost'].includes(kindOf(l)))
+    const won = leads.filter(l => kindOf(l) === 'won')
+    const overdue = leads.filter(l => l.is_overdue)
+    return {
+      total: {
+        key: 'total', label: 'Tanlangan ro‘yxatda', unit: ' ta lid', rows: leads,
+        hint: 'Joriy qidiruv va filtrlarga mos keluvchi barcha lidlar.',
+      },
+      active: {
+        key: 'active', label: 'Jarayonda', rows: active,
+        hint: 'Hali yopilmagan lidlar — bosqichi "To‘landi" ham, "Rad etildi" ham emas.',
+      },
+      won: {
+        key: 'won', label: 'To‘lovga yetgan', tone: 'success', rows: won,
+        hint: 'Bosqichi yutuq (won) deb belgilangan lidlar — to‘lov qilib talabaga o‘tganlar.',
+      },
+      overdue: {
+        key: 'overdue', label: 'Kechikkan aloqa', tone: 'danger', rows: overdue,
+        hint: 'Kelish yoki qayta qo‘ng‘iroq vaqti o‘tib ketgan, hali yopilmagan lidlar.',
+      },
+    }
+  }, [leads, stages])
+  const activeMetric = metricModal ? metrics[metricModal] : null
+
   const activeSourceName = sources.find(s => String(s.id) === String(filterSource))?.name
   const hasActiveFilters = !!filterSource || poolMode || todayMode || overdueMode
   function clearAllFilters() {
@@ -375,7 +434,20 @@ export default function Leads({ currentUser }) {
       </div>
 
       {/* Toolbar */}
-      <div className="lead-pipeline-summary"><div><span>Tanlangan ro‘yxatda</span><strong>{leads.length}<small> ta lid</small></strong></div><div><span>Jarayonda</span><strong>{leads.filter(l => !['won', 'lost'].includes(stages.find(s => s.id === l.stage_id)?.kind)).length}</strong></div><div><span>To‘lovga yetgan</span><strong className="tone-success">{leads.filter(l => stages.find(s => s.id === l.stage_id)?.kind === 'won').length}</strong></div><div><span>Kechikkan aloqa</span><strong className={leads.some(l => l.is_overdue) ? 'tone-danger' : ''}>{leads.filter(l => l.is_overdue).length}</strong></div></div>
+      {/* Raqamlar bosiladi — ortidagi lidlar ro'yxati ochiladi. */}
+      <div className="lead-pipeline-summary">
+        {['total', 'active', 'won', 'overdue'].map(key => {
+          const m = metrics[key]
+          const tone = m.tone && m.rows.length ? ` tone-${m.tone}` : ''
+          return (
+            <button key={key} type="button" className="lead-metric" onClick={() => setMetricModal(key)}
+              title={`${m.label}: ro'yxatni ko'rish`} aria-haspopup="dialog">
+              <span>{m.label}</span>
+              <strong className={tone.trim()}>{m.rows.length}{m.unit && <small>{m.unit}</small>}</strong>
+            </button>
+          )
+        })}
+      </div>
       <div className="toolbar">
         <div className="search-wrap">
           <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
@@ -517,7 +589,7 @@ export default function Leads({ currentUser }) {
         />
         <Input
           label="Telefon" required
-          value={form.phone} error={formErrors.phone}
+          value={form.phone} error={formErrors.phone || dupMessage}
           onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
           placeholder="+998901234567"
         />
@@ -566,6 +638,50 @@ export default function Leads({ currentUser }) {
         />
       </Modal>
 
+      {/* Ko'rsatkich tafsiloti — sarlavhadagi raqam bosilganda */}
+      <Modal
+        open={!!activeMetric}
+        title={activeMetric ? `${activeMetric.label} — ${activeMetric.rows.length} ta lid` : ''}
+        onClose={() => setMetricModal(null)}
+        size="xl"
+        footer={<button className="button secondary" onClick={() => setMetricModal(null)}>Yopish</button>}
+      >
+        {activeMetric && (
+          <div className="lead-metric-detail">
+            <p className="lead-metric-hint">{activeMetric.hint}</p>
+            {/* Bosqichlar kesimi: "9 ta jarayonda" degan raqam qaysi
+                bosqichlardan yig'ilganini bir qarashda ko'rsatadi. */}
+            <div className="lead-metric-chips">
+              {visibleStages
+                .map(st => ({ st, n: activeMetric.rows.filter(l => l.stage_id === st.id).length }))
+                .filter(x => x.n > 0)
+                .map(({ st, n }) => (
+                  <span key={st.id} className="lead-metric-chip" style={{ '--chip': hex(st.color) }}>
+                    {st.name}<strong>{n}</strong>
+                  </span>
+                ))}
+              {activeMetric.rows.some(l => !visibleStages.find(st => st.id === l.stage_id)) && (
+                <span className="lead-metric-chip">
+                  Bosqichsiz
+                  <strong>{activeMetric.rows.filter(l => !visibleStages.find(st => st.id === l.stage_id)).length}</strong>
+                </span>
+              )}
+            </div>
+            <DataTable
+              columns={metricColumns(stages, canSeeOwner)}
+              rows={activeMetric.rows}
+              clientPageSize={12}
+              onRowClick={l => { setMetricModal(null); openDrawer(l) }}
+              empty={{
+                icon: faBullseye,
+                title: 'Bu ko‘rsatkichda lid yo‘q',
+                description: 'Filtrlarni o‘zgartirib qayta urinib ko‘ring.',
+              }}
+            />
+          </div>
+        )}
+      </Modal>
+
       {/* Lead drawer */}
       {drawer && (
         <LeadDrawer
@@ -600,7 +716,7 @@ export default function Leads({ currentUser }) {
           <>
             <Input label="Ism Familiya" required value={editLead.full_name}
               onChange={e => setEditLead(p => ({ ...p, full_name: e.target.value }))} />
-            <Input label="Telefon" required value={editLead.phone}
+            <Input label="Telefon" required value={editLead.phone} error={dupMessage}
               placeholder="+998901234567"
               onChange={e => setEditLead(p => ({ ...p, phone: e.target.value }))} />
             <Select label="Qiziqayotgan kurs" value={editLead.course_interest}
@@ -687,6 +803,60 @@ function KanbanSkeleton({ count = 4 }) {
 }
 
 // ── List (table) view ──────────────────────────────────────────────────────
+/**
+ * Ko'rsatkich oynasidagi jadval ustunlari.
+ *
+ * `ListView` dagi ustunlarning qisqartirilgan varianti: bu yerda amal
+ * tugmalari yo'q (o'chirish/tahrirlash asosiy ro'yxatda qoladi) — oyna
+ * faqat "qaysi lidlar shu raqam ortida?" degan savolga javob beradi, qatorni
+ * bosish esa lid kartasini ochadi.
+ */
+function metricColumns(stages, canSeeOwner) {
+  const stageOf = (id) => stages.find(s => s.id === id)
+  return [
+    { key: 'index', header: '#', width: 46, className: 'text-muted', render: (_l, i) => i + 1 },
+    { key: 'full_name', header: 'Ism Familiya', sortable: true, render: l => <strong>{l.full_name}</strong> },
+    {
+      key: 'phone', header: <><FontAwesomeIcon icon={faPhone} /> Telefon</>, sortable: true,
+      render: l => <a href={`tel:${l.phone}`} onClick={e => e.stopPropagation()}>{l.phone_display || l.phone}</a>,
+    },
+    {
+      key: 'stage_id', header: 'Bosqich', sortable: true,
+      sortValue: l => stageOf(l.stage_id)?.order ?? 999,
+      render: l => {
+        const st = stageOf(l.stage_id)
+        return <Badge size="sm" color={hex(st?.color)}>{st?.name || l.status}</Badge>
+      },
+    },
+    {
+      key: 'source_name', header: 'Manba', sortable: true,
+      render: l => l.source_name
+        ? <Badge variant="neutral" size="sm">{l.source_name}</Badge>
+        : <span className="text-muted">—</span>,
+    },
+    {
+      key: 'time', header: 'Vaqt / Izoh', sortable: true,
+      sortValue: l => l.callback_at || l.created_at,
+      render: l => (
+        <div className="lead-cell-meta">
+          {l.callback_at
+            ? <div className={l.is_overdue ? 'tone-danger' : 'tone-warning'}>
+                {l.is_overdue && <><FontAwesomeIcon icon={faTriangleExclamation} />{' '}</>}
+                {fmtDate(l.callback_at)}
+              </div>
+            : <div className="text-muted">{fmtDate(l.created_at)}</div>}
+          {l.notes && <div className="text-muted kc-clamp2">{l.notes}</div>}
+        </div>
+      ),
+    },
+    ...(canSeeOwner ? [{
+      key: 'created_by_name', header: 'Hunter', sortable: true,
+      render: l => <span className="text-muted">{l.created_by_name || '—'}</span>,
+    }] : []),
+  ]
+}
+
+
 function ListView({ leads, stages, canSeeOwner, canDelete, canEdit, onOpen, onEdit, onDelete }) {
   const stageOf = (id) => stages.find(s => s.id === id)
 

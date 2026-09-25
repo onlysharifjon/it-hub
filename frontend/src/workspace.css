@@ -170,8 +170,15 @@ button.summary-item:hover > strong { color: var(--primary); }
 @media (max-width: 600px) { .work-overview { grid-template-columns: 1.5fr 1fr; } .work-overview .work-pulse { display: none; } .work-progress { gap: 12px; } .work-progress .studio-ring { width: 65px !important; height: 65px !important; } .work-progress .studio-eyebrow { font-size: 11px; } .work-progress h2 { font-size: 22px; } .work-progress h2 span { font-size: 11px; } .work-urgent { padding-left: 15px; } .work-urgent > span { font-size: 11px; } .operator-grid { grid-template-columns: 1fr; } .team-roster-head { flex-wrap: wrap; } .work-row { padding: 17px 14px; } .work-row-end small { max-width: 60px; overflow: hidden; text-overflow: ellipsis; } .task-focus-card { display: block; } .task-primary-actions { flex-direction: column; } }
 @keyframes studio-value { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 .lead-pipeline-summary { display: flex; align-items: center; gap: 46px; padding: 4px 0 23px; border-bottom: 1px solid var(--border); margin-bottom: 21px; }
-.lead-pipeline-summary > div { display: grid; gap: 7px; min-width: 0; }
-.lead-pipeline-summary > div > span { font-size: 11px; color: var(--muted); }
+.lead-pipeline-summary > div, .lead-pipeline-summary > .lead-metric { display: grid; gap: 7px; min-width: 0; }
+.lead-pipeline-summary > div > span, .lead-pipeline-summary > .lead-metric > span { font-size: 11px; color: var(--muted); }
+/* Raqam bosiladigan bo'lgani ko'rinib turishi kerak — lekin tinch holatda
+   u oddiy ko'rsatkich, tugmaga o'xshamaydi: ishora faqat hover/fokusda. */
+.lead-metric { border: 0; background: transparent; padding: 0; text-align: left; color: var(--text); cursor: pointer; border-radius: 8px; }
+.lead-metric > span { text-decoration: underline dotted var(--border); text-underline-offset: 3px; }
+.lead-metric:hover > span, .lead-metric:focus-visible > span { color: var(--text-2); text-decoration-color: var(--primary); }
+.lead-metric:hover > strong { color: var(--primary); }
+.lead-metric:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
 .lead-pipeline-summary strong { font-size: 28px; font-weight: 550; letter-spacing: -.04em; line-height: 1.2; }
 .lead-pipeline-summary small { font-size: 12px; color: var(--muted); font-weight: 400; letter-spacing: 0; }
 .leads-studio > .toolbar { display: flex; flex-wrap: wrap; border: 0; background: transparent; padding: 0; gap: 8px; margin-bottom: 20px; }
@@ -581,3 +588,92 @@ button.summary-item:hover > strong { color: var(--primary); }
   .topbar-search span, .topbar-search kbd { display: none; }
   .topbar-actions { flex-shrink: 0; }
 }
+
+/* ── Kassa (kunlik naqd oqim) ────────────────────────────────────────────
+   Sahifa mavjud "ledger" va "studio-section" qatlamlaridan qurilgan —
+   bu yerda faqat unga xos bo'lgan bir nechta qo'shimcha bor. */
+.kassa-overview .ledger-balance > div { align-items: center; }
+.kassa-overview .icon-tile { width: 38px; height: 38px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.kassa-chart { margin-bottom: 24px; }
+.kassa-day-cell { display: grid; gap: 2px; }
+.kassa-day-cell > strong { font-weight: 550; letter-spacing: -.02em; }
+.kassa-day-cell > small { font-size: 11px; color: var(--muted); }
+.kassa-row-idle td { color: var(--muted); }
+.kassa-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.kassa-toggle input { accent-color: var(--primary); }
+.kassa-table .table-wrap { border: 0; box-shadow: none; border-radius: 0; }
+.kassa-table .table-toolbar, .kassa-table .pagination { padding: 15px 22px; }
+.kassa-table-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 24px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.kassa-table-foot > div { display: flex; gap: 22px; flex-wrap: wrap; }
+.kassa-table-foot strong { margin-left: 7px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.kassa-note { display: flex; align-items: flex-start; gap: 9px; margin: 18px 2px 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.kassa-note > svg { margin-top: 3px; flex-shrink: 0; }
+.kassa-day-totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 22px; }
+.kassa-day-totals > div { display: grid; gap: 5px; padding: 15px 18px; background: var(--surface); }
+.kassa-day-totals span { font-size: 11px; color: var(--muted); }
+.kassa-day-totals strong { font-size: 18px; font-weight: 550; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.kassa-day-table { width: 100%; margin: 4px 0 20px; }
+.kassa-day-table th.right, .kassa-day-table td.right { text-align: right; }
+.kassa-day-empty { margin: 4px 0 20px; }
+.kassa-day-links { display: flex; gap: 20px; flex-wrap: wrap; padding-top: 14px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+.kassa-day-links span { display: flex; align-items: center; gap: 7px; }
+@media (max-width: 700px) {
+  .kassa-day-totals { grid-template-columns: 1fr; }
+  .kassa-table-foot > div { gap: 14px; }
+}
+
+/* ── Lidlar: ko'rsatkich tafsiloti oynasi ──────────────────────────────── */
+.lead-metric-hint { margin: 0 0 16px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.lead-metric-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.lead-metric-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 11px; border-radius: 999px; font-size: 11px; color: var(--text-2); background: color-mix(in srgb, var(--chip, var(--stage-slate)) 13%, var(--surface)); border: 1px solid color-mix(in srgb, var(--chip, var(--stage-slate)) 28%, var(--surface)); }
+.lead-metric-chip > strong { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.lead-metric-detail .table-wrap { border: 0; box-shadow: none; }
+.lead-metric-detail .pagination { padding: 14px 0 0; }
+
+/* ── Kompyuterlar (berish/qaytarish) ─────────────────────────────────────── */
+.computers-page .studio-tabs { margin: 18px 0 16px; }
+.pc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.pc-card { display: flex; flex-direction: column; gap: 10px; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); }
+.pc-card.is-busy { border-color: var(--warning-border); box-shadow: inset 3px 0 0 var(--warning); }
+.pc-card header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pc-number { display: inline-flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 650; letter-spacing: -.03em; font-variant-numeric: tabular-nums; color: var(--text); }
+.pc-number svg { font-size: 15px; color: var(--mod, var(--muted)); }
+.pc-number.sm { font-size: 14px; gap: 6px; }
+.pc-number.sm svg { font-size: 12px; }
+.pc-name { margin-top: -6px; font-size: 12px; color: var(--muted); }
+.pc-rental { display: grid; gap: 3px; min-height: 64px; font-size: 12px; color: var(--muted); }
+.pc-rental strong { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text); font-weight: 600; }
+.pc-rental b { color: var(--text); font-weight: 600; }
+.pc-rental.pc-free { align-content: center; }
+.pc-note { font-style: italic; }
+.pc-card footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); }
+.pc-tools { display: flex; gap: 4px; }
+.pc-search { position: relative; display: flex; align-items: center; }
+.pc-search svg { position: absolute; left: 12px; color: var(--muted); font-size: 13px; }
+.pc-search .field { width: 100%; padding-left: 34px; }
+.pc-results { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; }
+.pc-results button { display: flex; justify-content: space-between; gap: 12px; padding: 9px 12px; text-align: left; background: var(--surface-row); border: 1px solid transparent; border-radius: var(--radius); color: var(--text); cursor: pointer; }
+.pc-results button:hover { border-color: var(--primary-border); background: var(--primary-light); }
+.pc-results span, .pc-picked span { font-size: 12px; color: var(--muted); }
+.pc-picked { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: var(--surface-row); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.pc-picked > div { display: grid; gap: 2px; }
+.pc-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pc-log .table-wrap { border: 0; box-shadow: none; border-radius: 0; }
+@media (max-width: 700px) {
+  .pc-grid { grid-template-columns: 1fr; }
+  .pc-filters { width: 100%; }
+  .pc-filters input, .pc-filters select { flex: 1 1 140px; }
+}
+.pc-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.pc-toolbar .pc-search { flex: 1 1 260px; max-width: 380px; }
+.pc-segment { display: inline-flex; padding: 3px; gap: 2px; background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius); }
+.pc-segment button { padding: 6px 12px; font-size: 12px; font-weight: 500; color: var(--muted); background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; white-space: nowrap; }
+.pc-segment button.is-active { color: var(--text); background: var(--surface); box-shadow: 0 1px 2px rgba(16, 24, 40, .08); }
+.pc-range { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.computers-page .pc-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.computers-page .pc-card { gap: 8px; padding: 12px 13px; border-radius: var(--radius-lg); }
+.computers-page .pc-number { font-size: 19px; }
+.computers-page .pc-rental { min-height: 52px; }
+.pc-rental strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.pc-by { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.computers-page .pc-card footer { padding-top: 8px; }

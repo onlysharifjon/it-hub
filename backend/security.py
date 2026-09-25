@@ -13,9 +13,14 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import bcrypt as _bcrypt
+from dotenv import load_dotenv
 from jose import JWTError, jwt
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+load_dotenv()
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+# Standart/bo'sh kalit bilan ishga tushmaymiz: aks holda har kim token soxtalashtira oladi.
+if len(SECRET_KEY) < 16 or SECRET_KEY == "change-me-in-production":
+    raise RuntimeError("SECRET_KEY .env da berilmagan yoki juda qisqa (kamida 16 belgi)")
 ALGORITHM = "HS256"
 
 PARENT_ACCESS_TTL_MIN = int(os.getenv("PARENT_ACCESS_TTL_MIN", "30"))
@@ -33,6 +38,10 @@ def verify_password(plain: str, hashed: str) -> bool:
         return _bcrypt.checkpw(plain.encode(), hashed.encode())
     except ValueError:
         return False
+
+
+# Login topilmaganda ham bcrypt ishlaydi — javob vaqtidan login mavjudligini bilib bo'lmasin.
+DUMMY_HASH = _bcrypt.hashpw(b"timing-equalizer", _bcrypt.gensalt()).decode()
 
 
 # ── Parent access JWT ────────────────────────────────────────────────────────
@@ -77,13 +86,33 @@ def refresh_expiry() -> datetime:
 
 
 # ── Oddiy in-process rate limiter (pm2 fork single-process) ──────────────────
+# Xotirada — qayta ishga tushganda nolga tushadi (bitta jarayon uchun yetarli).
+# `.env`: RATE_LIMIT_ENABLED=false — butunlay o'chirish (masalan yuklama testlari uchun).
+
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() != "false"
+_MAX_WINDOW = 3600          # eng uzun ishlatiladigan oyna (soniya)
+_PRUNE_EVERY = 1000         # har shuncha chaqiruvda eskirgan kalitlar tozalanadi
 
 _hits: dict[str, list[float]] = defaultdict(list)
+_calls = 0
+
+
+def _prune(now: float) -> None:
+    """Oxirgi urinishi eng uzun oynadan eski bo'lgan kalitlarni o'chiradi —
+    aks holda har bir yangi IP/login lug'atda abadiy qolib, xotira o'sib boradi."""
+    for key in [k for k, v in _hits.items() if not v or now - v[-1] >= _MAX_WINDOW]:
+        del _hits[key]
 
 
 def rate_limit_ok(key: str, *, limit: int, window: int) -> bool:
     """True — ruxsat; False — limit oshdi."""
+    global _calls
+    if not RATE_LIMIT_ENABLED:
+        return True
     now = time.time()
+    _calls += 1
+    if _calls % _PRUNE_EVERY == 0:
+        _prune(now)
     hits = [t for t in _hits[key] if now - t < window]
     if len(hits) >= limit:
         _hits[key] = hits

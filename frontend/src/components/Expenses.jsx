@@ -235,7 +235,11 @@ export default function Expenses({ currentUser }) {
             onChange={e => setForm(f => ({ ...f, staff_id: e.target.value }))}
           >
             <option value="">— Tanlang —</option>
-            {staffOptions.map(s => <option key={s.id} value={s.id}>{s.full_name || s.username}</option>)}
+            {staffOptions.map(s => (
+              <option key={s.id} value={s.id}>
+                {(s.full_name || s.username) + (s.is_active === false ? ' (bloklangan)' : '')}
+              </option>
+            ))}
           </Select>
         )}
       </Modal>

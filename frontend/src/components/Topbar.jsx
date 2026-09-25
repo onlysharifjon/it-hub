@@ -5,7 +5,7 @@ import {
   faRightFromBracket, faPen, faCamera, faPlus, faChevronDown,
 } from '@fortawesome/free-solid-svg-icons'
 import { toast } from 'react-hot-toast'
-import { uploadAvatar, updateProfile, API_BASE } from '../api'
+import { uploadAvatar, updateProfile, login, API_BASE } from '../api'
 import { ROLE_LABELS } from '../constants/domain'
 import Modal from './ui/Modal'
 import { Input } from './ui/Field'
@@ -100,6 +100,9 @@ export default function Topbar({ currentUser, activePage, onNavigate, onAvatarUp
     setSavingProfile(true)
     try {
       const updated = await updateProfile(payload)
+      // Parol almashsa server eski tokenlarni bekor qiladi — yangi parol bilan
+      // qayta token olamiz, aks holda keyingi so'rovda tizimdan chiqib ketardi.
+      if (payload.password) await login(currentUser.username, payload.password)
       onAvatarUpdate?.(updated)
       toast.success('Profil yangilandi')
       setProfileOpen(false)

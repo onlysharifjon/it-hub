@@ -128,7 +128,15 @@ export default function Salary() {
   const pctColor = pct => (pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : pct > 0 ? 'var(--danger)' : 'var(--border-2)')
 
   const columns = [
-    { key: 'full_name', header: 'F.I.O', sortable: true, render: r => <PersonName name={r.full_name} /> },
+    {
+      key: 'full_name', header: 'F.I.O', sortable: true,
+      render: r => (
+        <div className="salary-name-cell">
+          <PersonName name={r.full_name} />
+          {r.is_active === false && <Badge size="sm" variant="danger">bloklangan</Badge>}
+        </div>
+      ),
+    },
     {
       key: 'role', header: 'Rol', sortable: true,
       sortValue: r => ROLE_LABELS[r.role] || r.role,

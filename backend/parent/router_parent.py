@@ -27,11 +27,17 @@ def login(payload: schemas.ParentLoginRequest, request: Request, db: Session = D
     ip = (request.headers.get("x-real-ip", "") or (request.client.host if request.client else "")).strip()
     if not security.rate_limit_ok(f"plogin-ip:{ip}", limit=15, window=60):
         raise _err("rate_limited", "Juda ko'p urinish. Birozdan so'ng qayta urinib ko'ring.", 429)
-    if not security.rate_limit_ok(f"plogin-user:{payload.username.lower()}", limit=6, window=60):
+    # login bo'yicha limit IP bilan birga — begona odam akkauntni bloklab qo'ya olmasin
+    uname = payload.username.lower()
+    if not security.rate_limit_ok(f"plogin-user-ip:{uname}:{ip}", limit=6, window=60) or \
+            not security.rate_limit_ok(f"plogin-user:{uname}", limit=30, window=60):
         raise _err("rate_limited", "Juda ko'p urinish. Birozdan so'ng qayta urinib ko'ring.", 429)
 
     parent = db.query(models.Parent).filter(models.Parent.username == payload.username).first()
-    if not parent or not security.verify_password(payload.password, parent.hashed_password):
+    if not parent:
+        security.verify_password(payload.password, security.DUMMY_HASH)  # vaqt bir xil bo'lsin
+        raise _err("invalid_credentials", "Login yoki parol xato", 401)
+    if not security.verify_password(payload.password, parent.hashed_password):
         raise _err("invalid_credentials", "Login yoki parol xato", 401)
     if not parent.is_active:
         raise _err("account_disabled", "Akkount faol emas", 403)

@@ -101,6 +101,12 @@ export async function fetchLeads(params = {}) {
 }
 export async function createLead(p)                    { return request('/leads', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updateLead(id, p)                { return request(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
+// Raqam bazada bormi — formani yuborishdan oldin ogohlantirish uchun
+export async function checkLeadPhone(phone, excludeId) {
+  const q = new URLSearchParams({ phone })
+  if (excludeId) q.set('exclude_id', excludeId)
+  return request(`/leads/check-phone?${q}`)
+}
 // ── Ish markazi / qo'ng'iroq faoliyati ──
 export async function fetchWorkCenter(userId)         { return request(`/work-center${userId ? `?user_id=${userId}` : ''}`) }
 export async function createWorkTask(body)            { return request('/work-center/tasks', { method: 'POST', body: JSON.stringify(body) }) }
@@ -347,6 +353,45 @@ export async function fetchFinanceTrend(month, year, months = 6) {
   return request(`/finance/trend?month=${month}&year=${year}&months=${months}`)
 }
 
+// ── Kassa (kun kesimidagi naqd oqim) ─────────────────────────────────────────
+
+export async function fetchCashbox(month, year) {
+  return request(`/cashbox?month=${month}&year=${year}`)
+}
+export async function fetchCashboxDay(day) {
+  return request(`/cashbox/day?date=${day}`)
+}
+
+// ── Kompyuter berish (bron) ───────────────────────────────────────────────────
+
+export async function fetchComputers() { return request('/computers') }
+export async function createComputer(data) {
+  return request('/computers', { method: 'POST', body: JSON.stringify(data) })
+}
+export async function createComputersBulk(data) {
+  return request('/computers/bulk', { method: 'POST', body: JSON.stringify(data) })
+}
+export async function updateComputer(id, data) {
+  return request(`/computers/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+}
+export async function deleteComputer(id) {
+  return request(`/computers/${id}`, { method: 'DELETE' })
+}
+export async function searchComputerStudents(q) {
+  return request(`/computers/students?q=${encodeURIComponent(q || '')}`)
+}
+export async function giveComputer(id, data) {
+  return request(`/computers/${id}/give`, { method: 'POST', body: JSON.stringify(data) })
+}
+export async function returnComputer(rentalId, data = {}) {
+  return request(`/computer-rentals/${rentalId}/return`, { method: 'POST', body: JSON.stringify(data) })
+}
+export async function fetchComputerRentals(params = {}) {
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) if (v) q.set(k, v)
+  return request(`/computer-rentals?${q}`)
+}
+
 // ── Today Attendance ──────────────────────────────────────────────────────────
 
 export async function fetchTodayGroups(targetDate) {
@@ -537,6 +582,13 @@ export async function createFeedback(p)     { return request('/teacher-feedbacks
 export async function updateFeedback(id, p) { return request(`/teacher-feedbacks/${id}`, { method: 'PATCH', body: JSON.stringify(p) }) }
 export async function deleteFeedback(id)    { return request(`/teacher-feedbacks/${id}`, { method: 'DELETE' }) }
 
+export async function fetchPaymentNotes(studentId) {
+  const q = studentId ? `?student_id=${studentId}` : ''
+  return request(`/payment-notes${q}`)
+}
+export async function createPaymentNote(p)  { return request('/payment-notes', { method: 'POST', body: JSON.stringify(p) }) }
+export async function deletePaymentNote(id) { return request(`/payment-notes/${id}`, { method: 'DELETE' }) }
+
 export async function uploadCertificatePdf(file) {
   const form = new FormData()
   form.append('file', file)
@@ -583,6 +635,28 @@ export async function fetchNextLesson(groupId) { return request(`/groups/${group
 export async function fetchHomeworks(groupId)  { return request(`/groups/${groupId}/homeworks`) }
 export async function createHomework(groupId, p) {
   return request(`/groups/${groupId}/homeworks`, { method: 'POST', body: JSON.stringify(p) })
+}
+
+// ── Minar Space (space.minaracademy.uz o'quvchi ilovasi) hisoblari ──────────
+
+export async function fetchMinarAccounts(params = {}) {
+  const q = new URLSearchParams()
+  if (params.group_id) q.set('group_id', params.group_id)
+  if (params.q)         q.set('q', params.q)
+  if (params.active !== undefined) q.set('active', params.active)
+  return request(`/minar-admin/accounts${q.toString() ? '?' + q : ''}`)
+}
+export async function createMinarAccount(p) {
+  return request('/minar-admin/accounts', { method: 'POST', body: JSON.stringify(p) })
+}
+export async function createMinarAccountsBulk(p) {
+  return request('/minar-admin/accounts/bulk', { method: 'POST', body: JSON.stringify(p) })
+}
+export async function resetMinarPassword(studentId) {
+  return request(`/minar-admin/accounts/${studentId}/reset-password`, { method: 'POST' })
+}
+export async function patchMinarAccount(studentId, p) {
+  return request(`/minar-admin/accounts/${studentId}`, { method: 'PATCH', body: JSON.stringify(p) })
 }
 
 // ── Ota-ona akkauntlari (mobil ilova uchun) ──────────────────────────────────

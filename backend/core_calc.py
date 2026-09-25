@@ -31,7 +31,8 @@ def active_special_discounts(db: Session, student_id: int) -> list:
 
 
 def apply_special_discounts(price: Decimal, discounts: list, group_id: int,
-                            month: int = None, year: int = None, apply_global: bool = True) -> Decimal:
+                            month: int = None, year: int = None, apply_global: bool = True,
+                            active_group_ids: Optional[set] = None) -> Decimal:
     """Special chegirmalarni narxga qo'llaydi.
 
     - free_month: month/year mos kelsa oy to'liq bepul (0).
@@ -42,14 +43,22 @@ def apply_special_discounts(price: Decimal, discounts: list, group_id: int,
     sababli, `apply_global=False` berib faqat BITTA guruh uchun qo'llash kerak
     (aks holda bitta global chegirma har guruhda alohida ayirilib, talaba
     guruhlar soniga qarab bir necha barobar ko'p chegirma olib qo'yadi).
+
+    `active_group_ids` berilsa: chegirma bog'langan guruh (d.group_id) talabaning
+    hozirgi faol guruhlari orasida bo'lmasa (masalan, talaba boshqa guruhga
+    o'tkazilgan, chegirma esa eski guruhga bog'liq qolib ketgan), bu chegirma
+    "eskirgan" hisoblanib, xuddi global (group_id=NULL) chegirmadek qo'llanadi —
+    aks holda talaba guruh almashtirganda chegirmasi butunlay yo'qolib qolardi.
     """
     if price <= 0 or not discounts:
         return price
     off = ZERO
     for d in discounts:
-        if d.group_id and d.group_id != group_id:
-            continue
-        if not d.group_id and not apply_global:
+        stale = bool(d.group_id) and active_group_ids is not None and d.group_id not in active_group_ids
+        if d.group_id and not stale:
+            if d.group_id != group_id:
+                continue
+        elif not apply_global:
             continue
         if d.kind == "free_month":
             if month is not None and year is not None and d.month == month and d.year == year:
@@ -146,25 +155,153 @@ def vacation_adjusted_price(db: Session, student_id: int, group_id: int,
     return apply_vacations_to_price(db, student_id, group, month, year, price, vacations)
 
 
-def _primary_group_id(db: Session, student_id: int) -> Optional[int]:
-    """Talabaning global (group_id=NULL) chegirmasi faqat BITTA guruhga
-    qo'llanishi uchun — eng kichik ID'li faol guruh 'asosiy' hisoblanadi."""
-    return (
-        db.query(func.min(models.GroupStudent.group_id))
+def _active_group_ids(db: Session, student_id: int) -> set:
+    """Talaba hozir a'zo bo'lgan barcha FAOL guruhlar ID'lari to'plami."""
+    rows = (
+        db.query(models.GroupStudent.group_id)
         .join(models.Group, models.Group.id == models.GroupStudent.group_id)
-        .filter(models.GroupStudent.student_id == student_id, models.Group.is_active == True)
-        .scalar()
+        .filter(models.GroupStudent.student_id == student_id, models.Group.is_active == True,
+                models.GroupStudent.left_at.is_(None))
+        .all()
+    )
+    return {r[0] for r in rows}
+
+
+def group_completed_lessons(db: Session, group_ids, upto: Optional[date] = None) -> dict:
+    """Har guruh uchun kurs progressidagi "o'tilgan darslar" soni: {group_id: son}.
+
+    Faqat guruhning HOZIRGI a'zolaridan kamida bittasi qayd etilgan dars sanalari
+    sanaladi. Guruhdan chiqib ketgan/o'tkazilgan talabalarning shu guruhdagi
+    davomati (masalan, guruh yangi tarkib bilan qaytadan boshlanganda eski
+    talabaning darslari) progressga qo'shilmaydi.
+
+    `upto` berilsa — shu sanagacha, o'sha paytdagi a'zolar bo'yicha (keyinroq
+    chiqib ketganlar hali a'zo hisoblanadi). Oylik "o'tilgan darslar" (maosh)
+    bu yerdan hisoblanmaydi — u o'qituvchi haqiqatan o'tgan barcha darslarni sanaydi."""
+    ids = list(group_ids)
+    if not ids:
+        return {}
+    gs = models.GroupStudent
+    q = (
+        db.query(models.Attendance.group_id,
+                 func.count(func.distinct(models.Attendance.lesson_date)))
+        .join(gs, (gs.group_id == models.Attendance.group_id)
+                  & (gs.student_id == models.Attendance.student_id))
+        .filter(models.Attendance.group_id.in_(ids),
+                models.Attendance.is_present.isnot(None))
+    )
+    if upto is None:
+        q = q.filter(gs.left_at.is_(None))
+    else:
+        q = q.filter(models.Attendance.lesson_date <= upto,
+                     gs.left_at.is_(None) | (func.date(gs.left_at) > upto))
+    return {gid: cnt for gid, cnt in q.group_by(models.Attendance.group_id).all()}
+
+
+def covers_month(m, month: int, year: int) -> bool:
+    """`m` (GroupStudent) a'zoligi berilgan (month, year)ni o'z ichiga oladimi —
+    talaba shu paytda allaqachon qo'shilgan va hali chiqib ketmagan bo'lishi kerak."""
+    if m.joined_at and (m.joined_at.year, m.joined_at.month) > (year, month):
+        return False
+    if m.left_at and (m.left_at.year, m.left_at.month) < (year, month):
+        return False
+    return True
+
+
+def group_billable_in(g: models.Group, month: int, year: int) -> bool:
+    """Guruh berilgan (month, year) uchun to'lov talab qiladimi. Faol guruh — ha;
+    arxivlangan guruh — faqat arxivlangan (`closed_at`) oyigacha, shunda uning o'tgan
+    oylari qarz hisobidan unutilmaydi. `closed_at` noma'lum bo'lsa — yo'q."""
+    if g.is_active:
+        return True
+    closed = g.closed_at
+    return closed is not None and (year, month) <= (closed.year, closed.month)
+
+
+def bills_month(m, month: int, year: int) -> bool:
+    """`covers_month`ning TO'LOV uchun varianti: talaba shu oyda guruhdan chiqib,
+    o'sha oyning o'zida boshqa guruhga (yoki shu guruhga qaytadan) qo'shilgan bo'lsa
+    (oy o'rtasida o'tkazish), shu oy faqat YANGI a'zolik bo'yicha hisoblanadi — bir
+    oy ikki marta to'lanmasligi uchun. Shunchaki chiqib ketgan talaba (yangi a'zoligi
+    yo'q) chiqqan oyi uchun avvalgidek to'laydi. Davomat/maosh `covers_month`ni
+    ishlatadi — talaba eski guruhda haqiqatan dars qatnashgan."""
+    if not covers_month(m, month, year):
+        return False
+    if not m.left_at or (m.left_at.year, m.left_at.month) != (year, month):
+        return True
+    student = m.student
+    if student is None:
+        return True
+    return not any(
+        o.id != m.id and o.joined_at and (o.joined_at.year, o.joined_at.month) == (year, month)
+        for o in student.group_memberships
     )
 
 
+def members_covering_month(members: list, month: int, year: int) -> list:
+    """Guruh a'zolaridan berilgan (month,year)da haqiqatan a'zo bo'lganlarini
+    qaytaradi. Talaba shu guruhga bir necha marta kirib-chiqqan bo'lishi mumkin
+    (har biri alohida GroupStudent qatori, ko'ring: `left_at`) — masalan o'tgan
+    oyning moliya hisoboti/davomat ro'yxati hozirgi emas, O'SHA PAYTDAGI a'zolar
+    ro'yxatini ko'rsatishi kerak."""
+    return [m for m in members if covers_month(m, month, year)]
+
+
+def covers_date(m, d: date) -> bool:
+    """`m` (GroupStudent) a'zoligi aniq bitta kunni (`d`) o'z ichiga oladimi —
+    `covers_month`ning kun aniqligidagi varianti (davomat belgilash uchun,
+    oy darajasidagi aniqlik yetarli bo'lmaydi: oyning bir qismida a'zo bo'lgan,
+    keyin chiqib ketgan talaba o'sha oyning HAMMA kunlarida emas)."""
+    if m.joined_at and m.joined_at.date() > d:
+        return False
+    if m.left_at and m.left_at.date() < d:
+        return False
+    return True
+
+
+def members_covering_date(members: list, d: date) -> list:
+    """`members_covering_month`ning kun aniqligidagi varianti."""
+    return [m for m in members if covers_date(m, d)]
+
+
+def _member_covering(members: list, student_id: int, month: Optional[int], year: Optional[int]):
+    """Bitta talabaning berilgan (month, year)ni o'z ichiga olgan a'zolik davrini
+    (stint) topadi. month/year berilmasa — hozir FAOL bo'lgan a'zolikni
+    (left_at yo'q) qaytaradi."""
+    candidates = [m for m in members if m.student_id == student_id]
+    if not candidates:
+        return None
+    if month is None or year is None:
+        return next((m for m in candidates if m.left_at is None), None)
+    return next((m for m in candidates if bills_month(m, month, year)), None)
+
+
+def _primary_group_id(db: Session, student_id: int) -> Optional[int]:
+    """Talabaning global (group_id=NULL) yoki eskirgan (guruhi endi mos
+    kelmaydigan) chegirmasi faqat BITTA guruhga qo'llanishi uchun — eng
+    kichik ID'li faol guruh 'asosiy' hisoblanadi."""
+    ids = _active_group_ids(db, student_id)
+    return min(ids) if ids else None
+
+
 def student_month_owed(db: Session, student_id: int, group_id: int,
-                       month: int = None, year: int = None) -> Decimal:
+                       month: int = None, year: int = None, *,
+                       group: Optional[models.Group] = None,
+                       discounts: Optional[list] = None,
+                       vacations: Optional[list] = None,
+                       active_group_ids: Optional[set] = None) -> Decimal:
     """Bitta guruh uchun oylik to'liq summa: tarif narxi, aks holda guruh narxi.
 
     Ta'til (agar bor bo'lsa) va special chegirmalar shu yerda qo'llanadi (yagona
     manba). month/year berilsa free_month chegirmasi va ta'til hisobga olinadi.
+
+    `group`/`discounts`/`vacations`/`active_group_ids` oldindan olingan bo'lsa
+    (masalan `student_cumulative_owed` ko'p oy uchun bitta talabani hisoblayotganda),
+    shu qiymatlar ishlatiladi va mos DB so'rovlari o'tkazib yuboriladi — bu qiymatlar
+    month/year'ga bog'liq emas, shuning uchun bir marta olib, har oyda qayta
+    ishlatish xavfsiz. Berilmasa, avvalgidek funksiya o'zi so'raydi.
     """
-    g = db.query(models.Group).filter(models.Group.id == group_id).first()
+    g = group if group is not None else db.query(models.Group).filter(models.Group.id == group_id).first()
     if not g:
         return ZERO
     if g.start_date:
@@ -173,14 +310,13 @@ def student_month_owed(db: Session, student_id: int, group_id: int,
                 return ZERO  # guruh so'ralgan oyda hali boshlanmagan edi
         elif g.start_date.date() > tz.today():
             return ZERO  # guruh hali boshlanmagan — talaba hali qarzdor emas
-    member = next((m for m in g.members if m.student_id == student_id), None)
-    if member and member.joined_at:
-        if month is not None and year is not None:
-            if (member.joined_at.year, member.joined_at.month) > (year, month):
-                return ZERO  # talaba so'ralgan oyda hali shu guruhga qo'shilmagan edi
-        elif member.joined_at.date() > tz.today():
-            return ZERO  # talaba hali shu guruhga qo'shilmagan — qarzdor emas
-    if member and member.tariff:
+    member = _member_covering(g.members, student_id, month, year)
+    if month is None and member and member.joined_at and member.joined_at.date() > tz.today():
+        return ZERO  # talaba hali shu guruhga qo'shilmagan — qarzdor emas
+    if member is None:
+        return ZERO  # talaba so'ralgan (oy,yil)da shu guruh a'zosi bo'lmagan
+                     # (hali qo'shilmagan, yoki shu paytgacha allaqachon chiqib ketgan)
+    if member.tariff:
         price = Decimal(str(member.tariff.price))
     elif g.course_price and Decimal(str(g.course_price)) > 0:
         price = Decimal(str(g.course_price))
@@ -188,11 +324,18 @@ def student_month_owed(db: Session, student_id: int, group_id: int,
         price = ZERO
     if price <= 0:
         return ZERO
-    price = vacation_adjusted_price(db, student_id, group_id, month, year, price)
-    primary_group_id = _primary_group_id(db, student_id)
+    if vacations is None:
+        price = vacation_adjusted_price(db, student_id, group_id, month, year, price)
+    else:
+        price = apply_vacations_to_price(db, student_id, g, month, year, price, vacations)
+    if active_group_ids is None:
+        active_group_ids = _active_group_ids(db, student_id)
+    primary_group_id = min(active_group_ids) if active_group_ids else None
     apply_global = primary_group_id is None or primary_group_id == group_id
-    price = apply_special_discounts(price, active_special_discounts(db, student_id),
-                                    group_id, month, year, apply_global=apply_global)
+    if discounts is None:
+        discounts = active_special_discounts(db, student_id)
+    price = apply_special_discounts(price, discounts, group_id, month, year, apply_global=apply_global,
+                                    active_group_ids=active_group_ids)
     return price.quantize(Decimal("1")) if price > 0 else ZERO
 
 
@@ -209,6 +352,110 @@ def student_month_paid(db: Session, student_id: int, group_id: int, month: int, 
         .scalar()
     )
     return total or ZERO
+
+
+def student_cumulative_owed(db: Session, student: models.Student, upto_year: int = None, upto_month: int = None,
+                            *, discounts: Optional[list] = None, vacations: Optional[list] = None) -> Decimal:
+    """Talaba ro'yxatdan o'tgandan (yoki guruhga qo'shilgandan) bugungi oygacha
+    guruhlari bo'yicha jami qarzi — jamlangan (kumulyativ) hisob-kitob uchun.
+    Arxivlangan guruh arxivlangan oyigacha hisoblanadi (`group_billable_in`).
+    Har bir o'tgan oy alohida `student_month_owed` orqali hisoblanadi (tarif,
+    chegirma va ta'til hisobga olingan holda), so'ng barchasi qo'shiladi.
+
+    `discounts`/`vacations` — chaqiruvchi tomonidan ko'p talaba uchun bitta bulk
+    so'rov bilan oldindan olingan bo'lishi mumkin (masalan to'lovlar/qarzdorlar
+    ro'yxati). Berilmasa, shu yerda bir marta (butun oy sikli uchun, har oyda
+    emas) so'raladi — bu ikkalasi ham month/year'ga bog'liq emas, shuning uchun
+    oldin har oy qaytadan so'ralishi sof ortiqcha DB yuklama edi."""
+    today = tz.today()
+    if upto_year is None or upto_month is None:
+        upto_year, upto_month = today.year, today.month
+    if discounts is None:
+        discounts = active_special_discounts(db, student.id)
+    if vacations is None:
+        vacations = (
+            db.query(models.StudentVacation)
+            .filter(models.StudentVacation.student_id == student.id)
+            .all()
+        )
+    active_group_ids = _active_group_ids(db, student.id)
+    total = ZERO
+    billed_groups = set()   # a'zolik bo'yicha qarzi hisoblanadigan guruhlar
+    billed_months = set()   # a'zolik bo'yicha hisoblangan (yil, oy)lar
+    for m in student.group_memberships:
+        g = m.group
+        if not g:
+            continue
+        if not g.is_active and g.closed_at is None:
+            continue
+        start = None
+        if g.start_date:
+            start = (g.start_date.year, g.start_date.month)
+        if m.joined_at:
+            joined = (m.joined_at.year, m.joined_at.month)
+            start = joined if start is None else max(start, joined)
+        if start is None:
+            continue
+        # Talaba shu a'zolik davrida (stint) qachongacha qarzdor bo'lgan — agar
+        # keyinroq shu guruhdan chiqarilgan bo'lsa (`left_at`), o'sha oydan
+        # keyingi oylar bu stint uchun hisoblanmaydi (boshqa stint yoki boshqa
+        # guruh bo'lsa, ular student.group_memberships'da alohida qator sifatida
+        # o'z chegarasi bilan hisoblanadi).
+        end = (upto_year, upto_month)
+        if m.left_at:
+            end = min(end, (m.left_at.year, m.left_at.month))
+        if not g.is_active:
+            # Arxivlangan guruh — arxivlangan oygacha hisoblanadi (o'tgan oylar unutilmaydi)
+            end = min(end, (g.closed_at.year, g.closed_at.month))
+        billed_groups.add(g.id)
+        if start > end:
+            continue
+        y, mo = start
+        while (y, mo) <= end:
+            if bills_month(m, mo, y):   # oy o'rtasida o'tkazilgan oy — faqat yangi a'zolikda
+                total += student_month_owed(db, student.id, g.id, mo, y,
+                                            group=g, discounts=discounts, vacations=vacations,
+                                            active_group_ids=active_group_ids)
+            billed_months.add((y, mo))
+            mo += 1
+            if mo > 12:
+                mo = 1
+                y += 1
+    # A'zoligi saqlanmagan guruh (eski versiyada a'zolik o'chirib yuborilgan, yoki
+    # arxiv sanasi noma'lum) bo'yicha to'lov — o'sha oyning o'zini yopadi. Aks holda
+    # u "ortiqcha to'lov" bo'lib boshqa oy qarzini yopib yuboradi (masalan S007 dagi
+    # avgust to'lovi S003 dagi sentyabr qarzini). Istisnolar — to'lov avans bo'lib
+    # qoladi: a'zoligi bor guruhning boshqa oyi (masalan guruh boshlanishidan oldin),
+    # yoki shu oy boshqa guruh a'zoligi bo'yicha hisoblangan (oy o'rtasida o'tkazilgan
+    # talaba — eski guruhga to'lagan oyi yangi guruhdagi o'sha oyni yopadi).
+    rows = (
+        db.query(models.Payment.group_id, models.Payment.year, models.Payment.month,
+                 func.sum(models.Payment.amount))
+        .filter(models.Payment.student_id == student.id)
+        .group_by(models.Payment.group_id, models.Payment.year, models.Payment.month)
+        .all()
+    )
+    for gid, y, mo, amount in rows:
+        if (gid not in billed_groups and (y, mo) not in billed_months
+                and (y, mo) <= (upto_year, upto_month)):
+            total += Decimal(str(amount or 0))
+    return total
+
+
+def student_total_paid_all_time(db: Session, student_id: int) -> Decimal:
+    """Talabaning butun tarix davomida jami to'lovi (oy/yilga bog'liq emas)."""
+    total = db.query(func.sum(models.Payment.amount)).filter(models.Payment.student_id == student_id).scalar()
+    return Decimal(str(total or 0))
+
+
+def student_cumulative_balance(db: Session, student: models.Student, upto_year: int = None, upto_month: int = None) -> Decimal:
+    """Talabaning JAMLANGAN moliyaviy holati: musbat = ortiqcha to'lov (balans),
+    manfiy = qarz. Oy-oy emas — bitta oyda ortiqcha to'langan summa boshqa
+    oydagi qarzni avtomatik yopadi (yagona manba, CRM va ota-ona ilovasi
+    bir xil natija ko'rishi uchun)."""
+    owed = student_cumulative_owed(db, student, upto_year, upto_month)
+    paid = student_total_paid_all_time(db, student.id) + Decimal(str(student.advance_balance or 0))
+    return paid - owed
 
 
 def advance_eligible_month(student: models.Student) -> Optional[tuple]:

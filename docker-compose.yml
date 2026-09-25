@@ -6,12 +6,11 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ithub_user
-      POSTGRES_PASSWORD: IthubSecure2026
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD .env da berilishi shart}
       POSTGRES_DB: ithub_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Port tashqariga ochilmaydi — backend DB'ga ichki docker tarmog'i orqali ulanadi.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ithub_user -d ithub_db"]
       interval: 5s
@@ -27,11 +26,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://ithub_user:IthubSecure2026@db:5432/ithub_db
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-525600}
+      DATABASE_URL: postgresql://ithub_user:${POSTGRES_PASSWORD}@db:5432/ithub_db
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY .env da berilishi shart}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-720}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5373}
-      CAMERA_API_KEY: ${CAMERA_API_KEY:-minar-camera-secret-2026}
+      CAMERA_API_KEY: ${CAMERA_API_KEY:-}   # bo'sh — kamera API o'chiq
     volumes:
       - uploads_data:/app/uploads
     depends_on:

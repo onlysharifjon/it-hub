@@ -1,4 +1,5 @@
 import calendar
+import hashlib
 import html
 import json
 import os
@@ -14,11 +15,11 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import fastapi.encoders as _fastapi_encoders
 import bcrypt as _bcrypt
 from jose import JWTError, jwt
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, or_
 from sqlalchemy.orm import Session, selectinload, joinedload
 
 from . import models, schemas, core_calc, bot_client, work_center, tz
@@ -38,7 +39,7 @@ load_dotenv()
 # Batafsil: backend/tz.py
 _fastapi_encoders.ENCODERS_BY_TYPE[datetime] = tz.isoformat
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+from .security import SECRET_KEY  # bo'sh/standart kalit bilan ishga tushmaydi
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "720"))  # default 12h
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174").split(",")
@@ -67,10 +68,34 @@ CAMERA_API_KEY = os.getenv("CAMERA_API_KEY", "")
 # Standart docs'ni o'chiramiz — nginx `/api/` prefiksi bilan mos kelmaydi va o'rniga
 # parol bilan himoyalangan variantini beramiz (openapi.json ham himoyalangan).
 # openapi_url=None — FastAPI'ning himoyasiz built-in /openapi.json marshrutini o'chiradi.
-DOCS_PASSWORD = os.getenv("DOCS_PASSWORD", "1107")
+DOCS_PASSWORD = os.getenv("DOCS_PASSWORD", "")  # bo'sh — /docs butunlay yopiq
+import logging
+from contextlib import asynccontextmanager
+
+log = logging.getLogger("ithub")
+
+# Startup vazifalari (seederlar, fon rejalashtiruvchilari) — `@_on_startup` bilan
+# ro'yxatga olinadi va lifespan'da tartib bilan ishga tushadi (eskirgan
+# `@app.on_event("startup")` o'rniga).
+_startup_hooks: list = []
+
+
+def _on_startup(fn):
+    _startup_hooks.append(fn)
+    return fn
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    for fn in _startup_hooks:
+        fn()
+    yield
+
+
 app = FastAPI(
     title="IT Hub — LMS API", version="3.0.0",
     docs_url=None, redoc_url=None, openapi_url=None,
+    lifespan=_lifespan,
 )
 
 # Public bazaviy yo'l (nginx orqali): https://crm.minaracademy.uz/api
@@ -94,7 +119,8 @@ def require_docs_auth(creds: Optional[HTTPBasicCredentials] = Depends(_docs_basi
         detail="Hujjatlar uchun parol kerak",
         headers={"WWW-Authenticate": 'Basic realm="Minar CRM Docs"'},
     )
-    if not creds or not _sec.compare_digest(creds.password, DOCS_PASSWORD):
+    if not DOCS_PASSWORD or not creds or not _sec.compare_digest(
+            creds.password.encode(), DOCS_PASSWORD.encode()):
         raise unauth
     return True
 
@@ -140,6 +166,11 @@ DEMO_USERS = [
 DEFAULT_STAGES = [
     {"slug": "new",       "name": "Yangi",             "order": 10, "color": "sky",     "icon": "sparkles",       "kind": "lead"},
     {"slug": "called",    "name": "Qo'ng'iroq qilindi","order": 20, "color": "indigo",  "icon": "phone",          "kind": "lead"},
+    # "Javob bermadi" — lid yo'qolgani EMAS: raqam ko'tarilmadi, ya'ni uni
+    # yana chaqirish kerak. Shuning uchun kind="lead" (voronkada qoladi) va
+    # "Qayta qo'ng'iroq"dan oldin turadi: avval javob yo'q, keyin kelishilgan
+    # qayta qo'ng'iroq. Slug ish markazidagi "no_answer" natijasi bilan bir xil.
+    {"slug": "no_answer", "name": "Javob bermadi",     "order": 25, "color": "slate",   "icon": "phone-slash",    "kind": "lead"},
     {"slug": "callback",  "name": "Qayta qo'ng'iroq",  "order": 30, "color": "amber",   "icon": "phone-incoming", "kind": "lead"},
     {"slug": "will_come", "name": "Keladi",            "order": 40, "color": "violet",  "icon": "calendar",       "kind": "lead"},
     {"slug": "demo",      "name": "Demo",              "order": 45, "color": "purple",  "icon": "video",          "kind": "lead"},
@@ -158,7 +189,7 @@ DEFAULT_SOURCES = [
 ]
 
 
-@app.on_event("startup")
+@_on_startup
 def ensure_default_users() -> None:
     """Faqat admin akkountini ta'minlaydi (parol env orqali). Mavjud parollarga tegmaydi."""
     from .database import SessionLocal
@@ -193,7 +224,7 @@ def ensure_default_users() -> None:
         db.close()
 
 
-@app.on_event("startup")
+@_on_startup
 def ensure_default_pipeline() -> None:
     """Standart pipeline bosqichlari va lid manbalarini yaratadi (bir marta)."""
     from .database import SessionLocal
@@ -213,6 +244,7 @@ def ensure_default_pipeline() -> None:
                 ))
         db.commit()
     except Exception:
+        log.exception("Startup: standart pipeline/manbalarni yaratib bo'lmadi")
         db.rollback()
     finally:
         db.close()
@@ -225,7 +257,7 @@ DEFAULT_TARIFFS = [
 ]
 
 
-@app.on_event("startup")
+@_on_startup
 def ensure_default_tariffs() -> None:
     """Global 'Pro' va 'Starter' tariflarini ta'minlaydi (nomiga qarab, takrorlamaydi)."""
     from .database import SessionLocal
@@ -241,6 +273,7 @@ def ensure_default_tariffs() -> None:
                 db.add(models.Tariff(name=t["name"], price=t["price"], is_active=True))
         db.commit()
     except Exception:
+        log.exception("Startup: standart tariflarni yaratib bo'lmadi")
         db.rollback()
     finally:
         db.close()
@@ -255,7 +288,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+from . import uploads_sign
+
+
+@app.get("/uploads/{rel_path:path}", include_in_schema=False)
+def serve_upload(rel_path: str, exp: Optional[str] = None, sig: Optional[str] = None):
+    """Yuklangan fayllar. Sertifikat PDF'lari (uuid nomli) ochiq; qolgan hamma narsa
+    (avatarlar, talaba va yuz rasmlari) faqat backend bergan imzoli, muddatli havola
+    bilan ochiladi — ko'ring: uploads_sign. Avval bu papka butunlay ochiq edi va
+    `student_photos/{id}.jpg` kabi yo'llarni ketma-ket terib yuz rasmlarini olish mumkin edi."""
+    base = os.path.realpath(UPLOAD_DIR)
+    path = os.path.realpath(os.path.join(base, rel_path))
+    if not path.startswith(base + os.sep):
+        raise HTTPException(status_code=404)
+    if not rel_path.startswith(uploads_sign.PUBLIC_PREFIXES) and not uploads_sign.verify(rel_path, exp, sig):
+        raise HTTPException(status_code=403, detail="Havola yaroqsiz yoki muddati o'tgan")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404)
+    return FileResponse(path, headers={
+        "Cache-Control": "private, max-age=3600",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 # Ota-ona mobil ilovasi API (/parent/...) — alohida paketda
 from .parent.router_parent import router as parent_router
@@ -269,10 +322,7 @@ app.include_router(facebook_leads_router)
 
 
 # ── Rate limiting (in-memory; single-process pm2 fork) ───────────────────────
-import time as _time
-from collections import defaultdict
-
-_rate_hits: dict = defaultdict(list)  # key -> [timestamps]
+from . import security as _security
 
 
 def _client_ip(request: Request) -> str:
@@ -286,16 +336,12 @@ def _client_ip(request: Request) -> str:
 
 
 def rate_limit(key: str, *, limit: int, window: int):
-    """Oddiy sliding-window limiter. Limitdan oshsa 429 qaytaradi."""
-    now = _time.time()
-    hits = [t for t in _rate_hits[key] if now - t < window]
-    if len(hits) >= limit:
+    """Sliding-window limiter (security.rate_limit_ok — yagona ombor). Limitdan oshsa 429."""
+    if not _security.rate_limit_ok(key, limit=limit, window=window):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Juda ko'p urinish. Birozdan so'ng qayta urinib ko'ring.",
         )
-    hits.append(now)
-    _rate_hits[key] = hits
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -312,6 +358,16 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
+def _pw_version(hashed_password: Optional[str]) -> str:
+    """Parol "versiyasi" — hash'dan olingan qisqa barmoq izi. Tokenga `pv` sifatida
+    yoziladi: parol almashsa hash ham o'zgaradi va eski tokenlar darhol yaroqsiz bo'ladi."""
+    return hashlib.sha256((hashed_password or "").encode()).hexdigest()[:16]
+
+
+# Login topilmaganda ham bcrypt ishlaydi — javob vaqtidan login bor-yo'qligini bilib bo'lmasin.
+_DUMMY_HASH = _bcrypt.hashpw(b"timing-equalizer", _bcrypt.gensalt()).decode()
+
+
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -325,10 +381,10 @@ def create_access_token(data: dict) -> str:
 DOWNLOAD_TOKEN_TTL_SECONDS = 120
 
 
-def create_download_token(username: str) -> str:
+def create_download_token(user: models.User) -> str:
     now = datetime.utcnow()
     return jwt.encode(
-        {"sub": username, "typ": "download",
+        {"sub": user.username, "typ": "download", "pv": _pw_version(user.hashed_password),
          "exp": now + timedelta(seconds=DOWNLOAD_TOKEN_TTL_SECONDS)},
         SECRET_KEY, algorithm=ALGORITHM,
     )
@@ -352,9 +408,14 @@ def require_auth(
             raise exc
     except JWTError:
         raise exc
+    if payload.get("typ") is not None:
+        # Yuklab-olish (typ=download) va boshqa maxsus tokenlar API uchun emas
+        raise exc
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user or not user.is_active:
         raise exc
+    if not _sec.compare_digest(str(payload.get("pv", "")), _pw_version(user.hashed_password)):
+        raise exc  # parol almashtirilgan — eski token bekor
     # Check expiry on each request
     if user.expires_at and datetime.utcnow() > user.expires_at:
         user.is_active = False
@@ -474,6 +535,8 @@ def _resolve_token(raw_token: str, db: Session, *, expect_download: bool) -> mod
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user or not user.is_active:
         raise exc
+    if not _sec.compare_digest(str(payload.get("pv", "")), _pw_version(user.hashed_password)):
+        raise exc
     if user.role != UserRole.admin.value:
         raise HTTPException(status_code=403, detail="Bu amal faqat admin uchun")
     return user
@@ -518,10 +581,18 @@ def login(payload: schemas.LoginRequest, request: Request, db: Session = Depends
     ip = _client_ip(request)
     # Brute-force himoyasi: IP bo'yicha 10/min, login bo'yicha 5/min
     rate_limit(f"login-ip:{ip}", limit=10, window=60)
-    rate_limit(f"login-user:{payload.username.lower()}", limit=5, window=60)
+    # Login bo'yicha limit IP bilan birga — begona odam ataylab xato parol terib
+    # xodimning akkauntini bloklab qo'ya olmasin; umumiy (IP'siz) limit esa ko'p
+    # IP'dan taqsimlangan brute-force'ni cheklaydi.
+    uname = payload.username.lower()
+    rate_limit(f"login-user-ip:{uname}:{ip}", limit=5, window=60)
+    rate_limit(f"login-user:{uname}", limit=30, window=60)
 
     user = db.query(models.User).filter(models.User.username == payload.username).first()
-    if not user or not verify_password(payload.password, user.hashed_password):
+    if not user:
+        verify_password(payload.password, _DUMMY_HASH)  # vaqt bir xil bo'lsin
+        raise HTTPException(status_code=401, detail="Login yoki parol xato")
+    if not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Login yoki parol xato")
 
     # Muddati tugagan — avtomatik bloklash
@@ -545,7 +616,8 @@ def login(payload: schemas.LoginRequest, request: Request, db: Session = Depends
             "contact": user.blocked_contact or "",
         })
 
-    token = create_access_token({"sub": user.username, "role": user.role})
+    token = create_access_token({"sub": user.username, "role": user.role,
+                                 "pv": _pw_version(user.hashed_password)})
     return schemas.TokenResponse(access_token=token)
 
 
@@ -558,7 +630,7 @@ def me(user: models.User = Depends(require_auth)):
 def download_token(user: models.User = Depends(require_admin)):
     """Chek/Excel URL'lari uchun qisqa muddatli (2 daqiqa) token beradi.
     Uzoq muddatli kirish tokeni URL query-parametrida yuborilmasligi uchun."""
-    return {"token": create_download_token(user.username), "expires_in": DOWNLOAD_TOKEN_TTL_SECONDS}
+    return {"token": create_download_token(user), "expires_in": DOWNLOAD_TOKEN_TTL_SECONDS}
 
 
 @app.put("/me", response_model=schemas.UserRead)
@@ -580,32 +652,54 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_AVATAR_BYTES = 5 * 1024 * 1024  # 5 MB
 
 
+def _image_ext(contents: bytes, allow_gif: bool = True) -> Optional[str]:
+    """Fayl ichidagi magic bytes bo'yicha rasm turini aniqlaydi — fayl nomi va
+    content-type'ga ishonmaymiz. Rasm bo'lmasa None."""
+    if contents.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if contents.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if contents[:4] == b"RIFF" and contents[8:12] == b"WEBP":
+        return "webp"
+    if allow_gif and contents[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    return None
+
+
+async def _read_image_upload(file: UploadFile, *, allow_gif: bool = True) -> tuple:
+    """Rasmni o'qiydi, hajm (5 MB) va ichidagi turini tekshiradi -> (bytes, ext)."""
+    contents = await file.read(MAX_AVATAR_BYTES + 1)
+    if len(contents) > MAX_AVATAR_BYTES:
+        raise HTTPException(400, "Fayl hajmi 5 MB dan oshmasin")
+    ext = _image_ext(contents, allow_gif=allow_gif)
+    if not ext:
+        raise HTTPException(400, "Faqat JPEG, PNG, WebP" + (" yoki GIF" if allow_gif else "") + " rasm yuklash mumkin")
+    return contents, ext
+
+
+def _store_upload(subdir: str, ext: str, contents: bytes, old_rel: Optional[str]) -> str:
+    """Faylni tasodifiy (uuid) nom bilan saqlaydi, eskisini o'chiradi -> nisbiy yo'l."""
+    rel = f"{subdir}/{uuid4().hex}.{ext}"
+    with open(os.path.join(UPLOAD_DIR, rel), "wb") as f:
+        f.write(contents)
+    if old_rel and old_rel != rel and "/" in old_rel and ".." not in old_rel:
+        try:
+            os.remove(os.path.join(UPLOAD_DIR, old_rel))
+        except OSError:
+            pass
+    return rel
+
+
 @app.post("/me/avatar", response_model=schemas.UserRead)
 async def upload_avatar(
     file: UploadFile = File(...),
     user: models.User = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(400, "Faqat JPEG, PNG, WebP yoki GIF rasm yuklash mumkin")
-
-    contents = await file.read()
-    if len(contents) > MAX_AVATAR_BYTES:
-        raise HTTPException(400, "Fayl hajmi 5 MB dan oshmasin")
-
-    # Kengaytmani content-type'dan aniqlaymiz — foydalanuvchi fayl nomiga ISHONMAYMIZ
+    # Kengaytmani fayl ichidan aniqlaymiz — foydalanuvchi fayl nomiga ISHONMAYMIZ
     # (aks holda .html/.svg yuklab stored-XSS qilish mumkin edi)
-    ext = {
-        "image/jpeg": "jpg", "image/png": "png",
-        "image/webp": "webp", "image/gif": "gif",
-    }[file.content_type]
-    filename = f"{user.id}.{ext}"
-    filepath = os.path.join(AVATARS_DIR, filename)
-
-    with open(filepath, "wb") as f:
-        f.write(contents)
-
-    user.avatar = f"avatars/{filename}"
+    contents, ext = await _read_image_upload(file)
+    user.avatar = _store_upload("avatars", ext, contents, user.avatar)
     db.commit()
     db.refresh(user)
     return user
@@ -1023,11 +1117,26 @@ def _student_owed_total(db: Session, s: models.Student, month: int = None, year:
     """Talabaning oylik to'liq summasi — faol guruhlar bo'yicha (tarif yoki guruh narxi).
     _student_month_owed bilan bir xil mantiq — ta'til va Special chegirmalar qo'llanadi."""
     total = Decimal(0)
-    active_group_ids = [m.group.id for m in s.group_memberships if m.group and m.group.is_active]
+    active_group_ids = {m.group.id for m in s.group_memberships
+                        if m.group and m.group.is_active and m.left_at is None}
     primary_group_id = min(active_group_ids) if active_group_ids else None
     for m in s.group_memberships:
         g = m.group
-        if not g or not g.is_active:
+        if not g:
+            continue
+        if month is not None and year is not None:
+            if not core_calc.group_billable_in(g, month, year):
+                continue  # guruh so'ralgan oydan oldin arxivlangan
+        elif not g.is_active:
+            continue
+        # Talaba shu (oy,yil)da haqiqatan shu guruh a'zosi bo'lganmi (keyinroq
+        # boshqa guruhga o'tkazilgan/chiqarilgan bo'lsa, endi eski a'zolik
+        # yozuvi o'chirilmaydi — shuning uchun bu tekshiruv shart, aks holda
+        # allaqachon tark etilgan guruh uchun ham qarz hisoblanaveradi).
+        if month is not None and year is not None:
+            if not core_calc.bills_month(m, month, year):
+                continue
+        elif m.left_at is not None:
             continue
         if g.start_date:
             if month is not None and year is not None:
@@ -1045,15 +1154,23 @@ def _student_owed_total(db: Session, s: models.Student, month: int = None, year:
             price = core_calc.apply_vacations_to_price(db, s.id, g, month, year, price, vacations)
         if discounts:
             apply_global = primary_group_id is None or primary_group_id == g.id
-            price = core_calc.apply_special_discounts(price, discounts, g.id, month, year, apply_global=apply_global)
+            price = core_calc.apply_special_discounts(price, discounts, g.id, month, year,
+                                                       apply_global=apply_global,
+                                                       active_group_ids=active_group_ids)
         total += price
     return total.quantize(Decimal('1'))
 
 
 def _students_payment_map(db: Session, students, month: int, year: int) -> dict:
-    """Har talaba uchun (owed, paid, debt, status) — bir marta agregat so'rov bilan."""
+    """Har talaba uchun (owed, paid, debt, status, balance) — bir marta agregat so'rov bilan.
+
+    `owed`/`paid` — shu OYNING narxi/to'lovi (ma'lumot uchun, guruh narxini ko'rsatadi).
+    `debt`/`status`/`balance` — JAMLANGAN (kumulyativ) hisob: ro'yxatdan o'tgandan
+    bugungacha jami qarz vs jami to'lov. Bitta oyda ortiqcha to'langan summa
+    boshqa oydagi qarzni avtomatik yopadi (`core_calc.student_cumulative_balance`)."""
     ids = [s.id for s in students]
     paid_by = {}
+    total_paid_by = {}
     discounts_by = {}
     vacations_by = {}
     if ids:
@@ -1064,6 +1181,12 @@ def _students_payment_map(db: Session, students, month: int, year: int) -> dict:
             .group_by(models.Payment.student_id).all()
         )
         paid_by = {sid: Decimal(str(amt or 0)) for sid, amt in rows}
+        total_rows = (
+            db.query(models.Payment.student_id, func.sum(models.Payment.amount))
+            .filter(models.Payment.student_id.in_(ids))
+            .group_by(models.Payment.student_id).all()
+        )
+        total_paid_by = {sid: Decimal(str(amt or 0)) for sid, amt in total_rows}
         # Special chegirmalar — bitta so'rovda
         for d in db.query(models.SpecialDiscount).filter(
             models.SpecialDiscount.student_id.in_(ids),
@@ -1079,17 +1202,18 @@ def _students_payment_map(db: Session, students, month: int, year: int) -> dict:
     for s in students:
         owed = _student_owed_total(db, s, month, year, discounts_by.get(s.id), vacations_by.get(s.id))
         paid = paid_by.get(s.id, Decimal(0))
-        advance = core_calc.advance_amount_for_month(s, month, year)
-        # Avans balansi qarzni kamaytiradi (faqat birinchi oyda — pastga qarang)
-        advance_applied = min(advance, max(Decimal(0), owed - paid))
-        covered = paid + advance
-        debt = max(Decimal(0), owed - covered)
-        if owed <= 0:
+        cum_owed = core_calc.student_cumulative_owed(
+            db, s, upto_year=year, upto_month=month,
+            discounts=discounts_by.get(s.id, []), vacations=vacations_by.get(s.id, []),
+        )
+        cum_paid = total_paid_by.get(s.id, Decimal(0)) + Decimal(str(s.advance_balance or 0))
+        balance = cum_paid - cum_owed
+        debt = max(Decimal(0), -balance)
+        advance_applied = max(Decimal(0), balance)
+        if cum_owed <= 0:
             status = "none"
-        elif covered >= owed:
+        elif debt <= 0:
             status = "paid"
-        elif covered > 0:
-            status = "partial"
         else:
             status = "debtor"
         out[s.id] = (owed, paid, debt, status, advance_applied)
@@ -1105,14 +1229,15 @@ def _student_read(s: models.Student, pay: Optional[tuple] = None) -> schemas.Stu
         father_name=s.father_name, father_phone=s.father_phone,
         mother_name=s.mother_name, mother_phone=s.mother_phone,
         telegram_id=s.telegram_id, telegram_user_id=s.telegram_user_id,
-        photo=s.photo, notes=s.notes, is_active=s.is_active,
+        photo=uploads_sign.sign(s.photo), notes=s.notes, is_active=s.is_active,
         is_archived=s.is_archived, is_demo=s.is_demo, advance_balance=s.advance_balance,
         sales_credited=s.sales_credited_at is not None,
-        created_at=s.created_at, updated_at=s.updated_at, group_count=len(s.group_memberships),
-        group_names=[m.group.name for m in s.group_memberships if m.group],
+        created_at=s.created_at, updated_at=s.updated_at,
+        group_count=sum(1 for m in s.group_memberships if m.left_at is None),
+        group_names=[m.group.name for m in s.group_memberships if m.group and m.left_at is None],
         owed_month=owed, paid_month=paid, debt=debt, payment_status=pstatus,
         advance_applied=advance_applied,
-        photo_url=f"/uploads/{s.photo_path}" if s.photo_path else None,
+        photo_url=f"/uploads/{uploads_sign.sign(s.photo_path)}" if s.photo_path else None,
     )
 
 
@@ -1132,7 +1257,7 @@ def list_students(
     db: Session = Depends(get_db),
     _: models.User = Depends(require_lms_write),
 ):
-    now = datetime.utcnow()
+    now = tz.now()  # joriy oy — Toshkent vaqti bo'yicha
     month = month or now.month
     year = year or now.year
 
@@ -1221,7 +1346,7 @@ def update_student(student_id: int, payload: schemas.StudentUpdate, db: Session 
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
     changes = payload.dict(exclude_unset=True)
     if changes.get("is_demo") and not s.is_demo:
-        if any(m.group and m.group.is_active for m in s.group_memberships):
+        if any(m.group and m.group.is_active and m.left_at is None for m in s.group_memberships):
             raise HTTPException(status_code=400, detail="Aktiv guruhda o'qiyotgan talabani Demo bo'limiga o'tkazib bo'lmaydi")
     if "advance_balance" in changes and actor.role != UserRole.admin.value:
         raise HTTPException(status_code=403, detail="Avans balansini faqat admin o'zgartira oladi")
@@ -1281,10 +1406,7 @@ def _group_read(g: models.Group, db: Session = None) -> schemas.GroupRead:
     total = g.course.total_lessons if g.course else schemas.STAGE_TOTAL_LESSONS.get(stage, 24)
     completed = 0
     if db is not None:
-        completed = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
-            models.Attendance.group_id == g.id,
-            models.Attendance.is_present.isnot(None),
-        ).scalar() or 0
+        completed = core_calc.group_completed_lessons(db, [g.id]).get(g.id, 0)
     remaining = max(0, total - completed)
     pct = round(completed / total * 100, 1) if total > 0 else 0.0
     return schemas.GroupRead(
@@ -1295,7 +1417,7 @@ def _group_read(g: models.Group, db: Session = None) -> schemas.GroupRead:
         course_price=g.course_price, schedule=g.schedule, lesson_time=g.lesson_time,
         start_date=g.start_date, is_active=g.is_active,
         telegram_chat_id=g.telegram_chat_id,
-        created_at=g.created_at, student_count=len(g.members),
+        created_at=g.created_at, student_count=sum(1 for m in g.members if m.left_at is None),
         total_lessons=total, completed_lessons=completed,
         remaining_lessons=remaining, progress_pct=pct,
     )
@@ -1311,7 +1433,7 @@ def _group_detail(g: models.Group, db: Session = None) -> schemas.GroupDetail:
             tariff_id=m.tariff_id,
             tariff_name=m.tariff.name if m.tariff else None,
             tariff_price=m.tariff.price if m.tariff else None,
-        ) for m in g.members
+        ) for m in g.members if m.left_at is None
     ]
     base = _group_read(g, db=db)
     return schemas.GroupDetail(**base.dict(), members=members)
@@ -1410,6 +1532,9 @@ def update_group(group_id: int, payload: schemas.GroupUpdate, db: Session = Depe
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
     changes = payload.dict(exclude_unset=True)
     old = {k: str(getattr(g, k)) for k in changes}
+    if "is_active" in changes and changes["is_active"] != g.is_active:
+        # Arxivlash sanasi — qarz hisobi shu oygacha davom etadi (core_calc.group_billable_in)
+        g.closed_at = None if changes["is_active"] else datetime.utcnow()
     for k, v in changes.items():
         setattr(g, k, v)
     write_audit(db, entity_type="group", entity_id=g.id, action="update",
@@ -1439,7 +1564,8 @@ def add_student_to_group(group_id: int, payload: schemas.AddStudentToGroup, db: 
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
     exists = db.query(models.GroupStudent).filter(
         models.GroupStudent.group_id == group_id,
-        models.GroupStudent.student_id == payload.student_id
+        models.GroupStudent.student_id == payload.student_id,
+        models.GroupStudent.left_at.is_(None),
     ).first()
     if exists:
         raise HTTPException(status_code=400, detail="Talaba bu guruhda allaqachon mavjud")
@@ -1471,11 +1597,14 @@ def add_student_to_group(group_id: int, payload: schemas.AddStudentToGroup, db: 
 def remove_student_from_group(group_id: int, student_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     gs = db.query(models.GroupStudent).filter(
         models.GroupStudent.group_id == group_id,
-        models.GroupStudent.student_id == student_id
+        models.GroupStudent.student_id == student_id,
+        models.GroupStudent.left_at.is_(None),
     ).first()
     if not gs:
         raise HTTPException(status_code=404, detail="Topilmadi")
-    db.delete(gs)
+    # Qator o'CHIRILMAYDI — shunchaki "tark etgan" deb belgilanadi, shunda
+    # o'sha davrdagi qarz/to'lov tarixi (core_calc, _finance_month) saqlanib qoladi.
+    gs.left_at = datetime.utcnow()
     db.commit()
 
 
@@ -1537,7 +1666,7 @@ def student_payment_summary(
     _: models.User = Depends(require_crm_access),
 ):
     """Talabaning joriy oy uchun to'lov xulosasi — guruhlar kesimida qarz, avans va so'nggi to'lovlar."""
-    now = datetime.utcnow()
+    now = tz.now()  # joriy oy — Toshkent vaqti bo'yicha
     month, year = month or now.month, year or now.year
 
     s = (
@@ -1555,8 +1684,10 @@ def student_payment_summary(
     total_owed = total_paid = Decimal(0)
     for m in s.group_memberships:
         g = m.group
-        if not g or not g.is_active:
+        if not g or not core_calc.group_billable_in(g, month, year):
             continue
+        if not core_calc.covers_month(m, month, year):
+            continue  # talaba so'ralgan oyda shu guruh a'zosi bo'lmagan (boshqa guruhga o'tgan/chiqarilgan)
         owed = _student_month_owed(db, s.id, g.id, month, year)
         paid = _student_month_paid(db, s.id, g.id, month, year)
         total_owed += owed
@@ -1566,16 +1697,17 @@ def student_payment_summary(
             remaining=max(Decimal(0), owed - paid),
         ))
 
-    advance_display = Decimal(str(s.advance_balance or 0))     # umumiy avans balansi (ma'lumot uchun)
-    advance_applied = core_calc.advance_amount_for_month(s, month, year)  # shu oyga qo'llanadigani
-    covered = total_paid + advance_applied
-    debt = max(Decimal(0), total_owed - covered)
-    if total_owed <= 0:
+    # debt/status/advance_balance — JAMLANGAN (kumulyativ) hisob: bitta oyda ortiqcha
+    # to'langan summa boshqa oydagi qarzni avtomatik yopadi (yagona manba, Payments.jsx
+    # bilan bir xil natija ko'rsatishi uchun `core_calc.student_cumulative_balance`).
+    cum_owed = core_calc.student_cumulative_owed(db, s, upto_year=year, upto_month=month)
+    balance = core_calc.student_cumulative_balance(db, s, upto_year=year, upto_month=month)
+    debt = max(Decimal(0), -balance)
+    advance_display = max(Decimal(0), balance)
+    if cum_owed <= 0:
         status = "none"
-    elif covered >= total_owed:
+    elif debt <= 0:
         status = "paid"
-    elif covered > 0:
-        status = "partial"
     else:
         status = "debtor"
 
@@ -1778,18 +1910,20 @@ def _group_salary(db: Session, group: models.Group, month: int, year: int):
     if lessons_held <= 0:
         return Decimal(0), [], 0
 
-    # 1-query: guruh a'zolari va ismlari
-    member_rows = (
-        db.query(models.GroupStudent.student_id, models.Student.full_name)
+    # 1-query: guruh a'zolari va ismlari — shu OY davomida haqiqatan a'zo
+    # bo'lganlar (keyinroq chiqarilgan/o'tkazilgan bo'lsa ham, ko'ring: left_at).
+    all_members = (
+        db.query(models.GroupStudent, models.Student.full_name)
         .join(models.Student, models.Student.id == models.GroupStudent.student_id)
         .filter(models.GroupStudent.group_id == group.id)
         .all()
     )
+    member_rows = [(gs, name) for gs, name in all_members if core_calc.covers_month(gs, month, year)]
     if not member_rows:
         return Decimal(0), [], lessons_held
 
-    student_ids = [r.student_id for r in member_rows]
-    name_map    = {r.student_id: r.full_name for r in member_rows}
+    student_ids = [gs.student_id for gs, _ in member_rows]
+    name_map    = {gs.student_id: name for gs, name in member_rows}
 
     # 2-query: bir oyda har talaba uchun kelgan darslar soni (GROUP BY)
     att_rows = (
@@ -1903,7 +2037,7 @@ def stats_student_growth(
       • archived — shu oyda arxivlanganlar (chiqib ketganlar)
       • active   — oy oxiriga qadar faol bo'lgan talabalar (kumulyativ)
     """
-    sel_year = year or datetime.utcnow().year
+    sel_year = year or tz.today().year
 
     rows = (
         db.query(
@@ -1952,7 +2086,7 @@ def stats_overview(
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin),
 ):
-    now = datetime.utcnow()
+    now = tz.now()  # joriy oy — Toshkent vaqti bo'yicha
     cur_month, cur_year = now.month, now.year
     sel_year = year or cur_year
 
@@ -2164,18 +2298,7 @@ def teacher_my_dashboard(
     # yangilanishi uchun (avval oyga bog'liq bo'lmagan umumiy hisob edi).
     month_end_day = calendar.monthrange(sel_year, sel_month)[1]
     progress_cutoff = date(sel_year, sel_month, month_end_day)
-    comp_rows = (
-        db.query(models.Attendance.group_id,
-                 func.count(func.distinct(models.Attendance.lesson_date)).label('cnt'))
-        .filter(
-            models.Attendance.group_id.in_(group_ids),
-            models.Attendance.lesson_date <= progress_cutoff,
-            models.Attendance.is_present.isnot(None),
-        )
-        .group_by(models.Attendance.group_id)
-        .all()
-    )
-    completed_map = {r.group_id: r.cnt for r in comp_rows}
+    completed_map = core_calc.group_completed_lessons(db, group_ids, upto=progress_cutoff)
 
     # Batch 2: this-month lessons per group (1 query)
     mless_rows = (
@@ -2230,11 +2353,17 @@ def teacher_my_dashboard(
         held      = month_lessons_map.get(g.id, 0)
         per_lesson = (TEACHER_STUDENT_BONUS_UNIT / Decimal(held)) if held > 0 else Decimal(0)
 
+        # Hozirgi a'zolar emas — sel_month/sel_year davomida haqiqatan a'zo
+        # bo'lganlar: aks holda shu oyda dars qatnashib, keyin guruhdan
+        # chiqarilgan/boshqa guruhga o'tkazilgan talaba uchun o'qituvchi
+        # maoshidan judo bo'lardi (davomat yozuvi saqlanib qolgan bo'lsa ham).
+        month_members = core_calc.members_covering_month(g.members, sel_month, sel_year)
+
         group_salary    = Decimal(0)
         student_salaries = []
         g_att = att_map.get(g.id, {})
 
-        for mem in g.members:
+        for mem in month_members:
             attended = g_att.get(mem.student_id, 0)
             share    = (per_lesson * Decimal(str(attended))).quantize(Decimal('1'))
             group_salary += share
@@ -2246,7 +2375,7 @@ def teacher_my_dashboard(
             })
 
         total_salary   += group_salary
-        total_students += len(g.members)
+        total_students += len(month_members)
 
         groups_out.append({
             "id":                      g.id,
@@ -2256,7 +2385,7 @@ def teacher_my_dashboard(
             "schedule":                g.schedule or "",
             "lesson_time":             g.lesson_time or "",
             "start_date":              str(g.start_date) if g.start_date else None,
-            "student_count":           len(g.members),
+            "student_count":           len(month_members),
             "total_lessons":           total_less,
             "completed_lessons":       completed,
             "progress_pct":            pct,
@@ -2304,7 +2433,7 @@ def teacher_my_certificate_groups(
     )
     member_counts = dict(
         db.query(models.GroupStudent.group_id, func.count(models.GroupStudent.id))
-        .filter(models.GroupStudent.group_id.in_(group_ids))
+        .filter(models.GroupStudent.group_id.in_(group_ids), models.GroupStudent.left_at.is_(None))
         .group_by(models.GroupStudent.group_id)
         .all()
     )
@@ -2337,11 +2466,14 @@ def list_expenses(
 
 @app.get("/expenses/staff-options", response_model=List[schemas.StaffOption])
 def list_expense_staff_options(db: Session = Depends(get_db), _: models.User = Depends(require_hunter)):
-    """"Oylik" turidagi xarajat qo'shishda xodim tanlagich — hunter/admin uchun."""
+    """"Oylik" turidagi xarajat qo'shishda xodim tanlagich — hunter/admin uchun.
+
+    Bloklangan xodimlar ham chiqadi: ishdan bo'shagan/bloklangan xodimga
+    oxirgi oyligini xarajat sifatida yozish kerak bo'ladi. Ro'yxatda aktivlar
+    birinchi turadi, bloklanganlar UI'da belgilanadi."""
     return (
         db.query(models.User)
-        .filter(models.User.is_active.is_(True))
-        .order_by(models.User.full_name, models.User.username)
+        .order_by(models.User.is_active.desc(), models.User.full_name, models.User.username)
         .all()
     )
 
@@ -2527,6 +2659,7 @@ def _salary_row_for(db: Session, u: models.User, month: int, year: int,
         salary=salary, paid=paid, remaining=salary - paid,
         auto=is_auto, student_count=student_count, auto_salary=auto_salary,
         is_internship=is_internship, has_override=override is not None,
+        is_active=bool(u.is_active),
     )
 
 
@@ -2539,12 +2672,6 @@ def salary_overview(
 ):
     """Har bir xodimning belgilangan oyligi va shu oyda "oylik" turida
     to'langan xarajatlar (hunter kiritgan) yig'indisi — superadmin ko'radi."""
-    staff = (
-        db.query(models.User)
-        .filter(models.User.is_active.is_(True))
-        .order_by(models.User.full_name, models.User.username)
-        .all()
-    )
     paid_rows = (
         db.query(models.Expense.staff_id, func.sum(models.Expense.amount).label('total'))
         .filter(
@@ -2563,6 +2690,18 @@ def salary_overview(
             models.SalaryOverride.month == month, models.SalaryOverride.year == year,
         ).all()
     }
+
+    # Aktiv xodimlar + bloklangan bo'lsa ham shu oyda oyligi to'langan yoki
+    # qo'lda oylik belgilangan xodimlar (aks holda to'lov "yo'qolib" qolardi).
+    extra_ids = set(paid_map) | set(override_map)
+    staff_q = db.query(models.User)
+    if extra_ids:
+        staff_q = staff_q.filter(or_(models.User.is_active.is_(True), models.User.id.in_(extra_ids)))
+    else:
+        staff_q = staff_q.filter(models.User.is_active.is_(True))
+    staff = staff_q.order_by(
+        models.User.is_active.desc(), models.User.full_name, models.User.username
+    ).all()
 
     breakdown_map = _teacher_salary_breakdown(db, month, year)
     rows = []
@@ -3175,7 +3314,7 @@ def today_groups(
             "schedule": g.schedule,
             "lesson_time": g.lesson_time,
             "teacher_name": g.teacher.full_name or g.teacher.username if g.teacher else None,
-            "student_count": len(g.members),
+            "student_count": len(core_calc.members_covering_date(g.members, ref_date)),
             "attendance_taken": taken > 0,
             "attendance_count": taken,
             "date": str(ref_date),
@@ -3325,7 +3464,11 @@ def _finance_month(db: Session, month: int, year: int, *, with_students: bool = 
         student_details = []
         unpaid_count = 0
 
-        for m in g.members:
+        # Hozirgi a'zolar emas — shu OY davomida haqiqatan a'zo bo'lganlar
+        # (guruh o'zgartirgan/tark etgan talabalar ham shu oy uchun hisobga
+        # kiradi, ko'ring: models.GroupStudent.left_at).
+        month_members = core_calc.members_covering_month(g.members, month, year)
+        for m in month_members:
             attended = 0
             if with_students:
                 attended = db.query(func.count(models.Attendance.id)).filter(
@@ -3336,7 +3479,9 @@ def _finance_month(db: Session, month: int, year: int, *, with_students: bool = 
                     extract('year', models.Attendance.lesson_date) == year,
                 ).scalar() or 0
 
-            if not group_started:
+            if not group_started or not core_calc.bills_month(m, month, year):
+                # Guruh boshlanmagan, yoki talaba shu oy boshqa guruhga o'tkazilgan
+                # (bu oy yangi guruhda hisoblanadi — core_calc.bills_month)
                 price = Decimal(0)
                 tariff_name = None
             elif m.tariff:
@@ -3351,10 +3496,12 @@ def _finance_month(db: Session, month: int, year: int, *, with_students: bool = 
 
             if price > 0:
                 price = core_calc.vacation_adjusted_price(db, m.student_id, g.id, month, year, price)
-                apply_global = core_calc._primary_group_id(db, m.student_id) in (None, g.id)
+                m_active_group_ids = core_calc._active_group_ids(db, m.student_id)
+                apply_global = not m_active_group_ids or min(m_active_group_ids) == g.id
                 price = core_calc.apply_special_discounts(
                     price, core_calc.active_special_discounts(db, m.student_id),
                     g.id, month, year, apply_global=apply_global,
+                    active_group_ids=m_active_group_ids,
                 )
 
             if price > 0:
@@ -3395,7 +3542,7 @@ def _finance_month(db: Session, month: int, year: int, *, with_students: bool = 
         row = {
             "group_id": g.id,
             "group_name": g.name,
-            "student_count": len(g.members),
+            "student_count": len(month_members),
             "expected": float(expected),
             "actual": float(actual),
             "deficit": float(expected - actual),
@@ -3429,6 +3576,226 @@ def finance_monthly(
     return data
 
 
+# ── Kassa (naqd oqim) ────────────────────────────────────────────────────────
+#
+# "Moliya hisoboti" (`/finance/monthly`) HISOB oyi bo'yicha ishlaydi: to'lov
+# qaysi oy uchun qilingan bo'lsa, o'sha oyga yoziladi. Kassa esa boshqa
+# savolga javob beradi — "bugun sandiqqa qancha tushdi va qancha chiqdi?".
+# Shuning uchun bu yerda HAR DOIM haqiqiy harakat sanasi olinadi:
+#     kirim  → `payments.paid_at`   (pul qachon qabul qilingan)
+#     chiqim → `expenses.created_at` (xarajat qachon yozilgan)
+# Masalan avgust oyi uchun 10-sentyabrda kelgan to'lov moliya hisobotida
+# avgustda, kassada esa 10-sentyabrda ko'rinadi — ikkalasi ham to'g'ri,
+# chunki savol boshqa.
+#
+# Sanalar bazada naive UTC, foydalanuvchi esa Toshkent kunini ko'radi —
+# guruhlash `tz.to_local()` orqali, filtrlar `tz.day_bounds()/month_bounds()`
+# orqali (aks holda kechqurun 19:00 dan keyingi harakat ertangi kunga tushardi).
+
+
+def _cash_totals(db: Session, start: Optional[datetime], end: Optional[datetime]) -> tuple:
+    """[start, end) naive UTC oralig'idagi kirim va chiqim yig'indisi.
+
+    `start=None` — boshidan; `end=None` — oxirigacha (umumiy qoldiq uchun)."""
+    pay_q = db.query(func.sum(models.Payment.amount))
+    exp_q = db.query(func.sum(models.Expense.amount))
+    if start is not None:
+        pay_q = pay_q.filter(models.Payment.paid_at >= start)
+        exp_q = exp_q.filter(models.Expense.created_at >= start)
+    if end is not None:
+        pay_q = pay_q.filter(models.Payment.paid_at < end)
+        exp_q = exp_q.filter(models.Expense.created_at < end)
+    return (pay_q.scalar() or Decimal(0), exp_q.scalar() or Decimal(0))
+
+
+def _cash_day_snapshot(db: Session, d: date) -> dict:
+    """Bitta Toshkent kunining kirim/chiqimi (Bugun / Kecha kartalari uchun)."""
+    start, end = tz.day_bounds(d)
+    income, expense = _cash_totals(db, start, end)
+    pay_count = db.query(func.count(models.Payment.id)).filter(
+        models.Payment.paid_at >= start, models.Payment.paid_at < end).scalar() or 0
+    exp_count = db.query(func.count(models.Expense.id)).filter(
+        models.Expense.created_at >= start, models.Expense.created_at < end).scalar() or 0
+    return {
+        "date": d.isoformat(),
+        "income": float(income),
+        "expense": float(expense),
+        "net": float(income - expense),
+        "payment_count": pay_count,
+        "expense_count": exp_count,
+    }
+
+
+@app.get("/cashbox")
+def cashbox_overview(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """Kassa — kun kesimida kirim/chiqim va qoldiq (faqat superadmin).
+
+    `days` — oyning har bir kuni (joriy oyda bugungacha), harakatsiz kunlar
+    ham nol bilan qaytadi: "o'sha kuni umuman pul tushmagan" degan javob ham
+    hisobot uchun kerak. Har kunning `balance` maydoni — o'sha kun oxiridagi
+    kassa qoldig'i (oy boshida 0 dan yurgizilgan — oldingi oylardan qoldiq
+    ko'chirilmaydi, har oy kassa 0 dan boshlanadi).
+    """
+    m_start, m_end = tz.month_bounds(year, month)
+
+    # Kassa har oy 0 dan boshlanadi — oldingi oylarning qoldig'i bu oyga
+    # ko'chirilmaydi, faqat shu oyning o'zida qabul qilingan/chiqarilgan pul
+    # hisoblanadi.
+    opening = Decimal(0)
+
+    pay_rows = (
+        db.query(models.Payment.paid_at, models.Payment.amount)
+        .filter(models.Payment.paid_at >= m_start, models.Payment.paid_at < m_end)
+        .all()
+    )
+    exp_rows = (
+        db.query(models.Expense.created_at, models.Expense.amount, models.Expense.category)
+        .filter(models.Expense.created_at >= m_start, models.Expense.created_at < m_end)
+        .all()
+    )
+
+    buckets: dict[date, dict] = {}
+
+    def bucket(d: date) -> dict:
+        return buckets.setdefault(d, {
+            "income": Decimal(0), "expense": Decimal(0),
+            "payment_count": 0, "expense_count": 0,
+        })
+
+    month_income = Decimal(0)
+    month_expense = Decimal(0)
+    salary_expense = Decimal(0)
+
+    for paid_at, amount in pay_rows:
+        b = bucket(tz.to_local(paid_at).date())
+        b["income"] += amount
+        b["payment_count"] += 1
+        month_income += amount
+
+    for created_at, amount, category in exp_rows:
+        b = bucket(tz.to_local(created_at).date())
+        b["expense"] += amount
+        b["expense_count"] += 1
+        month_expense += amount
+        if category == 'salary':
+            salary_expense += amount
+
+    # Oyning kunlari: joriy oyda kelajakdagi (hali kelmagan) kunlar
+    # ko'rsatilmaydi — ular bo'sh qator sifatida jadvalni cho'zardi.
+    today = tz.today()
+    last_day = calendar.monthrange(year, month)[1]
+    if (year, month) == (today.year, today.month):
+        last_day = today.day
+    elif (year, month) > (today.year, today.month):
+        last_day = 0
+
+    days = []
+    running = opening
+    for day_num in range(1, last_day + 1):
+        d = date(year, month, day_num)
+        b = buckets.get(d)
+        income = b["income"] if b else Decimal(0)
+        expense = b["expense"] if b else Decimal(0)
+        running += income - expense
+        days.append({
+            "date": d.isoformat(),
+            "weekday": d.weekday(),          # 0 — dushanba
+            "income": float(income),
+            "expense": float(expense),
+            "net": float(income - expense),
+            "balance": float(running),
+            "payment_count": b["payment_count"] if b else 0,
+            "expense_count": b["expense_count"] if b else 0,
+        })
+
+    total_in, total_out = _cash_totals(db, None, None)
+
+    return {
+        "month": month,
+        "year": year,
+        "today": _cash_day_snapshot(db, today),
+        "yesterday": _cash_day_snapshot(db, today - timedelta(days=1)),
+        "opening_balance": float(opening),
+        "month_income": float(month_income),
+        "month_expense": float(month_expense),
+        "month_salary_expense": float(salary_expense),
+        "month_other_expense": float(month_expense - salary_expense),
+        "month_net": float(month_income - month_expense),
+        "closing_balance": float(opening + month_income - month_expense),
+        # Kassa qoldig'i — FAQAT tanlangan oy bo'yicha (kirim - chiqim).
+        # Oldingi oylardan qoldiq ko'chirilmaydi, har oy 0 dan boshlanadi.
+        "balance": float(month_income - month_expense),
+        "total_income": float(total_in),
+        "total_expense": float(total_out),
+        "days": days,
+    }
+
+
+@app.get("/cashbox/day")
+def cashbox_day(
+    target_date: date = Query(..., alias="date"),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """Bir kunning kassa tafsiloti — har bir kirim va chiqim alohida qator."""
+    start, end = tz.day_bounds(target_date)
+
+    payments = (
+        db.query(models.Payment)
+        .options(joinedload(models.Payment.student), joinedload(models.Payment.group),
+                 joinedload(models.Payment.recorded_by))
+        .filter(models.Payment.paid_at >= start, models.Payment.paid_at < end)
+        .order_by(models.Payment.paid_at)
+        .all()
+    )
+    expenses = (
+        db.query(models.Expense)
+        .options(joinedload(models.Expense.staff))
+        .filter(models.Expense.created_at >= start, models.Expense.created_at < end)
+        .order_by(models.Expense.created_at)
+        .all()
+    )
+
+    income = sum((p.amount for p in payments), Decimal(0))
+    expense = sum((e.amount for e in expenses), Decimal(0))
+
+    return {
+        "date": target_date.isoformat(),
+        "income": float(income),
+        "expense": float(expense),
+        "net": float(income - expense),
+        "payments": [{
+            "id": p.id,
+            "paid_at": p.paid_at,
+            "amount": float(p.amount),
+            "student_id": p.student_id,
+            "student_name": p.student.full_name if p.student else None,
+            "group_name": p.group.name if p.group else None,
+            # To'lov qaysi oy uchun — kassa sanasidan farq qilishi mumkin
+            # (avgust oyi uchun sentyabrda to'langan bo'lsa).
+            "for_month": p.month,
+            "for_year": p.year,
+            "recorded_by": (p.recorded_by.full_name or p.recorded_by.username) if p.recorded_by else None,
+            "notes": p.notes,
+        } for p in payments],
+        "expenses": [{
+            "id": e.id,
+            "created_at": e.created_at,
+            "amount": float(e.amount),
+            "name": e.name,
+            "category": e.category,
+            "staff_name": e.staff_name,
+            "for_month": e.month,
+            "for_year": e.year,
+        } for e in expenses],
+    }
+
+
 @app.get("/groups/{group_id}/camera-attendance")
 def group_camera_attendance(
     group_id: int,
@@ -3443,7 +3810,7 @@ def group_camera_attendance(
     member_ids = [
         gs.student_id for gs in
         db.query(models.GroupStudent.student_id)
-        .filter(models.GroupStudent.group_id == group_id)
+        .filter(models.GroupStudent.group_id == group_id, models.GroupStudent.left_at.is_(None))
         .all()
     ]
     if not member_ids:
@@ -3489,11 +3856,14 @@ def get_attendance(
     if actor.role == UserRole.teacher.value and group.teacher_id != actor.id:
         raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
 
-    members = (
+    all_members = (
         db.query(models.GroupStudent)
         .filter(models.GroupStudent.group_id == group_id)
         .all()
     )
+    # O'sha (month,year)da haqiqatan a'zo bo'lganlar — keyin boshqa guruhga
+    # o'tgan/chiqarilgan talaba ham o'sha oy uchun davomat tarixida ko'rinishi kerak.
+    members = core_calc.members_covering_month(all_members, month, year)
     student_ids = [m.student_id for m in members]
 
     records = (
@@ -3655,7 +4025,7 @@ def _visit_read(v: models.StudentVisit) -> schemas.StudentVisitRead:
     return schemas.StudentVisitRead(
         id=v.id, student_id=v.student_id,
         student_name=v.student.full_name if v.student else None,
-        student_photo=v.student.photo if v.student else None,
+        student_photo=uploads_sign.sign(v.student.photo) if v.student else None,
         kind=v.kind,
         noted_by_name=(v.noted_by.full_name or v.noted_by.username) if v.noted_by else None,
         telegram_sent=v.telegram_sent, telegram_error=v.telegram_error,
@@ -3726,19 +4096,8 @@ async def upload_student_photo(
     s = db.query(models.Student).filter(models.Student.id == student_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(400, "Faqat JPEG, PNG, WebP yoki GIF rasm yuklash mumkin")
-    contents = await file.read()
-    if len(contents) > MAX_AVATAR_BYTES:
-        raise HTTPException(400, "Fayl hajmi 5 MB dan oshmasin")
-    ext = {
-        "image/jpeg": "jpg", "image/png": "png",
-        "image/webp": "webp", "image/gif": "gif",
-    }[file.content_type]
-    filename = f"{student_id}.{ext}"
-    with open(os.path.join(STUDENTS_DIR, filename), "wb") as f:
-        f.write(contents)
-    s.photo = f"students/{filename}"
+    contents, ext = await _read_image_upload(file)
+    s.photo = _store_upload("students", ext, contents, s.photo)
     db.commit()
     db.refresh(s)
     return _student_read(s)
@@ -4168,11 +4527,11 @@ def _investor_scheduler_loop() -> None:
                     send_telegram_message(chat_id, build_investor_daily_stats_message())
                     _investor_setting_set("investor_daily_stats_last_sent", today_str)
         except Exception:
-            pass
+            log.exception("Investor rejalashtiruvchisi xatosi")
         time.sleep(60)
 
 
-@app.on_event("startup")
+@_on_startup
 def start_investor_scheduler() -> None:
     import threading
     threading.Thread(target=_investor_scheduler_loop, daemon=True).start()
@@ -4205,10 +4564,7 @@ def group_next_lesson(group_id: int, db: Session = Depends(get_db), actor: model
     group = _check_group_access(db, group_id, actor)
     category = group.stage or 'foundation'
     total = group.course.total_lessons if group.course else schemas.STAGE_TOTAL_LESSONS.get(category, 24)
-    completed = db.query(func.count(func.distinct(models.Attendance.lesson_date))).filter(
-        models.Attendance.group_id == group_id,
-        models.Attendance.is_present.isnot(None),
-    ).scalar() or 0
+    completed = core_calc.group_completed_lessons(db, [group_id]).get(group_id, 0)
     next_num = completed + 1
     lesson = db.query(models.Lesson).filter(
         models.Lesson.category == category,
@@ -4311,6 +4667,7 @@ def _check_academic_target(db: Session, actor: models.User, student_id: int, gro
         enrolled = db.query(models.GroupStudent).filter(
             models.GroupStudent.group_id == group_id,
             models.GroupStudent.student_id == student_id,
+            models.GroupStudent.left_at.is_(None),
         ).first()
         if not enrolled:
             raise HTTPException(status_code=404, detail="Talaba bu guruhda emas")
@@ -4332,7 +4689,8 @@ def academic_options(db: Session = Depends(get_db), actor: models.User = Depends
     out = []
     for g in q.order_by(models.Group.name.asc()).all():
         students = sorted(
-            (m.student for m in g.members if m.student and m.student.is_active and not m.student.is_archived),
+            (m.student for m in g.members
+             if m.left_at is None and m.student and m.student.is_active and not m.student.is_archived),
             key=lambda s: s.full_name,
         )
         out.append(schemas.AcademicGroupOption(
@@ -4581,6 +4939,61 @@ def delete_teacher_feedback(feedback_id: int, db: Session = Depends(get_db), act
     db.commit()
 
 
+# ── To'lov izohlari (qo'ng'iroq/qarzdorlik eslatmalari) ──
+
+def _payment_note_read(n: models.PaymentNote) -> schemas.PaymentNoteRead:
+    return schemas.PaymentNoteRead(
+        id=n.id, student_id=n.student_id,
+        student_name=n.student.full_name if n.student else None,
+        comment=n.comment,
+        created_by_name=(n.created_by.full_name or n.created_by.username) if n.created_by else None,
+        created_at=n.created_at,
+    )
+
+
+@app.get("/payment-notes", response_model=List[schemas.PaymentNoteRead])
+def list_payment_notes(
+    student_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_crm_access),
+):
+    q = db.query(models.PaymentNote).options(
+        joinedload(models.PaymentNote.student), joinedload(models.PaymentNote.created_by),
+    )
+    if student_id:
+        q = q.filter(models.PaymentNote.student_id == student_id)
+    return [_payment_note_read(n) for n in q.order_by(models.PaymentNote.created_at.desc()).limit(300).all()]
+
+
+@app.post("/payment-notes", response_model=schemas.PaymentNoteRead, status_code=201)
+def create_payment_note(payload: schemas.PaymentNoteCreate, db: Session = Depends(get_db), actor: models.User = Depends(require_crm_access)):
+    student = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    n = models.PaymentNote(student_id=payload.student_id, comment=payload.comment.strip(), created_by_id=actor.id)
+    db.add(n)
+    db.flush()
+    write_audit(db, entity_type="payment_note", entity_id=n.id, action="create", changed_by_id=actor.id,
+                new_value={"student_id": n.student_id, "comment": n.comment[:200]})
+    db.commit()
+    db.refresh(n)
+    db.refresh(n, attribute_names=["student", "created_by"])
+    return _payment_note_read(n)
+
+
+@app.delete("/payment-notes/{note_id}", status_code=204)
+def delete_payment_note(note_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_crm_access)):
+    n = db.query(models.PaymentNote).filter(models.PaymentNote.id == note_id).first()
+    if not n:
+        raise HTTPException(status_code=404, detail="Izoh topilmadi")
+    if actor.role != UserRole.admin.value and n.created_by_id != actor.id:
+        raise HTTPException(status_code=403, detail="Bu izoh sizga tegishli emas")
+    write_audit(db, entity_type="payment_note", entity_id=n.id, action="delete", changed_by_id=actor.id,
+                old_value={"student_id": n.student_id, "comment": n.comment[:200]})
+    db.delete(n)
+    db.commit()
+
+
 # ── Sertifikatlar ──
 
 MAX_CERT_PDF_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -4786,6 +5199,7 @@ def _teacher_coin_budget(db: Session, teacher_id: int) -> int:
             models.Group.is_active.is_(True),
             models.Student.is_active.is_(True),
             models.Student.is_archived.is_(False),
+            models.GroupStudent.left_at.is_(None),
         )
         .scalar()
     ) or 0
@@ -4961,7 +5375,8 @@ def coin_totals(db: Session = Depends(get_db), actor: models.User = Depends(requ
     if actor.role == UserRole.teacher.value:
         gids = _teacher_group_ids(db, actor) or {0}
         q = q.join(models.GroupStudent, models.GroupStudent.student_id == models.Student.id) \
-             .filter(models.GroupStudent.group_id.in_(gids)).group_by(models.Student.id)
+             .filter(models.GroupStudent.group_id.in_(gids), models.GroupStudent.left_at.is_(None)) \
+             .group_by(models.Student.id)
     rows = q.order_by(func.sum(models.CoinTransaction.amount).desc()).limit(100).all()
     return [schemas.StudentCoinTotal(student_id=r[0], student_name=r[1], total=int(r[2])) for r in rows]
 
@@ -5178,7 +5593,7 @@ _LEAD_LOAD = (
 # Referral funnel'dagi quti (node) kaliti -> lead.status ro'yxati. "target" — filtrsiz (hammasi).
 _FUNNEL_BUCKET_STATUSES = {
     "canceled": ["rejected"],
-    "waiting":  ["called", "callback"],
+    "waiting":  ["called", "no_answer", "callback"],
     "comming":  ["will_come", "demo"],
     "payed":    ["enrolled"],
 }
@@ -5281,6 +5696,36 @@ def lead_stats(
             ) for s in stages
         ],
     )
+
+
+@app.get("/leads/check-phone")
+def check_lead_phone(
+    phone: str = Query(..., min_length=3),
+    exclude_id: Optional[int] = Query(None),
+    actor: models.User = Depends(require_crm_access),
+    db: Session = Depends(get_db),
+):
+    """Bu raqam bazada bormi? — formani yuborishdan OLDIN ogohlantirish uchun.
+
+    POST /leads baribir 409 qaytaradi, lekin u xodim butun formani to'ldirib
+    bo'lgandan keyin ishlaydi. Bu endpoint raqam yozilayotgan paytda mavjud
+    lidni (qaysi bosqichda va kimda ekanini) ko'rsatadi.
+    """
+    dup = _find_duplicate_lead(db, phone, exclude_id=exclude_id)
+    if not dup:
+        return {"duplicate": False}
+    return {
+        "duplicate": True,
+        "lead": {
+            "id": dup.id,
+            "full_name": dup.full_name,
+            "phone": dup.phone,
+            "status": dup.status,
+            "stage_name": dup.stage.name if dup.stage else None,
+            "claimed_by_name": dup.claimed_by.full_name if dup.claimed_by else None,
+            "created_at": dup.created_at,
+        },
+    }
 
 
 @app.post("/leads", response_model=schemas.LeadRead, status_code=201)
@@ -6067,6 +6512,7 @@ def _reminders_due_tick() -> None:
         if due:
             db.commit()
     except Exception:
+        log.exception("Eslatmalar rejalashtiruvchisi xatosi")
         db.rollback()
     finally:
         db.close()
@@ -6099,6 +6545,7 @@ def _prune_notifications() -> None:
             ).delete(synchronize_session=False)
         db.commit()
     except Exception:
+        log.exception("Eski bildirishnomalarni tozalashda xato")
         db.rollback()
     finally:
         db.close()
@@ -6115,7 +6562,7 @@ def _reminder_scheduler_loop() -> None:
         time.sleep(60)
 
 
-@app.on_event("startup")
+@_on_startup
 def start_reminder_scheduler() -> None:
     import threading
     threading.Thread(target=_reminder_scheduler_loop, daemon=True).start()
@@ -6376,17 +6823,25 @@ def lead_conversion_tree(
     # ── Davr chegarasi (Toshkent oyi → naive UTC) ──
     period_start, period_end = tz.month_bounds(year, month)
 
-    # ── Ruxsat: sales faqat o'z lidlarini ko'radi (mavjud qoidaning aynan o'zi) ──
-    is_sales = actor.role == UserRole.sales.value
+    # ── Ruxsat ────────────────────────────────────────────────────────────
+    # Voronka BUTUNLIGICHA ko'rsatiladi — sales uchun ham.
+    #
+    # Ilgari sales faqat `created_by_id == o'zi` lidlarni ko'rardi. Amalda bu
+    # sahifani sales uchun BO'SH qoldirardi: lidlar Facebook formasi orqali
+    # keladi va admin/hunter nomidan yoziladi, sales esa ularga referral
+    # (`referred_by_id`) sifatida biriktiriladi — ya'ni `created_by_id` hech
+    # qachon unga tegishli bo'lmaydi. Konversiya xaritasi shaxsiy natija emas,
+    # jamoaning umumiy oqimi haqida, shuning uchun kogorta hamma uchun bir xil.
+    #
+    # Yashirin qoladigan yagona narsa — OPERATORLAR kesimi (kim nechta
+    # qo'ng'iroq qildi, kimning konversiyasi qanday): u xodimlarni bir-biri
+    # bilan taqqoslaydi va faqat admin/hunter uchun qoladi.
     can_see_operators = actor.role in (UserRole.admin.value, UserRole.hunter.value)
 
-    lead_q = db.query(models.Lead).filter(
+    leads = db.query(models.Lead).filter(
         models.Lead.created_at >= period_start,
         models.Lead.created_at < period_end,
-    )
-    if is_sales:
-        lead_q = lead_q.filter(models.Lead.created_by_id == actor.id)
-    leads = lead_q.all()
+    ).all()
     lead_ids = [l.id for l in leads]
     total = len(leads)
 
@@ -6420,6 +6875,7 @@ def lead_conversion_tree(
     node_meta = {stage_key(s): {
         "key": stage_key(s), "id": s.id, "name": s.name, "slug": s.slug,
         "color": s.color, "kind": s.kind, "order": s.order,
+        "is_archived": bool(s.is_archived),
     } for s in stages}
 
     if total == 0:
@@ -6427,7 +6883,7 @@ def lead_conversion_tree(
             month=month, year=year, total_leads=0, won_leads=0, lost_leads=0,
             open_leads=0, conversion_rate=0.0, revenue=0.0,
             can_see_operators=can_see_operators,
-            scope="own" if is_sales else "all",
+            scope="all",
         )
 
     # ── Kogorta faoliyati ──
@@ -6553,15 +7009,20 @@ def lead_conversion_tree(
     # ── Tugunlar ──
     all_meta = dict(node_meta)
     all_meta.update({g["key"]: g for g in ghosts.values()})
+    # Voronka TO'LIQ ko'rsatiladi: tirik bosqich, bu oyda hech bir lid unga
+    # kirmagan bo'lsa ham, 0 bilan chiziladi ("Javob bermadi" kabi yangi
+    # bosqichlar aks holda umuman ko'rinmasdi va menejer qaysi qadam
+    # ishlatilmayotganini bilmasdi). Arxivlangan va "ghost" (endi mavjud
+    # bo'lmagan) bosqichlar esa faqat tarixda uchragan bo'lsa qo'shiladi.
     nodes = []
-    for key, ids in visited.items():
-        m = all_meta.get(key)
-        if not m:
+    for key, m in all_meta.items():
+        ids = visited.get(key, set())
+        if not ids and (m.get("id") is None or m.get("is_archived")):
             continue
         nodes.append(schemas.TreeStageNode(
             key=key, id=m["id"], name=m["name"], slug=m["slug"], color=m["color"],
             kind=m["kind"], order=m["order"], count=len(ids),
-            percent=round(len(ids) / total * 100, 1),
+            percent=round(len(ids) / total * 100, 1) if total else 0.0,
             lead_ids=sorted(ids),
         ))
     nodes.sort(key=lambda n: (n.order, n.name))
@@ -6717,7 +7178,7 @@ def lead_conversion_tree(
         stages=nodes, transitions=transitions, insights=insights,
         sources=sources, operators=operators,
         can_see_operators=can_see_operators,
-        scope="own" if is_sales else "all",
+        scope="all",
     )
 
 
@@ -7505,6 +7966,9 @@ def public_intake_submit(
     lead = models.Lead(
         full_name=payload.full_name.strip(),
         phone=payload.phone.strip(),
+        # Dedup kaliti — busiz keyingi tekshiruvlar bu lidni "ko'rmay" qolardi
+        # va shu raqam ikkinchi marta ro'yxatga tushib ketardi.
+        phone_key=dedup_key(payload.phone),
         course_interest=payload.course_interest,
         parent_phone=payload.parent_phone,
         notes=payload.notes,
@@ -7850,20 +8314,14 @@ async def upload_student_face_photo(
     s = db.query(models.Student).filter(models.Student.id == student_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
-    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
-    if ext not in ("jpg", "jpeg", "png", "webp"):
-        raise HTTPException(status_code=400, detail="Faqat jpg/png/webp rasm yuklang")
-    filename = f"{student_id}.{ext}"
-    filepath = os.path.join(STUDENT_PHOTOS_DIR, filename)
-    contents = await file.read()
-    with open(filepath, "wb") as f:
-        f.write(contents)
-    s.photo_path = f"student_photos/{filename}"
+    contents, ext = await _read_image_upload(file, allow_gif=False)
+    s.photo_path = _store_upload("student_photos", ext, contents, s.photo_path)
     db.commit()
-    return {"photo_url": f"/uploads/student_photos/{filename}"}
+    return {"photo_url": f"/uploads/{uploads_sign.sign(s.photo_path)}"}
 
 def _require_camera_key(x_camera_key: Optional[str] = Header(None, alias="x-camera-key")) -> None:
-    if not CAMERA_API_KEY or x_camera_key != CAMERA_API_KEY:
+    if not CAMERA_API_KEY or not x_camera_key or not _sec.compare_digest(
+            x_camera_key.encode(), CAMERA_API_KEY.encode()):
         raise HTTPException(status_code=403, detail="Camera API key noto'g'ri")
 
 
@@ -7877,17 +8335,10 @@ async def upload_user_face_photo(
     u = db.query(models.User).filter(models.User.id == user_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
-    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
-    if ext not in ("jpg", "jpeg", "png", "webp"):
-        raise HTTPException(status_code=400, detail="Faqat jpg/png/webp rasm yuklang")
-    filename = f"{user_id}.{ext}"
-    filepath = os.path.join(STAFF_PHOTOS_DIR, filename)
-    contents = await file.read()
-    with open(filepath, "wb") as f:
-        f.write(contents)
-    u.face_photo_path = f"staff_photos/{filename}"
+    contents, ext = await _read_image_upload(file, allow_gif=False)
+    u.face_photo_path = _store_upload("staff_photos", ext, contents, u.face_photo_path)
     db.commit()
-    return {"face_photo_url": f"/uploads/staff_photos/{filename}"}
+    return {"face_photo_url": f"/uploads/{uploads_sign.sign(u.face_photo_path)}"}
 
 
 @app.get("/camera/students")
@@ -7896,7 +8347,7 @@ def camera_students(
     _: None = Depends(_require_camera_key),
 ):
     """Kamera servisi uchun — faol o'quvchilar ro'yxati (foto, guruh, jadval, to'lov holati)."""
-    now_   = datetime.utcnow()
+    now_   = tz.today()
     month_ = now_.month
     year_  = now_.year
 
@@ -7914,7 +8365,7 @@ def camera_students(
         groups = [
             {"id": gs.group_id, "name": gs.group.name, "schedule": gs.group.schedule}
             for gs in s.group_memberships
-            if gs.group and gs.group.is_active
+            if gs.group and gs.group.is_active and gs.left_at is None
         ]
         paid_this_month = sum(
             float(p.amount) for p in s.payments
@@ -7925,7 +8376,8 @@ def camera_students(
             "id":         s.id,
             "full_name":  s.full_name,
             "telegram_id": s.telegram_id,
-            "photo_url":  f"/uploads/{s.photo_path}" if s.photo_path else None,
+            # /uploads imzosiz ochilmaydi — kamera rasmni o'z kaliti bilan oladi
+            "photo_url":  f"/camera/photo/student/{s.id}" if s.photo_path else None,
             "groups":     groups,
             "is_debtor":  is_debtor,
         })
@@ -7951,7 +8403,7 @@ def camera_staff(
             "id": u.id,
             "full_name": u.full_name or u.username,
             "role": u.role,
-            "face_photo_url": f"/uploads/{u.face_photo_path}" if u.face_photo_path else None,
+            "face_photo_url": f"/camera/photo/staff/{u.id}" if u.face_photo_path else None,
         }
         for u in staff
     ]
@@ -8524,3 +8976,262 @@ def create_bot_invite_link(payload: schemas.BotInviteLinkCreate, actor: models.U
         return schemas.BotInviteLinkRead(token=token, tier=payload.tier, link=link, used=False)
     finally:
         db.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Kompyuter berish (bron) — hunter/admin
+# ══════════════════════════════════════════════════════════════════════════════
+# Talabaga markaz kompyuteri vaqtincha beriladi: qaysi raqamli kompyuter, kimga,
+# soat nechida berildi, soat nechida qaytarib olindi va buni kim qildi — hammasi
+# `computer_rentals` jurnalida. Vaqtlar server tomonida qo'yiladi (tugma
+# bosilgan payt) — qo'lda yozilgan vaqt jurnalning ishonchliligini buzardi.
+
+def _rental_dict(r: models.ComputerRental) -> dict:
+    end = r.returned_at or tz.utcnow()
+    return {
+        "id": r.id,
+        "computer_id": r.computer_id,
+        "computer_number": r.computer.number if r.computer else None,
+        "computer_name": r.computer.name if r.computer else None,
+        "student_id": r.student_id,
+        "student_name": r.student.full_name if r.student else None,
+        "student_phone": r.student.phone1 if r.student else None,
+        "given_at": r.given_at,
+        "returned_at": r.returned_at,
+        "duration_minutes": max(0, int((end - r.given_at).total_seconds() // 60)),
+        "given_by": (r.given_by.full_name or r.given_by.username) if r.given_by else None,
+        "returned_by": (r.returned_by.full_name or r.returned_by.username) if r.returned_by else None,
+        "note": r.note,
+        "return_note": r.return_note,
+    }
+
+
+def _rental_query(db: Session):
+    return db.query(models.ComputerRental).options(
+        joinedload(models.ComputerRental.computer),
+        joinedload(models.ComputerRental.student),
+        joinedload(models.ComputerRental.given_by),
+        joinedload(models.ComputerRental.returned_by),
+    )
+
+
+@app.get("/computers")
+def list_computers(
+    include_inactive: bool = Query(False),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_hunter),
+):
+    q = db.query(models.Computer)
+    if not include_inactive:
+        q = q.filter(models.Computer.is_active.is_(True))
+    computers = q.order_by(models.Computer.number).all()
+    open_rentals = {
+        r.computer_id: r
+        for r in _rental_query(db).filter(models.ComputerRental.returned_at.is_(None)).all()
+    }
+    return [
+        {
+            "id": c.id, "number": c.number, "name": c.name, "note": c.note,
+            "is_active": c.is_active,
+            "current": _rental_dict(open_rentals[c.id]) if c.id in open_rentals else None,
+        }
+        for c in computers
+    ]
+
+
+@app.post("/computers", status_code=201)
+def create_computer(
+    payload: schemas.ComputerCreate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_hunter),
+):
+    existing = db.query(models.Computer).filter(models.Computer.number == payload.number).first()
+    if existing:
+        if existing.is_active:
+            raise HTTPException(status_code=400, detail=f"{payload.number}-kompyuter allaqachon mavjud")
+        # O'chirilgan raqam qayta qo'shilsa — eski yozuv tiklanadi (tarix bitta raqamda qoladi)
+        existing.is_active = True
+        existing.name = payload.name
+        existing.note = payload.note
+        db.commit()
+        return {"id": existing.id}
+    c = models.Computer(number=payload.number, name=payload.name, note=payload.note, created_at=tz.utcnow())
+    db.add(c)
+    db.commit()
+    return {"id": c.id}
+
+
+@app.post("/computers/bulk", status_code=201)
+def create_computers_bulk(
+    payload: schemas.ComputerBulkCreate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_hunter),
+):
+    """Oraliq bo'yicha qo'shish (masalan 51–60). Mavjud raqamlar o'tkazib yuboriladi."""
+    lo, hi = sorted((payload.number_from, payload.number_to))
+    if hi - lo >= 500:
+        raise HTTPException(status_code=400, detail="Bir martada ko'pi bilan 500 ta kompyuter")
+    existing = {
+        c.number: c for c in
+        db.query(models.Computer).filter(models.Computer.number.between(lo, hi)).all()
+    }
+    added = skipped = 0
+    for n in range(lo, hi + 1):
+        c = existing.get(n)
+        if c is None:
+            db.add(models.Computer(number=n, is_active=True, created_at=tz.utcnow()))
+            added += 1
+        elif not c.is_active:
+            c.is_active = True
+            added += 1
+        else:
+            skipped += 1
+    db.commit()
+    return {"added": added, "skipped": skipped}
+
+
+@app.patch("/computers/{computer_id}")
+def update_computer(
+    computer_id: int,
+    payload: schemas.ComputerUpdate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_hunter),
+):
+    c = db.query(models.Computer).get(computer_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Kompyuter topilmadi")
+    data = payload.dict(exclude_unset=True)
+    if "number" in data and data["number"] != c.number:
+        clash = db.query(models.Computer).filter(models.Computer.number == data["number"]).first()
+        if clash:
+            raise HTTPException(status_code=400, detail=f"{data['number']}-raqam band")
+    for k, v in data.items():
+        if k == "number" and v is None:
+            continue
+        setattr(c, k, v)
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/computers/{computer_id}")
+def delete_computer(
+    computer_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_hunter),
+):
+    c = db.query(models.Computer).get(computer_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Kompyuter topilmadi")
+    busy = db.query(models.ComputerRental).filter(
+        models.ComputerRental.computer_id == c.id, models.ComputerRental.returned_at.is_(None)
+    ).first()
+    if busy:
+        raise HTTPException(status_code=400, detail="Kompyuter hozir talabada — avval qaytarib oling")
+    c.is_active = False
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/computers/students")
+def computer_student_search(
+    q: str = Query("", max_length=100),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_hunter),
+):
+    """Berish oynasidagi talaba qidiruvi (ism yoki telefon bo'yicha)."""
+    query = db.query(models.Student).filter(models.Student.is_archived.is_(False))
+    term = q.strip()
+    if term:
+        like = f"%{term}%"
+        query = query.filter(or_(models.Student.full_name.ilike(like), models.Student.phone1.ilike(like)))
+    rows = query.order_by(models.Student.full_name).limit(15).all()
+    holding = dict(
+        db.query(models.ComputerRental.student_id, models.Computer.number)
+        .join(models.Computer, models.Computer.id == models.ComputerRental.computer_id)
+        .filter(models.ComputerRental.returned_at.is_(None),
+                models.ComputerRental.student_id.in_([s.id for s in rows] or [0]))
+        .all()
+    )
+    return [
+        {"id": s.id, "full_name": s.full_name, "phone": s.phone1, "has_computer": holding.get(s.id)}
+        for s in rows
+    ]
+
+
+@app.post("/computers/{computer_id}/give", status_code=201)
+def give_computer(
+    computer_id: int,
+    payload: schemas.ComputerGive,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_hunter),
+):
+    c = db.query(models.Computer).get(computer_id)
+    if not c or not c.is_active:
+        raise HTTPException(status_code=404, detail="Kompyuter topilmadi")
+    student = db.query(models.Student).get(payload.student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Talaba topilmadi")
+    busy = db.query(models.ComputerRental).filter(
+        models.ComputerRental.computer_id == c.id, models.ComputerRental.returned_at.is_(None)
+    ).first()
+    if busy:
+        raise HTTPException(status_code=400, detail=f"{c.number}-kompyuter hozir band")
+    r = models.ComputerRental(
+        computer_id=c.id, student_id=student.id, given_at=tz.utcnow(),
+        given_by_id=actor.id, note=(payload.note or None),
+    )
+    db.add(r)
+    db.commit()
+    return _rental_dict(_rental_query(db).filter(models.ComputerRental.id == r.id).one())
+
+
+@app.post("/computer-rentals/{rental_id}/return")
+def return_computer(
+    rental_id: int,
+    payload: schemas.ComputerReturn,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_hunter),
+):
+    r = db.query(models.ComputerRental).get(rental_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Yozuv topilmadi")
+    if r.returned_at is not None:
+        raise HTTPException(status_code=400, detail="Kompyuter allaqachon qaytarilgan")
+    r.returned_at = tz.utcnow()
+    r.returned_by_id = actor.id
+    r.return_note = payload.note or None
+    db.commit()
+    return _rental_dict(_rental_query(db).filter(models.ComputerRental.id == r.id).one())
+
+
+@app.get("/computer-rentals")
+def list_computer_rentals(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    computer_id: Optional[int] = Query(None),
+    student_id: Optional[int] = Query(None),
+    status_: Optional[str] = Query(None, alias="status", description="active | returned"),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_hunter),
+):
+    """Berish jurnali. Sana filtri — berilgan kun (Toshkent) bo'yicha."""
+    q = _rental_query(db)
+    if date_from or date_to:
+        start, end = tz.range_bounds(date_from or date_to, date_to or date_from)
+        q = q.filter(models.ComputerRental.given_at >= start, models.ComputerRental.given_at < end)
+    if computer_id:
+        q = q.filter(models.ComputerRental.computer_id == computer_id)
+    if student_id:
+        q = q.filter(models.ComputerRental.student_id == student_id)
+    if status_ == "active":
+        q = q.filter(models.ComputerRental.returned_at.is_(None))
+    elif status_ == "returned":
+        q = q.filter(models.ComputerRental.returned_at.isnot(None))
+    rows = q.order_by(models.ComputerRental.given_at.desc()).limit(1000).all()
+    return [_rental_dict(r) for r in rows]
+
+
+# ── Minar Space (space.minaracademy.uz) — o'quvchi kabineti API'si ────────────
+# /minar/... (o'quvchi ilovasi), /minar-admin/... (xodimlar). Batafsil: backend/minar/__init__.py
+from .minar import setup as _minar_setup
+_minar_setup(app)

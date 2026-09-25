@@ -9,8 +9,11 @@ from sqlalchemy.orm import Session
 
 import re
 
-from .. import models
-from ..core_calc import student_month_owed, student_month_paid, payment_status, advance_amount_for_month
+from .. import models, uploads_sign
+from ..core_calc import (
+    student_month_owed, student_month_paid,
+    student_cumulative_owed, student_total_paid_all_time, payment_status,
+)
 from . import schemas
 
 DAY_SHORT = {1: "Du", 2: "Se", 3: "Chor", 4: "Pay", 5: "Ju", 6: "Sha", 7: "Yak"}
@@ -44,7 +47,7 @@ def _to_int(v) -> int:
 
 
 def _active_memberships(student: models.Student) -> List[models.GroupStudent]:
-    return [m for m in student.group_memberships if m.group and m.group.is_active]
+    return [m for m in student.group_memberships if m.group and m.group.is_active and m.left_at is None]
 
 
 def _schedule_summary(db: Session, group: models.Group) -> Optional[str]:
@@ -115,11 +118,18 @@ def build_payment_summary(db: Session, student: models.Student, month: int, year
             remaining=_to_int(max(Decimal(0), owed - paid)),
         ))
 
-    advance = Decimal(str(student.advance_balance or 0))  # umumiy avans (ma'lumot uchun)
-    advance_this_month = advance_amount_for_month(student, month, year)  # shu oyga qo'llanadigani
-    advance_applied = min(advance_this_month, max(Decimal(0), total_owed - total_paid))
-    debt = max(Decimal(0), total_owed - total_paid - advance_this_month)
-    status = payment_status(total_owed, total_paid, advance_this_month)
+    # debt/status/advance — JAMLANGAN (kumulyativ) hisob, CRM (Payments.jsx) bilan
+    # bir xil natija: bitta oyda ortiqcha to'langan summa boshqa oydagi qarzni
+    # avtomatik yopadi (core_calc.student_cumulative_balance — yagona manba).
+    cum_owed = student_cumulative_owed(db, student, upto_year=year, upto_month=month)
+    cum_paid = student_total_paid_all_time(db, student.id)
+    prepaid = Decimal(str(student.advance_balance or 0))
+    balance = cum_paid + prepaid - cum_owed  # = student_cumulative_balance
+    debt = max(Decimal(0), -balance)
+    advance = max(Decimal(0), balance)  # ortiqcha to'lov (qolgan balans)
+    # avansning qarzni yopishga ketgan qismi (to'lovlar yopmagan qarz doirasida)
+    advance_applied = min(prepaid, max(Decimal(0), cum_owed - cum_paid)) if prepaid > 0 else Decimal(0)
+    status = payment_status(cum_owed, cum_paid, prepaid)
 
     recent = (
         db.query(models.Payment)
@@ -257,7 +267,7 @@ def build_teacher(db: Session, student: models.Student) -> Optional[schemas.Teac
         if t and t.is_active:
             return schemas.TeacherContact(
                 name=_user_name(t), phone=t.phone, telegram=t.telegram,
-                group_name=m.group.name, avatar=t.avatar,
+                group_name=m.group.name, avatar=uploads_sign.sign(t.avatar),
             )
     return None
 
