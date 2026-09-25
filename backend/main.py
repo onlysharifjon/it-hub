@@ -9232,6 +9232,6 @@ def list_computer_rentals(
 
 
 # ── Minar Space (space.minaracademy.uz) — o'quvchi kabineti API'si ────────────
-# /minar/... (o'quvchi ilovasi), /minar-admin/... (xodimlar). Batafsil: backend/minar/__init__.py
+# /space/... (o'quvchi ilovasi), /space/admin/... (xodimlar). Batafsil: backend/minar/__init__.py
 from .minar import setup as _minar_setup
 _minar_setup(app)

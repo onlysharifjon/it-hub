@@ -1,6 +1,6 @@
 """O'quvchi ilovasi endpointlari (frontend shartnomasi — API-CONTRACT.md).
 
-Ommaviy manzil: https://space.minaracademy.uz/api/...  (nginx `/api/` -> shu router, prefiks `/minar`).
+Ommaviy manzil: https://space.minaracademy.uz/api/...  (nginx `/api/` -> shu router, prefiks `/space`).
 """
 from __future__ import annotations
 

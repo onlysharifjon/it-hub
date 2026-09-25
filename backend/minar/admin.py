@@ -1,7 +1,7 @@
 """Xodimlar API'si (CRM tomoni): o'quvchi akkauntlari va Minar shop buyurtmalari.
 
 Bearer JWT (mavjud CRM login). Rollar: admin, support_teacher. Bu router space domenida OCHILMAYDI —
-nginx `space.minaracademy.uz/api/` faqat `/minar/...` ga yo'naltiriladi.
+nginx `space.minaracademy.uz/api/admin/` ga 404 qaytaradi.
 """
 from __future__ import annotations
 

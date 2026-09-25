@@ -644,19 +644,19 @@ export async function fetchMinarAccounts(params = {}) {
   if (params.group_id) q.set('group_id', params.group_id)
   if (params.q)         q.set('q', params.q)
   if (params.active !== undefined) q.set('active', params.active)
-  return request(`/minar-admin/accounts${q.toString() ? '?' + q : ''}`)
+  return request(`/space/admin/accounts${q.toString() ? '?' + q : ''}`)
 }
 export async function createMinarAccount(p) {
-  return request('/minar-admin/accounts', { method: 'POST', body: JSON.stringify(p) })
+  return request('/space/admin/accounts', { method: 'POST', body: JSON.stringify(p) })
 }
 export async function createMinarAccountsBulk(p) {
-  return request('/minar-admin/accounts/bulk', { method: 'POST', body: JSON.stringify(p) })
+  return request('/space/admin/accounts/bulk', { method: 'POST', body: JSON.stringify(p) })
 }
 export async function resetMinarPassword(studentId) {
-  return request(`/minar-admin/accounts/${studentId}/reset-password`, { method: 'POST' })
+  return request(`/space/admin/accounts/${studentId}/reset-password`, { method: 'POST' })
 }
 export async function patchMinarAccount(studentId, p) {
-  return request(`/minar-admin/accounts/${studentId}`, { method: 'PATCH', body: JSON.stringify(p) })
+  return request(`/space/admin/accounts/${studentId}`, { method: 'PATCH', body: JSON.stringify(p) })
 }
 
 // ── Ota-ona akkauntlari (mobil ilova uchun) ──────────────────────────────────

@@ -50,13 +50,13 @@ def make_student(db, name="Azizbek Komilov", group=None, stage="foundation"):
 
 def new_account(client, db, metodist_token, name="Azizbek Komilov", **kw):
     st, group = make_student(db, name, **kw)
-    r = client.post("/minar-admin/accounts", json={"student_id": st.id}, headers=H(metodist_token))
+    r = client.post("/space/admin/accounts", json={"student_id": st.id}, headers=H(metodist_token))
     assert r.status_code == 201, r.text
     return st, r.json()
 
 
 def login(client, creds):
-    r = client.post("/minar/auth/login", json={"studentId": creds["login_id"], "password": creds["password"]})
+    r = client.post("/space/auth/login", json={"studentId": creds["login_id"], "password": creds["password"]})
     assert r.status_code == 200, r.text
     return r
 
@@ -69,7 +69,7 @@ def acct(client, db, metodist_token):
 
 
 def post(client, path, body=None, key=None):
-    return client.post("/minar" + path, json=body or {}, headers={"Idempotency-Key": key} if key else {})
+    return client.post("/space" + path, json=body or {}, headers={"Idempotency-Key": key} if key else {})
 
 
 def give_coins(db, student, amount, teacher_id, reason="Faol qatnashdi", when=None):
@@ -86,23 +86,23 @@ def test_admin_creates_account_and_default_course(client, db, metodist_token):
     assert creds["course"] == "HTML"                      # foundation -> HTML
     st2, c2 = new_account(client, db, metodist_token, "Ali Valiyev", stage="fullstack")
     assert c2["course"] == "JavaScript"
-    dup = client.post("/minar-admin/accounts", json={"student_id": st.id}, headers=H(metodist_token))
+    dup = client.post("/space/admin/accounts", json={"student_id": st.id}, headers=H(metodist_token))
     assert dup.status_code == 409
 
 
 def test_admin_requires_staff_role_and_token(client, db, metodist_token, teacher_token):
     st, _ = make_student(db)
-    assert client.post("/minar-admin/accounts", json={"student_id": st.id}).status_code == 401
-    assert client.post("/minar-admin/accounts", json={"student_id": st.id},
+    assert client.post("/space/admin/accounts", json={"student_id": st.id}).status_code == 401
+    assert client.post("/space/admin/accounts", json={"student_id": st.id},
                        headers=H(teacher_token)).status_code == 403
 
 
 def test_login_and_bootstrap_shape(client, db, metodist_token):
     st, creds = new_account(client, db, metodist_token)
-    assert client.get("/minar/students/me/bootstrap").status_code == 401
+    assert client.get("/space/students/me/bootstrap").status_code == 401
     r = login(client, creds)
     assert "httponly" in r.headers["set-cookie"].lower() and "samesite=lax" in r.headers["set-cookie"].lower()
-    s = client.get("/minar/students/me/bootstrap").json()
+    s = client.get("/space/students/me/bootstrap").json()
     assert s["version"] == 1
     assert s["profile"] == {"id": creds["login_id"], "name": "Azizbek", "surname": "Komilov", "course": "HTML",
                             "group": "S-100", "character": "robo"}
@@ -114,62 +114,62 @@ def test_login_and_bootstrap_shape(client, db, metodist_token):
 
 def test_login_errors_use_message_format_and_lockout(client, db, metodist_token):
     st, creds = new_account(client, db, metodist_token)
-    r = client.post("/minar/auth/login", json={"studentId": creds["login_id"], "password": "wrong-pass"})
+    r = client.post("/space/auth/login", json={"studentId": creds["login_id"], "password": "wrong-pass"})
     assert r.status_code == 401 and r.json() == {"message": "ID yoki parol noto‘g‘ri."}
-    r = client.post("/minar/auth/login", json={"studentId": "MA9999", "password": "whatever1"})
+    r = client.post("/space/auth/login", json={"studentId": "MA9999", "password": "whatever1"})
     assert r.status_code == 401 and r.json()["message"] == "ID yoki parol noto‘g‘ri."   # ID mavjudligi sezilmaydi
     from backend import security
     for _ in range(minar_auth.LOCK_AFTER):
         security._hits.clear()
-        client.post("/minar/auth/login", json={"studentId": creds["login_id"], "password": "bad-password"})
+        client.post("/space/auth/login", json={"studentId": creds["login_id"], "password": "bad-password"})
     security._hits.clear()
-    r = client.post("/minar/auth/login", json={"studentId": creds["login_id"], "password": creds["password"]})
+    r = client.post("/space/auth/login", json={"studentId": creds["login_id"], "password": creds["password"]})
     assert r.status_code == 429                               # to'g'ri parol bilan ham bloklangan
 
 
 def test_login_rate_limit(client, db, metodist_token):
     for _ in range(6):
-        client.post("/minar/auth/login", json={"studentId": "MA0001", "password": "x" * 8})
-    r = client.post("/minar/auth/login", json={"studentId": "MA0001", "password": "x" * 8})
+        client.post("/space/auth/login", json={"studentId": "MA0001", "password": "x" * 8})
+    r = client.post("/space/auth/login", json={"studentId": "MA0001", "password": "x" * 8})
     assert r.status_code == 429 and "message" in r.json()
 
 
 def test_login_is_case_insensitive_and_logout_revokes(client, db, metodist_token):
     st, creds = new_account(client, db, metodist_token)
-    r = client.post("/minar/auth/login", json={"studentId": creds["login_id"].lower(), "password": creds["password"]})
+    r = client.post("/space/auth/login", json={"studentId": creds["login_id"].lower(), "password": creds["password"]})
     assert r.status_code == 200
-    assert client.get("/minar/students/me/bootstrap").status_code == 200
-    assert client.post("/minar/auth/logout").status_code == 200
-    assert client.get("/minar/students/me/bootstrap").status_code == 401
+    assert client.get("/space/students/me/bootstrap").status_code == 200
+    assert client.post("/space/auth/logout").status_code == 200
+    assert client.get("/space/students/me/bootstrap").status_code == 401
 
 
 def test_csrf_foreign_origin_rejected(client, acct):
-    r = client.post("/minar/rewards/check-in", json={}, headers={"Origin": "https://evil.example"})
+    r = client.post("/space/rewards/check-in", json={}, headers={"Origin": "https://evil.example"})
     assert r.status_code == 403
-    r = client.post("/minar/rewards/check-in", json={}, headers={"Origin": "https://space.minaracademy.uz"})
+    r = client.post("/space/rewards/check-in", json={}, headers={"Origin": "https://space.minaracademy.uz"})
     assert r.status_code == 200
 
 
 def test_reset_password_revokes_sessions_and_disable(client, db, metodist_token, acct):
     st, creds = acct
-    r = client.post(f"/minar-admin/accounts/{st.id}/reset-password", headers=H(metodist_token))
+    r = client.post(f"/space/admin/accounts/{st.id}/reset-password", headers=H(metodist_token))
     assert r.status_code == 200 and r.json()["password"] != creds["password"]
-    assert client.get("/minar/students/me/bootstrap").status_code == 401          # eski sessiya tugadi
+    assert client.get("/space/students/me/bootstrap").status_code == 401          # eski sessiya tugadi
     new = r.json()
-    assert client.post("/minar/auth/login", json={"studentId": new["login_id"], "password": new["password"]}).status_code == 200
-    client.patch(f"/minar-admin/accounts/{st.id}", json={"is_active": False}, headers=H(metodist_token))
-    assert client.get("/minar/students/me/bootstrap").status_code == 401
-    assert client.post("/minar/auth/login", json={"studentId": new["login_id"], "password": new["password"]}).status_code == 403
+    assert client.post("/space/auth/login", json={"studentId": new["login_id"], "password": new["password"]}).status_code == 200
+    client.patch(f"/space/admin/accounts/{st.id}", json={"is_active": False}, headers=H(metodist_token))
+    assert client.get("/space/students/me/bootstrap").status_code == 401
+    assert client.post("/space/auth/login", json={"studentId": new["login_id"], "password": new["password"]}).status_code == 403
 
 
 def test_bulk_create_for_group(client, db, metodist_token):
     st1, group = make_student(db, "Bir Ikki")
     st2, _ = make_student(db, "Uch To‘rt", group=group)
-    r = client.post("/minar-admin/accounts/bulk", json={"group_id": group.id}, headers=H(metodist_token))
+    r = client.post("/space/admin/accounts/bulk", json={"group_id": group.id}, headers=H(metodist_token))
     assert r.status_code == 201 and r.json()["count"] == 2
-    again = client.post("/minar-admin/accounts/bulk", json={"group_id": group.id}, headers=H(metodist_token))
+    again = client.post("/space/admin/accounts/bulk", json={"group_id": group.id}, headers=H(metodist_token))
     assert again.json()["count"] == 0                                              # takror yaratilmaydi
-    listing = client.get("/minar-admin/accounts", headers=H(metodist_token)).json()
+    listing = client.get("/space/admin/accounts", headers=H(metodist_token)).json()
     assert len(listing) == 2 and all("password" not in a for a in listing)
 
 
@@ -253,7 +253,7 @@ def test_daily_cap_three_rewards_per_game(client, acct):
 def test_implausible_results_rejected(client, acct, result):
     r = post(client, "/games/results", {"type": "game", "result": {"id": str(uuid.uuid4()), **result}})
     assert r.status_code == 400 and "message" in r.json()
-    assert client.get("/minar/students/me/bootstrap").json()["balance"] == 0
+    assert client.get("/space/students/me/bootstrap").json()["balance"] == 0
 
 
 def test_all_game_rules(client, acct):
@@ -309,7 +309,7 @@ def test_purchase_rules_server_price_and_idempotency(client, db, acct, metodist_
     r = post(client, "/shop/purchases", {"type": "purchase", "productId": "cap", "requestId": req}, key=req)
     assert r.status_code == 400 and "yetmaydi" in r.json()["message"]                  # coin yo'q
     give_coins(db, st, 100, metodist_user.id)                                          # o'qituvchi coini
-    assert client.get("/minar/students/me/bootstrap").json()["balance"] == 100
+    assert client.get("/space/students/me/bootstrap").json()["balance"] == 100
     r = post(client, "/shop/purchases", {"type": "purchase", "productId": "cap", "requestId": req, "price": 1}, key=req)
     s = r.json()["state"]
     assert r.status_code == 200 and s["balance"] == 35 and s["owned"] == ["cap"]        # narx serverdan (65)
@@ -343,7 +343,7 @@ def test_character_change_keeps_everything(client, db, acct, metodist_user):
     st, _ = acct
     give_coins(db, st, 100, metodist_user.id)
     post(client, "/shop/purchases", {"productId": "cap", "requestId": str(uuid.uuid4())})
-    before = client.get("/minar/students/me/bootstrap").json()
+    before = client.get("/space/students/me/bootstrap").json()
     after = post(client, "/avatar/character", {"type": "character", "character": "drako"}).json()["state"]
     assert after["profile"]["character"] == "drako"
     assert (after["balance"], after["owned"], after["purchases"]) == (before["balance"], before["owned"], before["purchases"])
@@ -358,12 +358,12 @@ def test_shop_gift_order_lifecycle(client, db, metodist_token, acct, metodist_us
         assert r.status_code == 200
     s = r.json()["state"]
     assert s["balance"] == 140 and s["owned"] == [] and [p["status"] for p in s["purchases"]] == ["pending", "pending"]
-    orders = client.get("/minar-admin/orders", headers=H(metodist_token)).json()
+    orders = client.get("/space/admin/orders", headers=H(metodist_token)).json()
     assert len(orders) == 2 and orders[0]["student_name"] == "Azizbek Komilov"
     oid = orders[0]["id"]
-    assert client.patch(f"/minar-admin/orders/{oid}", json={"status": "ready"}, headers=H(metodist_token)).status_code == 200
-    assert client.patch(f"/minar-admin/orders/{oid}", json={"status": "bogus"}, headers=H(metodist_token)).status_code == 400
-    statuses = {p["id"]: p["status"] for p in client.get("/minar/students/me/bootstrap").json()["purchases"]}
+    assert client.patch(f"/space/admin/orders/{oid}", json={"status": "ready"}, headers=H(metodist_token)).status_code == 200
+    assert client.patch(f"/space/admin/orders/{oid}", json={"status": "bogus"}, headers=H(metodist_token)).status_code == 400
+    statuses = {p["id"]: p["status"] for p in client.get("/space/students/me/bootstrap").json()["purchases"]}
     assert statuses[oid] == "ready"
 
 
@@ -381,7 +381,7 @@ def test_teacher_coins_and_attendance_flow_into_state(client, db, acct, metodist
     db.add(models.CameraAttendance(student_id=st.id, person_type="student", event_type="keldi",
                                    detected_at=tz.to_utc(datetime.combine(lesson_day, datetime.min.time()) + timedelta(hours=14, minutes=2))))
     db.commit()
-    s = client.get("/minar/students/me/bootstrap").json()
+    s = client.get("/space/students/me/bootstrap").json()
     assert (s["balance"], s["earned"]) == (7, 10)
     titles = {h["title"]: h for h in s["history"]}
     assert titles["Darsda faol"]["kind"] == "reward" and titles["Tuzatish"]["amount"] == -3
@@ -400,14 +400,14 @@ def test_leaderboard_masks_names_filters_and_includes_self(client, db, metodist_
     give_coins(db, st2, 80, metodist_user.id)
     login(client, c1)
     post(client, "/rewards/check-in")
-    rows = client.get("/minar/leaderboard?metric=coins&period=all&course=all").json()
+    rows = client.get("/space/leaderboard?metric=coins&period=all&course=all").json()
     assert isinstance(rows, list) and [r["name"] for r in rows] == ["Malika K.", "Azizbek K."]
     assert rows[0] == {"id": c2["login_id"], "name": "Malika K.", "avatar": "🤖", "coins": 80, "week": 80, "xp": 0,
                        "active": 0, "course": "JavaScript"}
-    js = client.get("/minar/leaderboard?course=JavaScript").json()
+    js = client.get("/space/leaderboard?course=JavaScript").json()
     assert [r["id"] for r in js] == [c2["login_id"]]
-    assert client.get("/minar/leaderboard?metric=hack").status_code == 400
-    assert client.get("/minar/leaderboard?course=Python").status_code == 400
+    assert client.get("/space/leaderboard?metric=hack").status_code == 400
+    assert client.get("/space/leaderboard?course=Python").status_code == 400
 
 
 # ── AI yordamchi ────────────────────────────────────────────────────────────
@@ -480,7 +480,7 @@ def _recv_until(ws, kind, limit=8):
 
 def test_ws_typing_battle_full_flow_and_reward(client, ws_client, db, metodist_token, monkeypatch):
     hc, gc, host, guest, room, joined = _ws_pair(client, db, metodist_token, "typing")
-    with ws_client.websocket_connect("/minar/battles") as hws, ws_client.websocket_connect("/minar/battles") as gws:
+    with ws_client.websocket_connect("/space/battles") as hws, ws_client.websocket_connect("/space/battles") as gws:
         hws.send_json({"type": "join", "ticket": room["ticket"], "roomId": room["roomId"], "sender": "tab-host", "name": "X"})
         gws.send_json({"type": "join", "ticket": joined["ticket"], "roomId": joined["roomId"], "sender": "tab-guest", "name": "Y"})
         welcome = _recv_until(gws, "welcome")
@@ -515,7 +515,7 @@ def test_ws_typing_battle_full_flow_and_reward(client, ws_client, db, metodist_t
 
 def test_ws_typing_speed_limit_blocks_instant_paste(client, ws_client, db, metodist_token):
     hc, gc, host, guest, room, joined = _ws_pair(client, db, metodist_token, "typing")
-    with ws_client.websocket_connect("/minar/battles") as hws, ws_client.websocket_connect("/minar/battles") as gws:
+    with ws_client.websocket_connect("/space/battles") as hws, ws_client.websocket_connect("/space/battles") as gws:
         hws.send_json({"type": "join", "ticket": room["ticket"], "roomId": room["roomId"], "sender": "h", "name": "X"})
         gws.send_json({"type": "join", "ticket": joined["ticket"], "roomId": joined["roomId"], "sender": "g", "name": "Y"})
         _recv_until(hws, "join")
@@ -530,7 +530,7 @@ def test_ws_typing_speed_limit_blocks_instant_paste(client, ws_client, db, metod
 
 def test_ws_quiz_battle_scoring_and_draw(client, ws_client, db, metodist_token):
     hc, gc, host, guest, room, joined = _ws_pair(client, db, metodist_token, "quiz")
-    with ws_client.websocket_connect("/minar/battles") as hws, ws_client.websocket_connect("/minar/battles") as gws:
+    with ws_client.websocket_connect("/space/battles") as hws, ws_client.websocket_connect("/space/battles") as gws:
         hws.send_json({"type": "join", "ticket": room["ticket"], "roomId": room["roomId"], "sender": "h", "name": "X"})
         gws.send_json({"type": "join", "ticket": joined["ticket"], "roomId": joined["roomId"], "sender": "g", "name": "Y"})
         _recv_until(hws, "join")
@@ -550,16 +550,16 @@ def test_ws_quiz_battle_scoring_and_draw(client, ws_client, db, metodist_token):
 def test_ws_rejects_bad_ticket_and_leave_notifies(client, ws_client, db, metodist_token):
     hc, gc, host, guest, room, joined = _ws_pair(client, db, metodist_token, "typing")
     with pytest.raises(Exception):
-        with ws_client.websocket_connect("/minar/battles") as bad:
+        with ws_client.websocket_connect("/space/battles") as bad:
             bad.send_json({"type": "join", "ticket": "garbage", "roomId": room["roomId"], "sender": "h", "name": "X"})
             bad.receive_json()
     with pytest.raises(Exception):                                   # mehmon chiptasi xost roli bilan ishlamaydi
-        with ws_client.websocket_connect("/minar/battles") as bad:
+        with ws_client.websocket_connect("/space/battles") as bad:
             bad.send_json({"type": "join", "ticket": joined["ticket"], "roomId": "other-room", "sender": "g", "name": "Y"})
             bad.receive_json()
-    with ws_client.websocket_connect("/minar/battles") as hws:
+    with ws_client.websocket_connect("/space/battles") as hws:
         hws.send_json({"type": "join", "ticket": room["ticket"], "roomId": room["roomId"], "sender": "h", "name": "X"})
-        with ws_client.websocket_connect("/minar/battles") as gws:
+        with ws_client.websocket_connect("/space/battles") as gws:
             gws.send_json({"type": "join", "ticket": joined["ticket"], "roomId": joined["roomId"], "sender": "g", "name": "Y"})
             _recv_until(hws, "join")
         assert _recv_until(hws, "leave")["sender"] == "g"            # mehmon chiqdi — xost xabar oldi
