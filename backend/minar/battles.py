@@ -39,7 +39,7 @@ log = logging.getLogger("minar.battles")
 TICKET_TTL = 120                     # soniya
 ROOM_TTL = timedelta(minutes=30)
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-WS_URL = os.getenv("MINAR_WS_URL", "wss://space.minaracademy.uz/api/battles")
+WS_URL = os.getenv("MINAR_WS_URL", "wss://space.minaracademy.uz/api/space/battles")
 GRACE = 6                            # soniya: taymerdan keyingi ortiqcha kutish
 MAX_TYPE_CPS = 18                    # belgi/soniya (yuqori chegara)
 IDLE_TIMEOUT = 45                    # klient har 3 soniyada ping yuboradi
