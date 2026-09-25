@@ -1,0 +1,41 @@
+name: Deploy (production)
+
+# Qo'lda ishga tushiriladi (Actions -> Deploy (production) -> Run workflow): tanlangan branch/commit
+# serverdagi Docker stekka (/var/www/minar-stack) chiqariladi. Image'lar faqat commit qilingan koddan
+# quriladi va commit hash bilan teglanadi; orqaga qaytarish:
+#   sudo /var/www/minar-stack/scripts/deploy.sh rollback ithub <TEG>
+on:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: "Nimani deploy qilish"
+        type: choice
+        options: [ithub+crm-web, ithub, crm-web]
+        default: ithub+crm-web
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Serverda deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            set -e
+            cd /var/www/it-hub
+            git fetch origin
+            SHA=${{ github.sha }}
+            case "${{ inputs.services }}" in
+              *ithub*)   sudo /var/www/minar-stack/scripts/deploy.sh ithub --ref "$SHA" ;;
+            esac
+            case "${{ inputs.services }}" in
+              *crm-web*) sudo /var/www/minar-stack/scripts/deploy.sh crm-web --ref "$SHA" ;;
+            esac

@@ -6,7 +6,8 @@ Protokol — `minar-academy/API-CONTRACT.md` §7. Server hakam:
   * quiz: javob indeksi serverdagi to'g'ri javoblar bilan solishtiriladi;
   * server yuborgan barcha xabarlarda `sender: "server"` (frontend o'z `sender`ini e'tiborsiz qoldiradi).
 
-Xonalar xotirada saqlanadi => faqat bitta jarayon (pm2 fork) bilan ishlaydi. G'alaba natijasi
+Xonalar xotirada saqlanadi => faqat bitta jarayon bilan ishlaydi (Docker: `space-api`, 1 replika;
+deploy `/healthz` dagi `rooms` nolga tushishini kutadi — o'yin o'rtasida qayta ishga tushirilmaydi). G'alaba natijasi
 bazaga (`minar_battles`) yoziladi va `/games/results` mukofoti shuni tekshiradi.
 """
 from __future__ import annotations
@@ -203,30 +204,44 @@ def _decode_ticket(token: object) -> Optional[dict]:
 
 # ── Oqim ────────────────────────────────────────────────────────────────────
 
+async def _reject(ws: WebSocket) -> None:
+    """Ulanishni rad etadi. Klient allaqachon uzilgan bo'lsa (`close` ikkinchi marta
+    yuborilsa) Starlette RuntimeError beradi — bu kutilgan holat, log'ga traceback kerak emas."""
+    try:
+        await ws.close(1008)
+    except Exception:
+        pass
+
+
+def active_rooms() -> int:
+    """Hozir o'ynalayotgan yoki juftlangan xonalar soni (deploy oldidan kutish uchun)."""
+    return sum(1 for r in ROOMS.values() if r.state in ("ready", "playing"))
+
+
 async def handle(ws: WebSocket) -> None:
     await ws.accept()
     if not origin_allowed(ws.headers.get("origin")):
-        await ws.close(1008)
+        await _reject(ws)
         return
     try:
         first = await asyncio.wait_for(ws.receive_text(), timeout=10)
         msg = json.loads(first)
     except Exception:
-        await ws.close(1008)
+        await _reject(ws)
         return
     claims = _decode_ticket(msg.get("ticket")) if isinstance(msg, dict) and msg.get("type") == "join" else None
     sender = str(msg.get("sender") or "")[:64] if isinstance(msg, dict) else ""
     if not claims or not sender or msg.get("roomId") != claims.get("room"):
-        await ws.close(1008)
+        await _reject(ws)
         return
     info = await run_in_threadpool(_load_participant, claims)
     if not info:
-        await ws.close(1008)
+        await _reject(ws)
         return
 
     room = ROOMS.setdefault(info["room_id"], Room(info))
     if room.state in ("playing", "done", "closed"):
-        await ws.close(1008)
+        await _reject(ws)
         return
     conn = Conn(ws, sender, info["name"], info["account_id"], info["login_id"], info["role"])
     old = room.conn(conn.role)

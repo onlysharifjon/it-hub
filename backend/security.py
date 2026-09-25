@@ -85,8 +85,11 @@ def refresh_expiry() -> datetime:
     return datetime.utcnow() + timedelta(days=PARENT_REFRESH_TTL_DAYS)
 
 
-# ── Oddiy in-process rate limiter (pm2 fork single-process) ──────────────────
-# Xotirada — qayta ishga tushganda nolga tushadi (bitta jarayon uchun yetarli).
+# ── Rate limiter ─────────────────────────────────────────────────────────────
+# REDIS_URL berilsa — Redis'da (sliding window, sorted set): hisob bir nechta jarayon/konteyner
+# (crm-api replikalari, space-api) orasida umumiy va qayta ishga tushganda yo'qolmaydi.
+# Aks holda (PM2, testlar) — jarayon xotirasida. Redis vaqtincha ishlamasa ham xotiraga qaytadi,
+# so'rovlar bloklanmaydi.
 # `.env`: RATE_LIMIT_ENABLED=false — butunlay o'chirish (masalan yuklama testlari uchun).
 
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() != "false"
@@ -104,12 +107,49 @@ def _prune(now: float) -> None:
         del _hits[key]
 
 
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+_redis = None
+_redis_retry_at = 0.0
+
+
+def _get_redis():
+    global _redis, _redis_retry_at
+    if not REDIS_URL or time.time() < _redis_retry_at:
+        return None
+    if _redis is None:
+        import redis  # faqat REDIS_URL berilganda kerak
+        _redis = redis.Redis.from_url(REDIS_URL, socket_timeout=0.5, socket_connect_timeout=0.5)
+    return _redis
+
+
+def _redis_rate_limit_ok(r, key: str, limit: int, window: int, now: float) -> bool:
+    rkey = f"rl:{key}"
+    pipe = r.pipeline()
+    pipe.zremrangebyscore(rkey, 0, now - window)
+    pipe.zcard(rkey)
+    _, count = pipe.execute()
+    if count >= limit:
+        return False
+    pipe = r.pipeline()
+    pipe.zadd(rkey, {f"{now:.6f}:{secrets.token_hex(4)}": now})
+    pipe.expire(rkey, window)
+    pipe.execute()
+    return True
+
+
 def rate_limit_ok(key: str, *, limit: int, window: int) -> bool:
     """True — ruxsat; False — limit oshdi."""
-    global _calls
+    global _calls, _redis, _redis_retry_at
     if not RATE_LIMIT_ENABLED:
         return True
     now = time.time()
+    r = _get_redis()
+    if r is not None:
+        try:
+            return _redis_rate_limit_ok(r, key, limit, window, now)
+        except Exception:
+            _redis, _redis_retry_at = None, now + 30   # 30 s xotiradagi limiter bilan ishlaymiz
+
     _calls += 1
     if _calls % _PRUNE_EVERY == 0:
         _prune(now)

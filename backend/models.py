@@ -49,10 +49,11 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     updated_lessons = relationship(
-        "Lesson", back_populates="updated_by_user", foreign_keys="[Lesson.updated_by_id]"
+        "Lesson", back_populates="updated_by_user", foreign_keys="[Lesson.updated_by_id]",
+        order_by="Lesson.id",
     )
-    audit_logs = relationship("AuditLog", back_populates="changed_by_user")
-    teaching_groups = relationship("Group", back_populates="teacher")
+    audit_logs = relationship("AuditLog", back_populates="changed_by_user", order_by="AuditLog.id")
+    teaching_groups = relationship("Group", back_populates="teacher", order_by="Group.id")
 
 
 class Lesson(Base):
@@ -104,7 +105,7 @@ class Course(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    groups = relationship("Group", back_populates="course")
+    groups = relationship("Group", back_populates="course", order_by="Group.id")
 
 
 class Tariff(Base):
@@ -144,8 +145,8 @@ class Student(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    group_memberships = relationship("GroupStudent", back_populates="student")
-    payments = relationship("Payment", back_populates="student")
+    group_memberships = relationship("GroupStudent", back_populates="student", order_by="GroupStudent.id")
+    payments = relationship("Payment", back_populates="student", order_by="Payment.id")
 
 
 STAGE_TOTAL_LESSONS = {
@@ -177,8 +178,8 @@ class Group(Base):
 
     course = relationship("Course", back_populates="groups")
     teacher = relationship("User", back_populates="teaching_groups")
-    members = relationship("GroupStudent", back_populates="group")
-    payments = relationship("Payment", back_populates="group")
+    members = relationship("GroupStudent", back_populates="group", order_by="GroupStudent.id")
+    payments = relationship("Payment", back_populates="group", order_by="Payment.id")
 
 
 class GroupStudent(Base):
@@ -537,7 +538,7 @@ class Parent(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     created_by = relationship("User", foreign_keys=[created_by_id])
-    children = relationship("ParentChild", back_populates="parent", cascade="all, delete-orphan")
+    children = relationship("ParentChild", back_populates="parent", cascade="all, delete-orphan", order_by="ParentChild.id")
 
 
 class ParentChild(Base):
@@ -716,7 +717,7 @@ class Homework(Base):
     group = relationship("Group", foreign_keys=[group_id])
     lesson = relationship("Lesson", foreign_keys=[lesson_id])
     created_by = relationship("User", foreign_keys=[created_by_id])
-    submissions = relationship("HomeworkSubmission", back_populates="homework", cascade="all, delete-orphan")
+    submissions = relationship("HomeworkSubmission", back_populates="homework", cascade="all, delete-orphan", order_by="HomeworkSubmission.id")
 
 
 class HomeworkSubmission(Base):
@@ -991,7 +992,7 @@ class Computer(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    rentals = relationship("ComputerRental", back_populates="computer")
+    rentals = relationship("ComputerRental", back_populates="computer", order_by="ComputerRental.id")
 
 
 class ComputerRental(Base):

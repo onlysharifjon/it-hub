@@ -152,24 +152,4 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── 4. Deploy (customize for your server) ────────────────────────────────────
-  deploy:
-    name: Deploy to server
-    needs: docker-build-push
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment: production
-
-    steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          script: |
-            cd /opt/it-hub
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker compose pull
-            docker compose up -d --remove-orphans
-            docker image prune -f
+  # Production deploy: .github/workflows/deploy.yml (qo'lda, Docker — /var/www/minar-stack)

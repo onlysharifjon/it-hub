@@ -12,7 +12,9 @@ import tempfile
 # parallel ishga tushgan sessiyalar ham bir-biriga xalaqit bermaydi.
 _TMP = tempfile.mkdtemp(prefix="ithub-tests-")
 atexit.register(shutil.rmtree, _TMP, ignore_errors=True)
-os.environ["DATABASE_URL"] = f"sqlite:///{_TMP}/test.db"
+# TEST_DATABASE_URL=postgresql://... — shu (bo'sh, faqat test uchun) Postgres bazasida ishlaydi.
+_PG_URL = os.getenv("TEST_DATABASE_URL", "")
+os.environ["DATABASE_URL"] = _PG_URL or f"sqlite:///{_TMP}/test.db"
 os.environ["UPLOAD_DIR"] = f"{_TMP}/uploads"
 os.makedirs(os.environ["UPLOAD_DIR"], exist_ok=True)
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
@@ -47,13 +49,14 @@ def override_get_db():
 app.dependency_overrides[get_db] = override_get_db
 
 
-@event.listens_for(engine, "connect")
-def _fast_sqlite(dbapi_conn, _):
-    # Test bazasi vaqtinchalik — diskka fsync kutish shart emas.
-    cur = dbapi_conn.cursor()
-    cur.execute("PRAGMA synchronous=OFF")
-    cur.execute("PRAGMA journal_mode=MEMORY")
-    cur.close()
+if not _PG_URL:
+    @event.listens_for(engine, "connect")
+    def _fast_sqlite(dbapi_conn, _):
+        # Test bazasi vaqtinchalik — diskka fsync kutish shart emas.
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA synchronous=OFF")
+        cur.execute("PRAGMA journal_mode=MEMORY")
+        cur.close()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -68,6 +71,11 @@ def setup_db():
     """Har test toza bazadan boshlanadi. Sxemani har safar yaratib-o'chirish
     (55 jadval) test boshiga ~20 s edi — endi faqat qatorlar o'chiriladi."""
     yield
+    if _PG_URL:
+        names = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
+        with engine.begin() as conn:
+            conn.exec_driver_sql(f"TRUNCATE {names} RESTART IDENTITY CASCADE")
+        return
     with engine.begin() as conn:
         conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
         for table in reversed(Base.metadata.sorted_tables):

@@ -65,6 +65,12 @@ os.makedirs(STAFF_PHOTOS_DIR, exist_ok=True)
 
 CAMERA_API_KEY = os.getenv("CAMERA_API_KEY", "")
 
+# Fon rejalashtiruvchilari (investor statistikasi, eslatmalar). Docker'da ular alohida
+# `worker` servisida (backend/worker.py) ishlaydi, API konteynerlarida esa
+# SCHEDULERS_ENABLED=false — shunda crm-api'ni bir nechta nusxada ishga tushirsa ham
+# xabarlar ikki marta yuborilmaydi. PM2 (flag'siz) — eski xatti-harakat.
+SCHEDULERS_ENABLED = os.getenv("SCHEDULERS_ENABLED", "true").lower() != "false"
+
 # Standart docs'ni o'chiramiz — nginx `/api/` prefiksi bilan mos kelmaydi va o'rniga
 # parol bilan himoyalangan variantini beramiz (openapi.json ham himoyalangan).
 # openapi_url=None — FastAPI'ning himoyasiz built-in /openapi.json marshrutini o'chiradi.
@@ -1916,6 +1922,7 @@ def _group_salary(db: Session, group: models.Group, month: int, year: int):
         db.query(models.GroupStudent, models.Student.full_name)
         .join(models.Student, models.Student.id == models.GroupStudent.student_id)
         .filter(models.GroupStudent.group_id == group.id)
+        .order_by(models.GroupStudent.id)
         .all()
     )
     member_rows = [(gs, name) for gs, name in all_members if core_calc.covers_month(gs, month, year)]
@@ -2039,13 +2046,13 @@ def stats_student_growth(
     """
     sel_year = year or tz.today().year
 
+    # extract() — SQLite'da ham, PostgreSQL'da ham ishlaydi (strftime faqat SQLite'da bor)
+    year_expr = extract('year', models.Student.created_at)
+    month_expr = extract('month', models.Student.created_at)
     rows = (
-        db.query(
-            func.strftime('%m', models.Student.created_at).label('m'),
-            func.count(models.Student.id),
-        )
-        .filter(func.strftime('%Y', models.Student.created_at) == str(sel_year))
-        .group_by('m')
+        db.query(month_expr.label('m'), func.count(models.Student.id))
+        .filter(year_expr == sel_year)
+        .group_by(month_expr)
         .all()
     )
     joined_by_month = {int(m): c for m, c in rows if m}
@@ -2061,7 +2068,7 @@ def stats_student_growth(
     # Yil boshigacha bo'lgan talabalar — kumulyativ hisobning boshlanish nuqtasi
     before = (
         db.query(func.count(models.Student.id))
-        .filter(func.strftime('%Y', models.Student.created_at) < str(sel_year))
+        .filter(year_expr < sel_year)
         .scalar()
     ) or 0
 
@@ -2205,7 +2212,7 @@ def teacher_salaries_breakdown(
     Formula: 50 000 so'm / shu oyda o'tilgan darslar soni × talaba kelgan
     darslar soni (`_group_salary` / `_teacher_salary_breakdown` bilan bir xil).
     """
-    groups = db.query(models.Group).filter(models.Group.is_active == True).all()
+    groups = db.query(models.Group).filter(models.Group.is_active == True).order_by(models.Group.id).all()
     teachers: dict = {}
     grand_total = Decimal(0)
 
@@ -4532,9 +4539,13 @@ def _investor_scheduler_loop() -> None:
 
 
 @_on_startup
-def start_investor_scheduler() -> None:
+def start_investor_scheduler(force: bool = False) -> "threading.Thread | None":
     import threading
-    threading.Thread(target=_investor_scheduler_loop, daemon=True).start()
+    if not (SCHEDULERS_ENABLED or force):
+        return None
+    t = threading.Thread(target=_investor_scheduler_loop, name="investor_scheduler", daemon=True)
+    t.start()
+    return t
 
 
 def _homework_read(hw: models.Homework) -> schemas.HomeworkRead:
@@ -6563,9 +6574,13 @@ def _reminder_scheduler_loop() -> None:
 
 
 @_on_startup
-def start_reminder_scheduler() -> None:
+def start_reminder_scheduler(force: bool = False) -> "threading.Thread | None":
     import threading
-    threading.Thread(target=_reminder_scheduler_loop, daemon=True).start()
+    if not (SCHEDULERS_ENABLED or force):
+        return None
+    t = threading.Thread(target=_reminder_scheduler_loop, name="reminder_scheduler", daemon=True)
+    t.start()
+    return t
 
 
 @app.get("/leads/comment-stats", response_model=schemas.CommentStatsRead)
@@ -6586,15 +6601,18 @@ def lead_comment_stats(
     first_at = base.order_by(models.LeadActivity.created_at.asc()).with_entities(models.LeadActivity.created_at).first()
     last_at = base.order_by(models.LeadActivity.created_at.desc()).with_entities(models.LeadActivity.created_at).first()
 
-    period_expr = func.strftime("%Y-%m", models.LeadActivity.created_at)
+    # extract() — SQLite'da ham, PostgreSQL'da ham ishlaydi (strftime faqat SQLite'da bor)
+    y_expr = extract('year', models.LeadActivity.created_at)
+    m_expr = extract('month', models.LeadActivity.created_at)
     month_rows = (
-        db.query(period_expr, func.count(models.LeadActivity.id))
+        db.query(y_expr, m_expr, func.count(models.LeadActivity.id))
         .filter(is_note)
-        .group_by(period_expr)
-        .order_by(period_expr)
+        .group_by(y_expr, m_expr)
+        .order_by(y_expr, m_expr)
         .all()
     )
-    months = [schemas.CommentMonthStat(period=p, count=c) for p, c in month_rows if p]
+    months = [schemas.CommentMonthStat(period=f"{int(y):04d}-{int(m):02d}", count=c)
+              for y, m, c in month_rows if y and m]
     busiest = max(months, key=lambda m: m.count) if months else None
 
     author_rows = (
@@ -6841,7 +6859,7 @@ def lead_conversion_tree(
     leads = db.query(models.Lead).filter(
         models.Lead.created_at >= period_start,
         models.Lead.created_at < period_end,
-    ).all()
+    ).order_by(models.Lead.id).all()
     lead_ids = [l.id for l in leads]
     total = len(leads)
 

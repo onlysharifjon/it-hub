@@ -26,4 +26,5 @@ setup(app, student=True, admin=False)
 
 @app.get("/healthz", include_in_schema=False)
 def healthz():
-    return {"ok": True}
+    from .minar import battles
+    return {"ok": True, "rooms": battles.active_rooms()}
