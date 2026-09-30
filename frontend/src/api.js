@@ -491,6 +491,16 @@ export async function exportExcelUrl(month, year) {
   return `${API_BASE}/stats/export/excel?${q}`
 }
 
+// Tashqi xarajatlar — to'lovlar eksportidan alohida fayl. category: '' | 'other' | 'salary'.
+export async function exportExpensesExcelUrl(month, year, category) {
+  const q = new URLSearchParams()
+  if (month) q.set('month', month)
+  if (year)  q.set('year', year)
+  if (category) q.set('category', category)
+  q.set('_token', await downloadToken())
+  return `${API_BASE}/expenses/export/excel?${q}`
+}
+
 export async function receiptUrl(paymentId) {
   return `${API_BASE}/payments/${paymentId}/receipt?_token=${await downloadToken()}`
 }

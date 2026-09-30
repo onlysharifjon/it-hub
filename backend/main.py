@@ -2546,6 +2546,89 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db), actor: models
     db.commit()
 
 
+@app.get("/expenses/export/excel")
+def export_expenses_excel(
+    month: Optional[int] = Query(None),
+    year: Optional[int] = Query(None),
+    category: Optional[str] = Query(None),  # other | salary; bo'sh — hammasi
+    _token: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin_download),
+):
+    """Tashqi xarajatlarni alohida Excel faylga chiqaradi (to'lovlar eksportidan mustaqil)."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        raise HTTPException(status_code=500, detail="openpyxl kutubxonasi o'rnatilmagan")
+    if category not in (None, '', 'other', 'salary'):
+        raise HTTPException(status_code=400, detail="Xarajat turi noto'g'ri")
+
+    q = db.query(models.Expense).options(joinedload(models.Expense.staff))
+    if month:
+        q = q.filter(models.Expense.month == month)
+    if year:
+        q = q.filter(models.Expense.year == year)
+    if category:
+        q = q.filter(models.Expense.category == category)
+    expenses = q.order_by(models.Expense.year.desc(), models.Expense.month.desc(), models.Expense.id.desc()).all()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Tashqi xarajatlar"
+
+    headers = ["#", "Nomi / Sabab", "Turi", "Xodim", "Summa (so'm)", "Oy", "Yil", "Kiritilgan sana"]
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+
+    for col, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    month_names = {1:"Yanvar",2:"Fevral",3:"Mart",4:"Aprel",5:"May",6:"Iyun",
+                   7:"Iyul",8:"Avgust",9:"Sentyabr",10:"Oktyabr",11:"Noyabr",12:"Dekabr"}
+
+    for i, e in enumerate(expenses, 1):
+        ws.append([
+            i,
+            e.name,
+            "Xodim oyligi" if e.category == 'salary' else "Oddiy",
+            e.staff_name or "",
+            float(e.amount),
+            month_names.get(e.month, e.month),
+            e.year,
+            e.created_at.strftime("%d.%m.%Y %H:%M") if e.created_at else "",
+        ])
+        # Foydalanuvchi kiritgan nom '=' bilan boshlansa ham formula emas, matn bo'lib qolsin.
+        ws.cell(row=i + 1, column=2).data_type = 's'
+        ws.cell(row=i + 1, column=5).number_format = '#,##0'
+
+    col_widths = [5, 40, 16, 25, 18, 12, 8, 20]
+    for col, w in enumerate(col_widths, 1):
+        ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = w
+
+    total = sum(float(e.amount) for e in expenses)
+    last_row = len(expenses) + 2
+    ws.cell(row=last_row, column=1, value="JAMI:")
+    ws.cell(row=last_row, column=1).font = Font(bold=True)
+    ws.cell(row=last_row, column=5, value=total)
+    ws.cell(row=last_row, column=5).font = Font(bold=True)
+    ws.cell(row=last_row, column=5).number_format = '#,##0'
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"expenses_{category or 'all'}_{year or 'all'}_{month or 'all'}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 # ── Salary (xodimlar oyligi) ──────────────────────────────────────────────────
 
 TEACHER_BASE_SALARY = Decimal('5000000')       # FIX oylik

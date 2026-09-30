@@ -3,8 +3,11 @@ import { SummaryRow } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faReceipt, faPlus, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
-import { fetchExpenses, createExpense, updateExpense, deleteExpense, fetchExpenseStaffOptions } from '../api'
+import { faReceipt, faPlus, faPen, faTrash, faFileExcel } from '@fortawesome/free-solid-svg-icons'
+import {
+  fetchExpenses, createExpense, updateExpense, deleteExpense, fetchExpenseStaffOptions,
+  exportExpensesExcelUrl, openDownload,
+} from '../api'
 import DataTable, { RowActions } from './ui/DataTable'
 import Modal from './ui/Modal'
 import ConfirmDialog from './ui/ConfirmDialog'
@@ -27,6 +30,8 @@ export default function Expenses({ currentUser }) {
   // Xarajat qo'shish — admin va hunter; tahrirlash/o'chirish faqat admin.
   const canAdd    = currentUser?.role === 'admin' || currentUser?.role === 'hunter'
   const canManage = currentUser?.role !== 'hunter'
+  // Yuklab-olish tokeni faqat adminga beriladi.
+  const canExport = currentUser?.role === 'admin'
   const [month, setMonth] = useState(NOW.getMonth() + 1)
   const [year,  setYear]  = useState(NOW.getFullYear())
   const [expenses, setExpenses] = useState([])
@@ -36,6 +41,7 @@ export default function Expenses({ currentUser }) {
   const [saving,   setSaving]   = useState(false)
   const [staffOptions, setStaffOptions] = useState([])
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [category, setCategory] = useState('')   // '' | 'other' | 'salary' — jadval va Excel uchun
 
   useEffect(() => { load() }, [month, year])
   useEffect(() => { if (canAdd) fetchExpenseStaffOptions().then(setStaffOptions).catch(() => {}) }, [canAdd])
@@ -100,6 +106,10 @@ export default function Expenses({ currentUser }) {
   }
 
   const total = expenses.reduce((s, e) => s + parseFloat(e.amount), 0)
+  const rows = category
+    ? expenses.filter(e => (e.category === 'salary' ? 'salary' : 'other') === category)
+    : expenses
+  const rowsTotal = rows.reduce((s, e) => s + parseFloat(e.amount), 0)
 
   const columns = [
     { key: 'name', header: 'Nomi / Sabab', sortable: true, render: e => <strong>{e.name}</strong> },
@@ -146,6 +156,20 @@ export default function Expenses({ currentUser }) {
             <select className="field-sm" value={year} onChange={e => setYear(Number(e.target.value))} aria-label="Yil">
               {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
+            <select className="field-sm" value={category} onChange={e => setCategory(e.target.value)} aria-label="Xarajat turi">
+              <option value="">Barcha turlar</option>
+              <option value="other">Oddiy xarajatlar</option>
+              <option value="salary">Xodim oyligi</option>
+            </select>
+            {canExport && (
+              <button
+                className="button secondary"
+                title="Tanlangan oy va tur bo'yicha xarajatlarni Excel'ga yuklash"
+                onClick={() => openDownload(exportExpensesExcelUrl(month, year, category)).catch(e => toast.error(e.message || "Yuklab bo'lmadi"))}
+              >
+                <FontAwesomeIcon icon={faFileExcel} /> Excel
+              </button>
+            )}
             <button className="button" onClick={openAdd}>
               <FontAwesomeIcon icon={faPlus} /> Qo'shish
             </button>
@@ -153,10 +177,10 @@ export default function Expenses({ currentUser }) {
         )}</>} />
 
       <SummaryRow items={[{ label: 'Jami xarajat', value: fmt(total), unit: 'so‘m', sub: MONTHS[month - 1] + ' ' + year }, { label: 'Xodim oyligi', value: fmt(expenses.filter(e => e.category === 'salary').reduce((n,e) => n + Number(e.amount), 0)), unit: 'so‘m' }, { label: 'Boshqa xarajatlar', value: fmt(expenses.filter(e => e.category !== 'salary').reduce((n,e) => n + Number(e.amount), 0)), unit: 'so‘m' }]} />
-      <div className="studio-section"><div className="studio-section-head"><div><h2>Xarajatlar daftari</h2><p>Har bir chiqimning sababi va hisoboti.</p></div><span>{expenses.length} yozuv</span></div>
+      <div className="studio-section"><div className="studio-section-head"><div><h2>Xarajatlar daftari</h2><p>Har bir chiqimning sababi va hisoboti.</p></div><span>{rows.length} yozuv</span></div>
         <DataTable
           columns={columns}
-          rows={expenses}
+          rows={rows}
           loading={loading}
           clientPageSize={25}
           empty={{
@@ -170,10 +194,10 @@ export default function Expenses({ currentUser }) {
             ),
           }}
         />
-        {expenses.length > 0 && (
+        {rows.length > 0 && (
           <div className="dash-exp-total">
             <span>Jami</span>
-            <strong className="tone-danger">{fmt(total)} so'm</strong>
+            <strong className="tone-danger">{fmt(rowsTotal)} so'm</strong>
           </div>
         )}
       </div>
