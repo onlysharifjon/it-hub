@@ -670,6 +670,9 @@ export async function createMinarAccountsBulk(p) {
 export async function resetMinarPassword(studentId) {
   return request(`/space/admin/accounts/${studentId}/reset-password`, { method: 'POST' })
 }
+export async function issueMinarQrCards(p) {
+  return request('/space/admin/accounts/qr', { method: 'POST', body: JSON.stringify(p) })
+}
 export async function patchMinarAccount(studentId, p) {
   return request(`/space/admin/accounts/${studentId}`, { method: 'PATCH', body: JSON.stringify(p) })
 }

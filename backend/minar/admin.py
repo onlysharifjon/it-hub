@@ -5,10 +5,12 @@ nginx `space.minaracademy.uz/api/admin/` ga 404 qaytaradi.
 """
 from __future__ import annotations
 
+import os
 import secrets
 from datetime import datetime
 from typing import List, Optional
 
+import segno
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
@@ -179,6 +181,37 @@ def _account_by_student(db: Session, student_id: int) -> MinarAccount:
     if not acc:
         raise HTTPException(status_code=404, detail="Bu talabaning Minar akkaunti yo'q")
     return acc
+
+
+class QrRequest(BaseModel):
+    group_id: Optional[int] = None
+    student_ids: Optional[List[int]] = Field(None, max_items=200)
+
+
+SPACE_URL = os.getenv("MINAR_SPACE_URL", "https://space.minaracademy.uz").rstrip("/")
+
+
+@router.post("/accounts/qr")
+def issue_qr_cards(payload: QrRequest, db: Session = Depends(get_db), user: models.User = Depends(staff_user)):
+    """Guruh (yoki tanlangan talabalar) uchun QR kirish kartalari. Har yangi QR eskisini bekor qiladi."""
+    if not payload.group_id and not payload.student_ids:
+        raise HTTPException(status_code=400, detail="Guruh yoki talabalarni tanlang")
+    q = db.query(MinarAccount, models.Student).join(models.Student, models.Student.id == MinarAccount.student_id)
+    if payload.group_id:
+        q = q.join(models.GroupStudent, models.GroupStudent.student_id == models.Student.id) \
+             .filter(models.GroupStudent.group_id == payload.group_id, models.GroupStudent.left_at.is_(None))
+    if payload.student_ids:
+        q = q.filter(models.Student.id.in_(payload.student_ids))
+    cards = []
+    for acc, st in q.order_by(models.Student.full_name).limit(200).all():
+        if not student_auth.account_usable(acc, st):
+            continue
+        url = f"{SPACE_URL}/#qr={student_auth.issue_login_token(db, acc, user.id)}"
+        cards.append({"student_id": st.id, "full_name": st.full_name, "login_id": acc.login_id,
+                      "url": url, "svg": segno.make(url, error="m").svg_inline(scale=4, border=2)})
+    _audit(db, user, "qr_cards", None, {"group_id": payload.group_id, "count": len(cards)})
+    db.commit()
+    return {"cards": cards, "expires_days": student_auth.QR_TOKEN_TTL.days}
 
 
 @router.post("/accounts/{student_id}/reset-password")

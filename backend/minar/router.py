@@ -31,6 +31,25 @@ def login(request: Request, response: Response, payload: dict = Body(...), db: S
     return {"ok": True}
 
 
+@router.post("/auth/qr")
+def login_qr(request: Request, response: Response, payload: dict = Body(...), db: Session = Depends(get_db)):
+    auth.check_origin(request)
+    auth.qr_login(db, request, response, payload.get("token"))
+    return {"ok": True, "canSetWithoutCurrent": True}
+
+
+@router.get("/auth/password")
+def password_status(request: Request, acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return auth.password_status(db, request)
+
+
+@router.post("/auth/password")
+def change_password(request: Request, payload: dict = Body(...), acc: MinarAccount = Account,
+                    db: Session = Depends(get_db)):
+    auth.change_password(db, request, acc, payload.get("current"), payload.get("new"))
+    return {"ok": True}
+
+
 @router.post("/auth/logout")
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     auth.check_origin(request)

@@ -6693,3 +6693,21 @@ body,
 .hw-sub-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
 .hw-sub-form input[type="number"] { width: 80px; }
 .hw-sub-comment { flex: 1; min-width: 180px; }
+
+/* Minar Space QR kirish kartalari */
+.qr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 14px; }
+.qr-card {
+  border: 1px dashed var(--border); border-radius: 10px; padding: 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+  break-inside: avoid; page-break-inside: avoid; background: #fff; color: #111;
+}
+.qr-card .qr-svg svg { width: 140px; height: 140px; }
+.qr-card strong { font-size: 13px; }
+.qr-card span { font-family: monospace; font-size: 13px; }
+.qr-card small { font-size: 10px; color: #666; }
+.qr-print-root { display: none; }
+@media print {
+  body.printing-qr > *:not(.qr-print-root) { display: none !important; }
+  body.printing-qr .qr-print-root { display: block; }
+  body.printing-qr .qr-grid { grid-template-columns: repeat(3, 1fr); gap: 8mm; }
+}

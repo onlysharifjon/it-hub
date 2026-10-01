@@ -43,6 +43,8 @@ class MinarSession(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # QR orqali kirilganda: shu vaqtgacha eski parolsiz yangi parol o'rnatish mumkin
+    password_reset_until = Column(DateTime, nullable=True)
 
 
 class MinarLedger(Base):
@@ -212,3 +214,16 @@ class MinarJobRun(Base):
 
     key = Column(String(60), primary_key=True)
     done_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarLoginToken(Base):
+    """QR-kod orqali kirish uchun bir martalik token (bazada faqat sha256)."""
+    __tablename__ = "minar_login_tokens"
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("minar_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)

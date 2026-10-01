@@ -6,7 +6,7 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faRocket, faPlus, faKey, faToggleOn, faToggleOff,
-  faCopy, faLayerGroup, faLock,
+  faCopy, faLayerGroup, faLock, faQrcode,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchMinarAccounts, createMinarAccount, createMinarAccountsBulk,
@@ -14,6 +14,7 @@ import {
 } from '../api'
 import useConfirm from './ui/useConfirm'
 import DataTable, { RowActions } from './ui/DataTable'
+import MinarQrCards from './MinarQrCards'
 
 const COURSES = ['HTML', 'CSS', 'JavaScript']
 
@@ -36,6 +37,7 @@ export default function MinarAccounts({ currentUser }) {
 
   // Guruh bo'yicha ommaviy ochish modali
   const [bulkModal, setBulkModal] = useState(false)
+  const [qr, setQr] = useState(null)   // null | { studentIds } | { studentIds: null } (guruh tanlash)
   const [groups, setGroups] = useState([])
   const [bulkGroupId, setBulkGroupId] = useState('')
   const [bulkCourse, setBulkCourse] = useState('')
@@ -189,6 +191,10 @@ export default function MinarAccounts({ currentUser }) {
           <button className="btn-icon" title="Parolni yangilash" aria-label="Parolni yangilash" onClick={() => handleReset(r)}>
             <FontAwesomeIcon icon={faKey} />
           </button>
+          <button className="btn-icon" title="QR kirish kartasi" aria-label="QR kirish kartasi"
+            disabled={r.can_login === false} onClick={() => setQr({ studentIds: [r.student_id] })}>
+            <FontAwesomeIcon icon={faQrcode} />
+          </button>
           <button className="btn-icon" title={r.is_active ? 'Bloklash' : 'Faollashtirish'}
             aria-label={r.is_active ? 'Bloklash' : 'Faollashtirish'} onClick={() => handleToggle(r)}>
             <FontAwesomeIcon icon={r.is_active ? faToggleOn : faToggleOff} />
@@ -207,6 +213,12 @@ export default function MinarAccounts({ currentUser }) {
         actions={canManage && <div className="header-actions">
           <button className="button secondary" onClick={openBulkModal}>
             <FontAwesomeIcon icon={faLayerGroup} /> Guruh bo'yicha ochish
+          </button>
+          <button className="button secondary" onClick={() => {
+            if (groups.length === 0) fetchGroups({ is_active: true, page_size: 200 }).then(r => setGroups(r.items || [])).catch(() => {})
+            setQr({ studentIds: null })
+          }}>
+            <FontAwesomeIcon icon={faQrcode} /> QR kartalar
           </button>
           <button className="button" onClick={openCreateModal}>
             <FontAwesomeIcon icon={faPlus} /> Hisob ochish
@@ -305,6 +317,8 @@ export default function MinarAccounts({ currentUser }) {
       )}
 
       {/* Guruh bo'yicha ommaviy ochish modali */}
+      {qr && <MinarQrCards groups={groups} studentIds={qr.studentIds} onClose={() => setQr(null)} />}
+
       {bulkModal && (
         <Overlay className="modal-overlay" onClick={() => setBulkModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
