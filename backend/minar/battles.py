@@ -31,7 +31,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import models, security
 from ..database import SessionLocal
 from . import catalog as C
-from .auth import origin_allowed
+from .auth import account_usable, origin_allowed
 from .errors import MinarError
 from .models import MinarAccount, MinarBattle
 
@@ -183,7 +183,7 @@ def _load_participant(claims: dict) -> Optional[dict]:
             return None
         acc = db.query(MinarAccount).filter(MinarAccount.id == acc_id, MinarAccount.is_active.is_(True)).first()
         student = acc and db.query(models.Student).filter(models.Student.id == acc.student_id).first()
-        if not acc or not student or not student.is_active or student.is_archived:
+        if not account_usable(acc, student):
             return None
         return {"room_id": b.room_id, "code": b.code, "mode": b.mode, "course": b.course,
                 "name": (student.full_name or "O‘quvchi").split()[0], "account_id": acc.id, "login_id": acc.login_id,

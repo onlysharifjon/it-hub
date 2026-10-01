@@ -162,6 +162,20 @@ def test_reset_password_revokes_sessions_and_disable(client, db, metodist_token,
     assert client.post("/space/auth/login", json={"studentId": new["login_id"], "password": new["password"]}).status_code == 403
 
 
+def test_test_account_logs_in_though_student_archived(client, db, metodist_token, acct):
+    st, creds = acct
+    client.post("/space/auth/logout")
+    st.is_active, st.is_archived = False, True
+    db.commit()
+    r = client.post("/space/auth/login", json={"studentId": creds["login_id"], "password": creds["password"]})
+    assert r.status_code == 403                                                    # oddiy akkaunt — bloklanadi
+    db.query(MinarAccount).filter(MinarAccount.student_id == st.id).update({"is_test": True})
+    db.commit()
+    login(client, creds)
+    assert client.get("/space/students/me/bootstrap").status_code == 200
+    assert all(row["id"] != creds["login_id"] for row in client.get("/space/leaderboard").json())  # reytingda yo'q
+
+
 def test_bulk_create_for_group(client, db, metodist_token):
     st1, group = make_student(db, "Bir Ikki")
     st2, _ = make_student(db, "Uch To‘rt", group=group)

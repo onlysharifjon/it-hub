@@ -23,6 +23,9 @@ class MinarAccount(Base):
     streak = Column(Integer, nullable=False, default=0)
     last_login = Column(String(10), nullable=True)                           # YYYY-MM-DD (Toshkent)
     is_active = Column(Boolean, nullable=False, default=True)
+    # Test akkaunt: arxivlangan "talaba"ga bog'langan (CRM hisoblari va reytingga kirmaydi),
+    # lekin login qila oladi.
+    is_test = Column(Boolean, nullable=False, default=False)
     failed_attempts = Column(Integer, nullable=False, default=0)
     locked_until = Column(DateTime, nullable=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)

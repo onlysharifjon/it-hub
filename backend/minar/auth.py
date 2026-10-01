@@ -64,6 +64,13 @@ def check_origin(request: Request) -> None:
         raise MinarError(403, "So‘rov manbai ruxsat etilmagan.")
 
 
+def account_usable(acc: MinarAccount | None, student: models.Student | None) -> bool:
+    """Akkaunt ochiq va talabasi faol bo'lsa (test akkaunt uchun talaba holati tekshirilmaydi)."""
+    if not acc or not acc.is_active or not student:
+        return False
+    return acc.is_test or (student.is_active and not student.is_archived)
+
+
 def login(db: Session, request: Request, response: Response, login_id: str, password: str) -> MinarAccount:
     ip = client_ip(request)
     lid = normalize_login_id(login_id)
@@ -89,7 +96,7 @@ def login(db: Session, request: Request, response: Response, login_id: str, pass
         raise MinarError(401, "ID yoki parol noto‘g‘ri.")
 
     student = db.query(models.Student).filter(models.Student.id == acc.student_id).first()
-    if not acc.is_active or not student or not student.is_active or student.is_archived:
+    if not account_usable(acc, student):
         raise MinarError(403, "Akkaunt faol emas. Ustozingga murojaat qil.")
 
     acc.failed_attempts = 0
@@ -133,10 +140,8 @@ def current_account(request: Request, db: Session = Depends(get_db)) -> MinarAcc
     if not sess or sess.expires_at < now:
         raise unauth
     acc = db.query(MinarAccount).filter(MinarAccount.id == sess.account_id).first()
-    if not acc or not acc.is_active:
-        raise unauth
-    student = db.query(models.Student).filter(models.Student.id == acc.student_id).first()
-    if not student or not student.is_active or student.is_archived:
+    student = acc and db.query(models.Student).filter(models.Student.id == acc.student_id).first()
+    if not account_usable(acc, student):
         raise unauth
     if now - sess.last_seen_at > _TOUCH_EVERY:
         sess.last_seen_at = now
