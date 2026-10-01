@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, tz
-from . import achievements, notify
+from . import achievements, learning, notify
 from . import catalog as C
 from . import games
 from .errors import MinarError
@@ -218,6 +218,7 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
         "productLevels": C.PRODUCT_MIN_LEVEL,
         "achievements": achievements.progress(db, acc),
         "unreadNotifications": notify.unread_count(db, acc),
+        "homeworkPending": learning.pending_count(db, acc),
     }
 
 
@@ -337,6 +338,13 @@ def act_lesson(db: Session, acc: MinarAccount, index: Any) -> tuple[int, str]:
     _credit(db, acc, C.LESSON_COIN, "Dars yakunlandi", "lesson", f"lesson:{acc.course}-{index}")
     _commit(db)
     return C.LESSON_COIN, "Ajoyib! +5 coin va +50 XP."
+
+
+def act_homework(db: Session, acc: MinarAccount, homework_id: int, payload: Any) -> tuple[int, str]:
+    if not isinstance(payload, dict):
+        raise MinarError(400, "Javobingni yoz.")
+    learning.submit(db, acc, homework_id, payload)
+    return 0, "Javobing ustozga yuborildi! Baholanganda xabar beramiz."
 
 
 def act_quest(db: Session, acc: MinarAccount, quest: Any) -> tuple[int, str]:

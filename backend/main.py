@@ -319,7 +319,9 @@ def serve_upload(rel_path: str, exp: Optional[str] = None, sig: Optional[str] = 
 # Ota-ona mobil ilovasi API (/parent/...) — alohida paketda
 from .parent.router_parent import router as parent_router
 from .parent.notifications import notify_parents_of_student
+from .minar import achievements as minar_achievements
 from .minar import notify as minar_notify
+from .minar.models import MinarAccount
 app.include_router(parent_router)
 
 # Facebook Lead Ads webhook (Make.com -> /leads/facebook) — alohida paketda
@@ -4618,7 +4620,20 @@ def list_homeworks(group_id: int, db: Session = Depends(get_db), actor: models.U
         .order_by(models.Homework.lesson_date.desc(), models.Homework.id.desc())
         .limit(30).all()
     )
-    return [_homework_read(hw) for hw in hws]
+    counts: dict = {}
+    for hw_id, status_, n in (
+        db.query(models.HomeworkSubmission.homework_id, models.HomeworkSubmission.status, func.count())
+        .filter(models.HomeworkSubmission.homework_id.in_([h.id for h in hws] or [0]))
+        .group_by(models.HomeworkSubmission.homework_id, models.HomeworkSubmission.status).all()
+    ):
+        counts.setdefault(hw_id, {})[status_] = n
+    out = []
+    for hw in hws:
+        r = _homework_read(hw)
+        c = counts.get(hw.id, {})
+        r.submitted_count, r.graded_count = c.get("submitted", 0), c.get("graded", 0)
+        out.append(r)
+    return out
 
 
 @app.post("/groups/{group_id}/homeworks", response_model=schemas.HomeworkRead, status_code=201)
@@ -4665,6 +4680,10 @@ def create_homework(
 
     db.add(hw)
     db.flush()
+    for (sid,) in db.query(models.GroupStudent.student_id).filter(
+            models.GroupStudent.group_id == group_id, models.GroupStudent.left_at.is_(None)).all():
+        minar_notify.to_student(db, sid, "homework", "Yangi uy vazifasi 📝",
+                                payload.lesson_title or payload.text[:120], "homework")
     write_audit(db, entity_type="homework", entity_id=hw.id, action="create",
                 changed_by_id=actor.id,
                 new_value={"group_id": group_id, "lesson_number": payload.lesson_number,
@@ -4672,6 +4691,86 @@ def create_homework(
     db.commit()
     db.refresh(hw)
     return _homework_read(hw)
+
+
+def _homework_for_actor(db: Session, homework_id: int, actor: models.User) -> models.Homework:
+    hw = db.query(models.Homework).filter(models.Homework.id == homework_id).first()
+    if not hw:
+        raise HTTPException(status_code=404, detail="Uy vazifasi topilmadi")
+    _check_group_access(db, hw.group_id, actor)
+    return hw
+
+
+def _submission_read(st: models.Student, sub: Optional[models.HomeworkSubmission],
+                     has_space: bool) -> schemas.HomeworkSubmissionRead:
+    return schemas.HomeworkSubmissionRead(
+        student_id=st.id, full_name=st.full_name, has_space_account=has_space,
+        status=sub.status if sub else "pending",
+        answer=sub.answer if sub else None, link=sub.link if sub else None,
+        submitted_at=sub.submitted_at if sub else None,
+        grade=sub.grade if sub else None, teacher_comment=sub.teacher_comment if sub else None,
+        coins=sub.coins if sub else 0, graded_at=sub.graded_at if sub else None,
+    )
+
+
+@app.get("/homeworks/{homework_id}/submissions", response_model=List[schemas.HomeworkSubmissionRead])
+def list_homework_submissions(homework_id: int, db: Session = Depends(get_db),
+                              actor: models.User = Depends(require_attendance_editor)):
+    """Guruhning hozirgi a'zolari bo'yicha javoblar (topshirmaganlar ham — `pending`)."""
+    hw = _homework_for_actor(db, homework_id, actor)
+    students = (
+        db.query(models.Student)
+        .join(models.GroupStudent, models.GroupStudent.student_id == models.Student.id)
+        .filter(models.GroupStudent.group_id == hw.group_id, models.GroupStudent.left_at.is_(None))
+        .order_by(models.Student.full_name).all()
+    )
+    subs = {s.student_id: s for s in db.query(models.HomeworkSubmission)
+            .filter(models.HomeworkSubmission.homework_id == hw.id).all()}
+    space = {sid for (sid,) in db.query(MinarAccount.student_id)
+             .filter(MinarAccount.student_id.in_([st.id for st in students] or [0])).all()}
+    rows = [_submission_read(st, subs.get(st.id), st.id in space) for st in students]
+    order = {"submitted": 0, "pending": 1, "graded": 2}
+    return sorted(rows, key=lambda r: order.get(r.status, 3))
+
+
+@app.patch("/homeworks/{homework_id}/submissions/{student_id}", response_model=schemas.HomeworkSubmissionRead)
+def grade_homework_submission(homework_id: int, student_id: int, payload: schemas.HomeworkGrade,
+                              db: Session = Depends(get_db),
+                              actor: models.User = Depends(require_attendance_editor)):
+    """Baholash. Coin faqat birinchi baholashda (ustoz budjetidan) beriladi."""
+    hw = _homework_for_actor(db, homework_id, actor)
+    member = db.query(models.GroupStudent.id).filter(
+        models.GroupStudent.group_id == hw.group_id, models.GroupStudent.student_id == student_id).first()
+    st = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not member or not st:
+        raise HTTPException(status_code=404, detail="Talaba bu guruhda emas")
+    sub = db.query(models.HomeworkSubmission).filter(
+        models.HomeworkSubmission.homework_id == hw.id,
+        models.HomeworkSubmission.student_id == student_id).with_for_update().first()
+    now = datetime.utcnow()
+    if not sub:
+        sub = models.HomeworkSubmission(homework_id=hw.id, student_id=student_id, created_at=now)
+        db.add(sub)
+    first_grade = sub.status != "graded"
+    old = {"status": sub.status, "grade": sub.grade}
+    sub.status, sub.grade, sub.teacher_comment = "graded", payload.grade, payload.comment
+    sub.graded_at, sub.graded_by_id = now, actor.id
+    if payload.coins and not sub.coins:
+        _award_coins(db, actor, student_id=student_id, group_id=hw.group_id, amount=payload.coins,
+                     reason=f"Uy vazifasi: {hw.lesson_title or hw.lesson_date.strftime('%d.%m.%Y')}")
+        sub.coins = payload.coins
+    db.flush()
+    write_audit(db, entity_type="homework_submission", entity_id=sub.id, action="grade",
+                changed_by_id=actor.id, old_value=old,
+                new_value={"grade": payload.grade, "coins": sub.coins, "homework_id": hw.id})
+    if first_grade:
+        minar_notify.to_student(db, student_id, "homework", f"Uy vazifang baholandi: {payload.grade} ball",
+                                payload.comment or (hw.lesson_title or "Ustoz javobingni tekshirdi."), "homework")
+    acc = db.query(MinarAccount).filter(MinarAccount.student_id == student_id).first()
+    if acc:
+        minar_achievements.evaluate(db, acc)
+    db.commit()
+    return _submission_read(st, sub, acc is not None)
 
 
 # ── Akademik: baholar / izohlar / sertifikatlar / tadbirlar ──────────────────
@@ -5275,23 +5374,22 @@ def coin_summary(db: Session = Depends(get_db), actor: models.User = Depends(req
     return schemas.CoinSummary(month=now.month, year=now.year, budget=None, spent=spent, remaining=None)
 
 
-@app.post("/coins/give", response_model=schemas.CoinTransactionRead, status_code=201)
-def give_coins(payload: schemas.CoinGive, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
-    _check_academic_target(db, actor, payload.student_id, payload.group_id)
-
+def _award_coins(db: Session, actor: models.User, *, student_id: int, group_id: Optional[int],
+                 amount: int, reason: Optional[str]) -> models.CoinTransaction:
+    """Talabaga coin berish (budjet nazorati, audit, ota-ona va Space bildirishnomasi). Commit qilmaydi."""
     # Teacher uchun oylik budjet nazorati (boshqa rollar cheklanmagan)
     if actor.role == UserRole.teacher.value:
         budget = _teacher_coin_budget(db, actor.id)
         remaining = budget - _coins_spent_this_month(db, actor.id)
-        if payload.amount > remaining:
+        if amount > remaining:
             raise HTTPException(
                 status_code=400,
                 detail=f"Coin yetarli emas: qoldiq {max(0, remaining)} (har oy 1-sanada {budget} ga to'ladi)",
             )
 
     t = models.CoinTransaction(
-        student_id=payload.student_id, teacher_id=actor.id, group_id=payload.group_id,
-        amount=payload.amount, reason=payload.reason, created_at=datetime.utcnow(),
+        student_id=student_id, teacher_id=actor.id, group_id=group_id,
+        amount=amount, reason=reason, created_at=datetime.utcnow(),
     )
     db.add(t)
     db.flush()
@@ -5304,6 +5402,14 @@ def give_coins(payload: schemas.CoinGive, db: Session = Depends(get_db), actor: 
     )
     minar_notify.to_student(db, t.student_id, "coin", f"Ustoz senga {t.amount} coin berdi 🎉",
                             t.reason or "Faol qatnashganing uchun rag‘bat.", "history")
+    return t
+
+
+@app.post("/coins/give", response_model=schemas.CoinTransactionRead, status_code=201)
+def give_coins(payload: schemas.CoinGive, db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    _check_academic_target(db, actor, payload.student_id, payload.group_id)
+    t = _award_coins(db, actor, student_id=payload.student_id, group_id=payload.group_id,
+                     amount=payload.amount, reason=payload.reason)
     db.commit()
     db.refresh(t)
     return _coin_tx_read(t)

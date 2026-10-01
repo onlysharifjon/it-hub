@@ -647,6 +647,10 @@ export async function fetchHomeworks(groupId)  { return request(`/groups/${group
 export async function createHomework(groupId, p) {
   return request(`/groups/${groupId}/homeworks`, { method: 'POST', body: JSON.stringify(p) })
 }
+export async function fetchHomeworkSubmissions(homeworkId) { return request(`/homeworks/${homeworkId}/submissions`) }
+export async function gradeHomeworkSubmission(homeworkId, studentId, p) {
+  return request(`/homeworks/${homeworkId}/submissions/${studentId}`, { method: 'PATCH', body: JSON.stringify(p) })
+}
 
 // ── Minar Space (space.minaracademy.uz o'quvchi ilovasi) hisoblari ──────────
 

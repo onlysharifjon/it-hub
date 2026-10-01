@@ -6671,3 +6671,25 @@ body,
   .ta-detail-stats { grid-template-columns: repeat(2, 1fr); }
   .ta-filters .field, .ta-search { width: 100%; }
 }
+
+/* Uy vazifasi javoblari (HomeworkSubmissions) */
+.link-button {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--primary, inherit); text-decoration: underline; font: inherit;
+}
+.hw-sub-row {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.hw-sub-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hw-sub-answer {
+  margin: 0; max-height: 220px; overflow: auto;
+  background: var(--surface-2, var(--bg-secondary)); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.hw-sub-link { font-size: 12px; overflow-wrap: anywhere; }
+.hw-sub-form { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.hw-sub-form label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+.hw-sub-form input[type="number"] { width: 80px; }
+.hw-sub-comment { flex: 1; min-width: 180px; }

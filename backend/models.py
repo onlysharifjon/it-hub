@@ -747,6 +747,13 @@ class HomeworkSubmission(Base):
     teacher_comment = Column(Text, nullable=True)
     submitted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # Minar Space orqali topshirilgan javob
+    answer = Column(Text, nullable=True)
+    link = Column(String(500), nullable=True)
+    # Baholash (CRM)
+    graded_at = Column(DateTime, nullable=True)
+    graded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    coins = Column(Integer, nullable=False, default=0)     # baholashda berilgan coin (bir marta)
 
     __table_args__ = (UniqueConstraint("homework_id", "student_id", name="uq_homework_submission"),)
 

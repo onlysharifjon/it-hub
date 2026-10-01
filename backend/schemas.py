@@ -1474,9 +1474,31 @@ class HomeworkRead(BaseModel):
     created_at: datetime
     telegram_sent: bool = False
     telegram_error: Optional[str] = None
+    submitted_count: int = 0      # tekshirilishi kerak bo'lgan javoblar
+    graded_count: int = 0
 
     class Config:
         orm_mode = True
+
+
+class HomeworkSubmissionRead(BaseModel):
+    student_id: int
+    full_name: str
+    has_space_account: bool = False
+    status: str                    # pending | submitted | graded
+    answer: Optional[str] = None
+    link: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    grade: Optional[int] = None
+    teacher_comment: Optional[str] = None
+    coins: int = 0
+    graded_at: Optional[datetime] = None
+
+
+class HomeworkGrade(BaseModel):
+    grade: int = Field(..., ge=0, le=100)
+    comment: Optional[str] = Field(None, max_length=1000)
+    coins: int = Field(0, ge=0, le=20)
 
 
 class HomeworkCreate(BaseModel):

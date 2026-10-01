@@ -11,6 +11,7 @@ import {
 import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework, fetchGroupCameraAttendance, tashkentToday, generateGroupCertificates, fetchGroupCertificates } from '../api'
 import useConfirm from './ui/useConfirm'
 import GroupCertificates from './GroupCertificates'
+import HomeworkSubmissions from './HomeworkSubmissions'
 import { STAGE_COLORS, STAGE_LABELS } from '../constants/domain'
 import { tashkentNow } from '../utils/datetime'
 
@@ -67,6 +68,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   const [nextLesson, setNextLesson] = useState(null)
   const [homeworks, setHomeworks] = useState([])
   const [hwModal, setHwModal] = useState(false)
+  const [hwReview, setHwReview] = useState(null)   // javoblarini ko'rilayotgan uy vazifasi
   const [hwText, setHwText] = useState('')
   const [hwSending, setHwSending] = useState(false)
 
@@ -375,12 +377,19 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
               </button>
               {homeworks.length > 0 && (
                 <div style={{ marginTop: 10 }}>
-                  {homeworks.slice(0, 3).map(hw => (
-                    <div key={hw.id} style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', gap: 6, padding: '3px 0' }}>
+                  {homeworks.slice(0, 5).map(hw => (
+                    <div key={hw.id} style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, padding: '3px 0' }}>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {new Date(hw.lesson_date + 'T00:00:00').toLocaleDateString('uz')}{hw.lesson_number ? ` · ${hw.lesson_number}-dars` : ''}
                       </span>
-                      <span title={hw.telegram_error || ''}>{hw.telegram_sent ? '✅' : '⚠️'}</span>
+                      <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <button className="link-button" onClick={() => setHwReview(hw)}
+                          title="Javoblar va baholash"
+                          style={{ fontSize: 11, fontWeight: hw.submitted_count ? 700 : 400, color: hw.submitted_count ? 'var(--warning)' : undefined }}>
+                          📥 {hw.submitted_count ? `${hw.submitted_count} yangi` : 'Javoblar'}
+                        </button>
+                        <span title={hw.telegram_error || ''}>{hw.telegram_sent ? '✅' : '⚠️'}</span>
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -716,6 +725,14 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
             </div>
           </div>
         </Overlay>
+      )}
+
+      {hwReview && (
+        <HomeworkSubmissions
+          homework={hwReview}
+          onClose={() => setHwReview(null)}
+          onChanged={() => fetchHomeworks(group.id).then(setHomeworks).catch(() => {})}
+        />
       )}
 
       {/* Sertifikat sozlamalari modal */}

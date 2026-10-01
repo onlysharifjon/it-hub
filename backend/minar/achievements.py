@@ -15,7 +15,7 @@ from typing import Callable
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import tz
+from .. import models, tz
 from . import catalog as C
 from . import notify
 from .models import (
@@ -50,6 +50,9 @@ CATALOG: tuple[Achievement, ...] = (
     Achievement("lessons_3", "Bilimdon", "3 ta mini-darsni yakunla.", "book", "lessons", 3, 10),
     Achievement("level_5", "Yulduzli o‘quvchi", "5-darajaga chiq.", "star", "level", 5, 20),
     Achievement("earned_500", "Coin yig‘uvchi", "Jami 500 coin yig‘.", "coins", "earned", 500, 10),
+    Achievement("homework_1", "Mas’uliyatli", "Birinchi uy vazifangni Space orqali topshir.", "homework", "homework_done", 1, 5),
+    Achievement("homework_10", "Intizomli", "10 ta uy vazifasini topshir.", "homework", "homework_done", 10, 25),
+    Achievement("homework_a", "A’lo baho", "Uy vazifasidan 90+ ball ol.", "graduation", "homework_excellent", 1, 15),
 )
 BY_CODE = {a.code: a for a in CATALOG}
 
@@ -93,18 +96,14 @@ METRICS: dict[str, Callable[[Session, MinarAccount], int]] = {
         MinarLesson.account_id == acc.id).scalar() or 0,
     "level": lambda db, acc: C.level_of(acc.xp),
     "earned": _earned,
+    "homework_done": lambda db, acc: db.query(func.count(models.HomeworkSubmission.id)).filter(
+        models.HomeworkSubmission.student_id == acc.student_id,
+        models.HomeworkSubmission.status.in_(("submitted", "graded")),
+        models.HomeworkSubmission.answer.isnot(None)).scalar() or 0,
+    "homework_excellent": lambda db, acc: db.query(func.count(models.HomeworkSubmission.id)).filter(
+        models.HomeworkSubmission.student_id == acc.student_id,
+        models.HomeworkSubmission.status == "graded", models.HomeworkSubmission.grade >= 90).scalar() or 0,
 }
-
-
-def register(achievement: Achievement, metric: Callable[[Session, MinarAccount], int] | None = None) -> None:
-    """Boshqa modullar (uy vazifasi, kod maydoni, turnir) o'z yutuqlarini qo'shadi."""
-    global CATALOG
-    if achievement.code in BY_CODE:
-        return
-    if metric is not None:
-        METRICS.setdefault(achievement.metric, metric)
-    CATALOG = CATALOG + (achievement,)
-    BY_CODE[achievement.code] = achievement
 
 
 def _unlocked(db: Session, acc: MinarAccount) -> dict[str, datetime]:
