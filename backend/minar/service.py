@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, tz
-from . import achievements, learning, notify
+from . import achievements, learning, notify, playground
 from . import catalog as C
 from . import games
 from .errors import MinarError
@@ -249,6 +249,26 @@ def run(db: Session, acc: MinarAccount, fn: Callable[..., tuple[int, str]], *arg
         if unlocked:
             _commit(db)
         return {"state": build_state(db, acc), "award": award, "message": message, "unlocked": unlocked}
+
+
+def run_playground(db: Session, acc: MinarAccount, task_id: str, payload: Any) -> dict:
+    """Kod maydoni tekshiruvi: tekshiruv natijalari + (yechilgan bo'lsa) yangilangan holat."""
+    with LOCK:
+        db.refresh(acc)
+        results, ok, first = playground.check(db, acc, task_id, payload)
+        if not ok:
+            return {"checks": results, "solved": False, "award": 0, "unlocked": [],
+                    "message": "Hali hammasi to‘g‘ri emas — qizil bandlarni tuzat."}
+        _commit(db)
+        unlocked = achievements.evaluate(db, acc)
+        if unlocked:
+            _commit(db)
+        db.refresh(acc)
+        award = playground.REWARD if first else 0
+        message = f"Ajoyib! Topshiriq bajarildi: +{award} coin, +{playground.XP} XP." if first \
+            else "To‘g‘ri! Bu topshiriq avval bajarilgan — kodingni yangiladik."
+        return {"checks": results, "solved": True, "award": award, "message": message,
+                "unlocked": unlocked, "state": build_state(db, acc)}
 
 
 def act_checkin(db: Session, acc: MinarAccount) -> tuple[int, str]:

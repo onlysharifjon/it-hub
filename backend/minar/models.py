@@ -175,3 +175,16 @@ class MinarAchievement(Base):
     account_id = Column(Integer, ForeignKey("minar_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
     code = Column(String(40), nullable=False)
     unlocked_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarPlaygroundSolve(Base):
+    """Kod maydoni topshirig'ining yechimi (mukofot bir marta; oxirgi to'g'ri kod saqlanadi)."""
+    __tablename__ = "minar_playground_solves"
+    __table_args__ = (UniqueConstraint("account_id", "task_id", name="uq_minar_playground_solve"),)
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("minar_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id = Column(String(20), nullable=False)
+    code = Column(Text, nullable=False)                # {"html": ..., "css": ..., "js": ...}
+    xp = Column(Integer, nullable=False, default=0)
+    solved_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

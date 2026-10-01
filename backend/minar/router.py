@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, Header, Request, Response, WebSock
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from . import assistant, auth, battles, games, learning, notify, service
+from . import assistant, auth, battles, games, learning, notify, playground, service
 from .errors import MinarError
 from .models import MinarAccount
 
@@ -106,6 +106,17 @@ def homework(acc: MinarAccount = Account, db: Session = Depends(get_db)):
 def homework_submit(homework_id: int, payload: dict = Body(...), acc: MinarAccount = Account,
                     db: Session = Depends(get_db)):
     return service.run(db, acc, service.act_homework, homework_id, payload)
+
+
+@router.get("/playground")
+def playground_tasks(acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return playground.task_list(db, acc)
+
+
+@router.post("/playground/{task_id}/check")
+def playground_check(task_id: str, payload: dict = Body(...), acc: MinarAccount = Account,
+                     db: Session = Depends(get_db)):
+    return service.run_playground(db, acc, task_id, payload)
 
 
 @router.get("/notifications")
