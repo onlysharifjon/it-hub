@@ -20,6 +20,7 @@ from . import catalog as C
 from . import notify, playground
 from .models import (
     MinarAccount, MinarAchievement, MinarBattle, MinarLedger, MinarLesson, MinarPlaygroundSolve, MinarResult,
+    MinarTournamentAward,
 )
 
 
@@ -55,6 +56,8 @@ CATALOG: tuple[Achievement, ...] = (
     Achievement("homework_a", "A’lo baho", "Uy vazifasidan 90+ ball ol.", "graduation", "homework_excellent", 1, 15),
     Achievement("code_1", "Birinchi kod", "Kod maydonida birinchi topshiriqni bajar.", "code", "code_solved", 1, 5),
     Achievement("code_10", "Yosh dasturchi", "Kod maydonida 10 ta topshiriqni bajar.", "code", "code_solved", 10, 25),
+    Achievement("tournament_podium", "Shohsupada", "Haftalik turnirda 1–3-o‘rinni egalla.", "trophy", "tournament_podium", 1, 10),
+    Achievement("tournament_win", "Hafta chempioni", "Haftalik turnirda guruhingda 1-o‘rinni ol.", "crown", "tournament_wins", 1, 20),
     Achievement("code_all", "Kod ustasi", "Kod maydonidagi barcha topshiriqlarni bajar.", "crown", "code_solved", len(playground.TASKS), 60),
 )
 BY_CODE = {a.code: a for a in CATALOG}
@@ -99,6 +102,10 @@ METRICS: dict[str, Callable[[Session, MinarAccount], int]] = {
         MinarLesson.account_id == acc.id).scalar() or 0,
     "level": lambda db, acc: C.level_of(acc.xp),
     "earned": _earned,
+    "tournament_podium": lambda db, acc: db.query(func.count(MinarTournamentAward.id)).filter(
+        MinarTournamentAward.account_id == acc.id).scalar() or 0,
+    "tournament_wins": lambda db, acc: db.query(func.count(MinarTournamentAward.id)).filter(
+        MinarTournamentAward.account_id == acc.id, MinarTournamentAward.place == 1).scalar() or 0,
     "code_solved": lambda db, acc: db.query(func.count(MinarPlaygroundSolve.id)).filter(
         MinarPlaygroundSolve.account_id == acc.id).scalar() or 0,
     "homework_done": lambda db, acc: db.query(func.count(models.HomeworkSubmission.id)).filter(

@@ -188,3 +188,27 @@ class MinarPlaygroundSolve(Base):
     code = Column(Text, nullable=False)                # {"html": ..., "css": ..., "js": ...}
     xp = Column(Integer, nullable=False, default=0)
     solved_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class MinarTournamentAward(Base):
+    """Haftalik turnir mukofoti (guruhdagi 1–3-o'rin)."""
+    __tablename__ = "minar_tournament_awards"
+    __table_args__ = (UniqueConstraint("week_start", "account_id", name="uq_minar_tournament_award"),)
+
+    id = Column(Integer, primary_key=True)
+    week_start = Column(String(10), nullable=False, index=True)    # YYYY-MM-DD (dushanba, Toshkent)
+    account_id = Column(Integer, ForeignKey("minar_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    group_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
+    group_name = Column(String(200), nullable=True)
+    place = Column(Integer, nullable=False)
+    points = Column(Integer, nullable=False)
+    coins = Column(Integer, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarJobRun(Base):
+    """Bir martalik fon ishlari belgisi (masalan "tournament:2026-09-28") — qayta bajarilmasin."""
+    __tablename__ = "minar_job_runs"
+
+    key = Column(String(60), primary_key=True)
+    done_at = Column(DateTime, nullable=False, default=datetime.utcnow)

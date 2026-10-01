@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, Header, Request, Response, WebSock
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from . import assistant, auth, battles, games, learning, notify, playground, service
+from . import assistant, auth, battles, games, learning, notify, playground, service, weekly
 from .errors import MinarError
 from .models import MinarAccount
 
@@ -117,6 +117,11 @@ def playground_tasks(acc: MinarAccount = Account, db: Session = Depends(get_db))
 def playground_check(task_id: str, payload: dict = Body(...), acc: MinarAccount = Account,
                      db: Session = Depends(get_db)):
     return service.run_playground(db, acc, task_id, payload)
+
+
+@router.get("/tournament")
+def tournament(acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return weekly.standings(db, acc)
 
 
 @router.get("/notifications")

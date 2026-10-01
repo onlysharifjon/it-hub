@@ -1,4 +1,4 @@
-"""Fon vazifalari servisi (Docker: `worker`) — investor statistikasi va eslatmalar.
+"""Fon vazifalari servisi (Docker: `worker`) — investor statistikasi, eslatmalar, Space haftalik turniri.
 
 API'dan ajratilgan: crm-api konteynerlari `SCHEDULERS_ENABLED=false` bilan ishlaydi, shu jarayon
 esa rejalashtiruvchilarni yagona nusxada yuritadi. Oqimlardan biri to'xtasa jarayon xato bilan
@@ -16,10 +16,12 @@ log = logging.getLogger("ithub.worker")
 
 def main() -> None:
     from . import main as app_main
+    from .minar import weekly
 
     threads = [
         app_main.start_investor_scheduler(force=True),
         app_main.start_reminder_scheduler(force=True),
+        weekly.start_scheduler(),       # Space: haftalik turnir + ota-onaga hisobot
     ]
     log.info("Worker ishga tushdi: %s", ", ".join(t.name for t in threads))
     while True:
