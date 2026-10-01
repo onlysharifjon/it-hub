@@ -85,3 +85,16 @@ def test_fixed_rate_per_lesson_independent_of_lessons_held(db):
     _attend(db, g, s2, [1, 3, 5, 8, 10, 12, 15, 17, 19, 22, 24, 26, 29], 8)
     items = {it["student_id"]: it["share"] for it in _teacher_bonus_items(db, 8, 2026)}
     assert items[s2.id] == Decimal(54167)
+
+
+def test_archived_and_removed_student_lessons_still_paid(client, metodist_token, db):
+    """Talaba guruhdan chiqarilsa va arxivlansa ham — kelgan darslari uchun ulush qoladi."""
+    from backend.models import GroupStudent
+    a, b, g, s = _setup(db)
+    db.add(GroupStudent(group_id=g.id, student_id=s.id, joined_at=datetime(2026, 7, 1)))
+    db.commit()
+    _attend(db, g, s, [4, 6, 8], 8)
+    assert client.delete(f"/groups/{g.id}/students/{s.id}", headers={"Authorization": f"Bearer {metodist_token}"}).status_code == 204
+    assert client.post(f"/students/{s.id}/archive", headers={"Authorization": f"Bearer {metodist_token}"}).status_code == 200
+    db.expire_all()
+    assert _teacher_salary_breakdown(db, 8, 2026)[a.id]["total"] == Decimal(12500)   # 3 × 50 000/12
