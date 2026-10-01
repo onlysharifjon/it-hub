@@ -258,8 +258,8 @@ export default function Salary() {
         size="xl"
       >
         <p className="muted-sm">
-          {MONTHS[month - 1]} {year} · Formula: har guruhda 50,000 so'm shu oydagi o'tilgan darslar
-          soniga bo'linadi (1 dars narxi), so'ng talaba qatnashgan darslar soniga ko'paytiriladi.
+          {MONTHS[month - 1]} {year} · Formula: 50,000 so'm 12 ta darsga to'g'ri keladi (1 dars narxi = 4,167),
+          talaba qatnashgan darslar soniga ko'paytiriladi.
           {breakdown && <> FIX oylik: <strong>{fmt(breakdown.base_salary)}</strong>.</>}
         </p>
 

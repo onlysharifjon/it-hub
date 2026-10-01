@@ -2114,8 +2114,7 @@ def teacher_salaries_breakdown(
 ):
     """
     Per-teacher salary breakdown based on attendance.
-    Formula: 50 000 so'm / shu oyda o'tilgan darslar soni × talaba kelgan
-    darslar soni — `_teacher_bonus_items` (Oylik sahifasi bilan yagona manba).
+    Formula: 50 000 so'm / 12 × talaba kelgan darslar soni — `_teacher_bonus_items` (Oylik sahifasi bilan yagona manba).
     Ulush har bir dars sanasidagi o'qituvchiga beriladi; arxivlangan guruhlar ham kiradi.
     """
     items = _teacher_bonus_items(db, month, year)
@@ -2259,8 +2258,7 @@ def teacher_my_dashboard(
         total_less = schemas.STAGE_TOTAL_LESSONS.get(stage, 24)
         completed  = completed_map.get(g.id, 0)
         pct        = round(completed / total_less * 100, 1) if total_less > 0 else 0.0
-        held      = month_lessons_map.get(g.id, 0)
-        per_lesson = (TEACHER_STUDENT_BONUS_UNIT / Decimal(held)) if held > 0 else Decimal(0)
+        per_lesson = TEACHER_PER_LESSON
 
         # Shu oyda a'zo bo'lganlar + a'zoligi saqlanmagan bo'lsa ham shu
         # o'qituvchi darsiga qatnashganlar (davomat — maosh manbai)
@@ -2532,7 +2530,9 @@ def export_expenses_excel(
 # ── Salary (xodimlar oyligi) ──────────────────────────────────────────────────
 
 TEACHER_BASE_SALARY = Decimal('5000000')       # FIX oylik
-TEACHER_STUDENT_BONUS_UNIT = Decimal('50000')  # talaba shu oydagi BARCHA darsga qatnasa oladigan to'liq ulush
+TEACHER_STUDENT_BONUS_UNIT = Decimal('50000')  # 12 ta dars uchun talaba ulushi
+TEACHER_LESSONS_PER_UNIT = 12                  # 50 000 shuncha darsga to'g'ri keladi
+TEACHER_PER_LESSON = TEACHER_STUDENT_BONUS_UNIT / TEACHER_LESSONS_PER_UNIT  # 1 dars = 4 166,67
 
 
 def _group_teacher_timeline(db: Session, groups: list) -> dict:
@@ -2570,10 +2570,12 @@ def _teacher_bonus_items(db: Session, month: int, year: int) -> list:
     """O'qituvchi "talaba ulushi"ning YAGONA manbasi (Oylik, Statistika,
     Dashboard va o'qituvchi kabineti shu funksiyadan foydalanadi):
 
-        lessons_held  = guruhda shu oyda haqiqatda o'tilgan (Attendance
-                         yozuvi mavjud) noyob dars sanalari soni
-        per_lesson    = 50 000 / lessons_held
+        per_lesson    = 50 000 / 12  (o'zgarmas — oyda nechta dars o'tilganiga bog'liq emas)
         talaba ulushi = per_lesson × (talaba qatnashgan darslar soni)
+
+    Masalan: oyda 8 ta dars o'tilib, talaba 8 tasiga kelsa — 8/12 × 50 000 = 33 333;
+    13 ta darsga kelsa — 54 167 (chegara yo'q, har dars uchun to'lanadi).
+    `lessons_held` (guruhda shu oyda o'tilgan darslar) faqat ma'lumot uchun qaytariladi.
 
     Har bir dars o'sha SANADAGI guruh o'qituvchisiga yoziladi
     (`group_teacher_history`) — guruh keyin boshqa o'qituvchiga o'tkazilsa ham
@@ -2617,7 +2619,7 @@ def _teacher_bonus_items(db: Session, month: int, year: int) -> list:
     items = []
     for (tid, gid, sid), (sname, attended) in counts.items():
         held = lessons_held[gid]
-        per_lesson = TEACHER_STUDENT_BONUS_UNIT / Decimal(held)
+        per_lesson = TEACHER_PER_LESSON
         items.append({
             "teacher_id": tid, "group_id": gid, "group_name": name_by_group.get(gid, ''),
             "student_id": sid, "student_name": sname,

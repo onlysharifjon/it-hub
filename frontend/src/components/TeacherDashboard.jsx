@@ -292,8 +292,8 @@ export default function TeacherDashboard({ currentUser, onOpenGroup, onNavigate 
           {showBreakdown && salaryBreakdown && (
             <div className="card">
               <p className="muted-sm" style={{ marginBottom: 12 }}>
-                Formula: har guruhda 50 000 so'm shu oydagi o'tilgan darslar soniga bo'linadi,
-                so'ng talaba qatnashgan darslar soniga ko'paytiriladi.
+                Formula: 50 000 so'm 12 ta darsga to'g'ri keladi (1 dars = 4 167 so'm),
+                talaba qatnashgan darslar soniga ko'paytiriladi.
               </p>
               <DataTable
                 columns={[
@@ -347,7 +347,7 @@ export default function TeacherDashboard({ currentUser, onOpenGroup, onNavigate 
                     {isOpen && (
                       <div className="td-acc-body">
                         <p className="td-formula">
-                          Formula: 50 000 so'm / {g.month_lessons_held} dars × kelgan darslar soni
+                          Formula: 50 000 so'm / 12 dars × kelgan darslar soni
                           (1 dars = <strong>{fmt(g.per_lesson)}</strong>/talaba)
                         </p>
                         <div className="table-wrap">

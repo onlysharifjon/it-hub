@@ -38,7 +38,7 @@ def test_past_month_stays_with_previous_teacher(db):
     a, b, g, s = _setup(db)
     _attend(db, g, s, [4, 6, 8, 11], 8)
     bd = _teacher_salary_breakdown(db, 8, 2026)
-    assert bd[a.id]["total"] == Decimal(50000)
+    assert bd[a.id]["total"] == Decimal(16667)   # 4 dars × 50 000/12
     assert b.id not in bd
 
 
@@ -46,8 +46,8 @@ def test_mid_month_change_splits_by_lesson_date(db):
     a, b, g, s = _setup(db)
     _attend(db, g, s, [2, 4, 10, 12], 9)   # 2 ta dars A, 2 ta dars B
     bd = _teacher_salary_breakdown(db, 9, 2026)
-    assert bd[a.id]["total"] == Decimal(25000)
-    assert bd[b.id]["total"] == Decimal(25000)
+    assert bd[a.id]["total"] == Decimal(8333)
+    assert bd[b.id]["total"] == Decimal(8333)
 
 
 def test_stats_page_matches_salary_page(db):
@@ -59,7 +59,7 @@ def test_stats_page_matches_salary_page(db):
     by_teacher = {t["teacher_id"]: t["total_salary"] for t in stats["teachers"]}
     bd = _teacher_salary_breakdown(db, 9, 2026)
     assert by_teacher == {tid: float(e["total"]) for tid, e in bd.items()}
-    assert sum(it["share"] for it in _teacher_bonus_items(db, 9, 2026)) == Decimal(50000)
+    assert sum(it["share"] for it in _teacher_bonus_items(db, 9, 2026)) == Decimal(16666)
 
 
 def test_salary_exempt_teacher_gets_no_fix_and_no_kpi(db):
@@ -69,7 +69,19 @@ def test_salary_exempt_teacher_gets_no_fix_and_no_kpi(db):
     db.commit()
     _attend(db, g, s, [2, 4, 10, 12], 9)
     bd = _teacher_salary_breakdown(db, 9, 2026)
-    assert bd[a.id]["total"] == Decimal(25000)
+    assert bd[a.id]["total"] == Decimal(8333)
     assert bd[b.id]["total"] == Decimal(0)
     assert _teacher_auto_salary(db, b.id, 9, 2026)[0] == Decimal(0)
-    assert _teacher_auto_salary(db, a.id, 9, 2026)[0] == Decimal(5000000) + Decimal(25000)
+    assert _teacher_auto_salary(db, a.id, 9, 2026)[0] == Decimal(5000000) + Decimal(8333)
+
+
+def test_fixed_rate_per_lesson_independent_of_lessons_held(db):
+    """50 000 = 12 dars: oyda 8 dars o'tilib 8 tasiga kelsa 33 333; 13 tasiga kelsa 54 167."""
+    a, b, g, s = _setup(db)
+    _attend(db, g, s, [1, 3, 5, 8, 10, 12, 15, 17], 8)
+    assert _teacher_salary_breakdown(db, 8, 2026)[a.id]["total"] == Decimal(33333)
+    s2 = Student(full_name="Ko'p kelgan", phone1="+998900000002", is_active=True)
+    db.add(s2); db.commit()
+    _attend(db, g, s2, [1, 3, 5, 8, 10, 12, 15, 17, 19, 22, 24, 26, 29], 8)
+    items = {it["student_id"]: it["share"] for it in _teacher_bonus_items(db, 8, 2026)}
+    assert items[s2.id] == Decimal(54167)

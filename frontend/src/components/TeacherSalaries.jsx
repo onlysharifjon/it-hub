@@ -47,7 +47,7 @@ export default function TeacherSalaries() {
 
   return (
     <div className="page teacher-pay-studio">
-      <PageIntro title={<>O'qituvchi maoshlari</>} description={<>Formula: 50 000 so'm / oydagi darslar soni × talaba kelgan darslar soni</>} actions={<><div className="header-actions">
+      <PageIntro title={<>O'qituvchi maoshlari</>} description={<>Formula: 50 000 so'm / 12 dars × talaba kelgan darslar soni</>} actions={<><div className="header-actions">
           <select className="field-sm" value={month} onChange={e => setMonth(Number(e.target.value))} aria-label="Oy">
             {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
           </select>
