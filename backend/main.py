@@ -767,7 +767,7 @@ def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
-    old = {"role": user.role, "is_active": user.is_active}
+    old = {"role": user.role, "is_active": user.is_active, "salary_exempt": user.salary_exempt}
     if payload.password is not None:
         user.hashed_password = hash_password(payload.password)
     if payload.role is not None:
@@ -786,8 +786,11 @@ def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends
         user.telegram_chat_id = payload.telegram_chat_id
     if payload.salary is not None:
         user.salary = payload.salary
+    if payload.salary_exempt is not None:
+        user.salary_exempt = payload.salary_exempt
     write_audit(db, entity_type="user", entity_id=user.id, action="update",
-                changed_by_id=actor.id, old_value=old, new_value={"role": user.role, "is_active": user.is_active})
+                changed_by_id=actor.id, old_value=old,
+                new_value={"role": user.role, "is_active": user.is_active, "salary_exempt": user.salary_exempt})
     db.commit()
     db.refresh(user)
     return user
@@ -2596,6 +2599,8 @@ def _teacher_bonus_items(db: Session, month: int, year: int) -> list:
     groups = db.query(models.Group).filter(models.Group.id.in_(list(lessons_held))).all()
     name_by_group = {g.id: g.name for g in groups}
     timeline = _group_teacher_timeline(db, groups)
+    # Oyliksiz ishlaydigan o'qituvchilar — ulush (KPI) hisoblanmaydi
+    exempt = {uid for (uid,) in db.query(models.User.id).filter(models.User.salary_exempt.is_(True)).all()}
 
     att_rows = (
         db.query(models.Attendance.group_id, models.Attendance.student_id,
@@ -2618,7 +2623,7 @@ def _teacher_bonus_items(db: Session, month: int, year: int) -> list:
             "student_id": sid, "student_name": sname,
             "lessons_held": held, "attended": attended,
             "per_lesson": per_lesson,
-            "share": (per_lesson * Decimal(attended)).quantize(Decimal('1')),
+            "share": Decimal(0) if tid in exempt else (per_lesson * Decimal(attended)).quantize(Decimal('1')),
         })
     return items
 
@@ -2646,6 +2651,8 @@ def _teacher_auto_salary(db: Session, teacher_id: int, month: int, year: int,
     entry = breakdown_map.get(teacher_id)
     total = entry["total"] if entry else Decimal('0')
     student_count = len({it["student_id"] for it in entry["items"]}) if entry else 0
+    if db.query(models.User.salary_exempt).filter(models.User.id == teacher_id).scalar():
+        return Decimal('0'), student_count   # oyliksiz ishlaydi — FIX ham, KPI ham yo'q
     salary = TEACHER_BASE_SALARY + total
     return salary, student_count
 
@@ -2780,13 +2787,14 @@ def salary_breakdown(
     items = entry["items"] if entry else []
     total = entry["total"] if entry else Decimal('0')
     items_sorted = sorted(items, key=lambda it: (it["group_name"], it["student_name"]))
+    base = TEACHER_BASE_SALARY if user.role == UserRole.teacher.value and not user.salary_exempt else Decimal('0')
     return schemas.SalaryBreakdown(
         staff_id=user_id, month=month, year=year,
-        base_salary=TEACHER_BASE_SALARY if user.role == UserRole.teacher.value else Decimal('0'),
+        base_salary=base,
         per_student_total=total,
         student_bonus_unit=TEACHER_STUDENT_BONUS_UNIT,
         items=[schemas.SalaryBreakdownItem(**it) for it in items_sorted],
-        total=(TEACHER_BASE_SALARY if user.role == UserRole.teacher.value else Decimal('0')) + total,
+        total=base + total,
     )
 
 

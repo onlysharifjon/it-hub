@@ -18,7 +18,7 @@ function StatusBadge({ user }) {
   return <Badge variant={variant} size="sm">{label}</Badge>
 }
 
-const emptyForm = { username: '', full_name: '', password: '', role: 'teacher', expires_at: '', telegram_chat_id: '' }
+const emptyForm = { username: '', full_name: '', password: '', role: 'teacher', expires_at: '', telegram_chat_id: '', salary_exempt: false }
 
 export default function Users() {
   const [users, setUsers] = useState([])
@@ -91,6 +91,7 @@ export default function Users() {
       role: u.role,
       expires_at: u.expires_at ? u.expires_at.slice(0, 10) : '',
       telegram_chat_id: u.telegram_chat_id || '',
+      salary_exempt: !!u.salary_exempt,
     })
     setEditId(u.id)
     setModal('edit')
@@ -112,7 +113,7 @@ export default function Users() {
         toast.success('Foydalanuvchi yaratildi')
       } else {
         if (form.password && form.password.length < 8) { toast.error("Parol kamida 8 ta belgi"); setSaving(false); return }
-        const p = { ...payload }
+        const p = { ...payload, salary_exempt: form.salary_exempt }
         if (form.password) p.password = form.password
         await updateUser(editId, p)
         toast.success("Saqlandi")
@@ -329,6 +330,18 @@ export default function Users() {
                   Audit ogohlantirishlari shu ID'ga yuboriladi.
                 </p>
               </div>
+              {modal === 'edit' && (
+                <div className="form-group">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={form.salary_exempt}
+                      onChange={e => setForm(f => ({ ...f, salary_exempt: e.target.checked }))} />
+                    Oyliksiz ishlaydi
+                  </label>
+                  <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
+                    Belgilansa, oylik hisoblanmaydi: o'qituvchi uchun FIX ham, talaba ulushi (KPI) ham 0.
+                  </p>
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setModal(null)}>Bekor</button>

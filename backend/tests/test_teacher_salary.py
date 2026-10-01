@@ -60,3 +60,16 @@ def test_stats_page_matches_salary_page(db):
     bd = _teacher_salary_breakdown(db, 9, 2026)
     assert by_teacher == {tid: float(e["total"]) for tid, e in bd.items()}
     assert sum(it["share"] for it in _teacher_bonus_items(db, 9, 2026)) == Decimal(50000)
+
+
+def test_salary_exempt_teacher_gets_no_fix_and_no_kpi(db):
+    from backend.main import _teacher_auto_salary
+    a, b, g, s = _setup(db)
+    b.salary_exempt = True
+    db.commit()
+    _attend(db, g, s, [2, 4, 10, 12], 9)
+    bd = _teacher_salary_breakdown(db, 9, 2026)
+    assert bd[a.id]["total"] == Decimal(25000)
+    assert bd[b.id]["total"] == Decimal(0)
+    assert _teacher_auto_salary(db, b.id, 9, 2026)[0] == Decimal(0)
+    assert _teacher_auto_salary(db, a.id, 9, 2026)[0] == Decimal(5000000) + Decimal(25000)

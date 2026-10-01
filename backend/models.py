@@ -41,6 +41,8 @@ class User(Base):
     telegram_chat_id = Column(String(50), nullable=True)  # Telegram bot bildirishnomasi uchun chat/user ID
     face_photo_path = Column(String(500), nullable=True)  # kamera orqali davomat uchun yuz rasmi
     salary = Column(Numeric(12, 2), nullable=True)  # belgilangan oylik (admin tomonidan kiritiladi)
+    # Oyliksiz ishlaydi — o'qituvchi uchun FIX ham, talaba ulushi (KPI) ham hisoblanmaydi
+    salary_exempt = Column(Boolean, nullable=False, default=False, server_default='false')
     # Block & expiry
     blocked_reason  = Column(Text, nullable=True)         # sabab matni
     blocked_contact = Column(String(300), nullable=True)  # bog'lanish ma'lumoti

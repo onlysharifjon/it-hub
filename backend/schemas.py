@@ -30,6 +30,7 @@ class UserRead(BaseModel):
     is_active: bool
     avatar: Optional[str] = None
     telegram_chat_id: Optional[str] = None
+    salary_exempt: bool = False
     blocked_reason:  Optional[str] = None
     blocked_contact: Optional[str] = None
     blocked_at:      Optional[datetime] = None
@@ -64,6 +65,7 @@ class UserUpdate(BaseModel):
     blocked_contact: Optional[str]      = None
     telegram_chat_id: Optional[str]     = Field(None, max_length=50)
     salary:          Optional[Decimal]  = Field(None, ge=0, le=Decimal("9999999999.99"))
+    salary_exempt:   Optional[bool]     = None
 
 
 class ProfileUpdate(BaseModel):
