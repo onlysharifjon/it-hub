@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, Header, Request, Response, WebSock
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from . import assistant, auth, battles, service
+from . import assistant, auth, battles, games, service
 from .errors import MinarError
 from .models import MinarAccount
 
@@ -75,6 +75,21 @@ def complete_lesson(payload: dict = Body(...), acc: MinarAccount = Account, db: 
 @router.post("/games/results")
 def game_result(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
     return service.run(db, acc, service.act_game, payload.get("result"))
+
+
+@router.post("/games/start")
+def game_start(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return games.start(db, acc, payload)
+
+
+@router.post("/games/answer")
+def game_answer(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return games.answer(db, acc, payload)
+
+
+@router.post("/games/flip")
+def game_flip(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return games.flip(db, acc, payload)
 
 
 @router.post("/quests/claim")

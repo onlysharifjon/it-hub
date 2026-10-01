@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, tz
 from . import catalog as C
+from . import games
 from .errors import MinarError
 from .models import (
     MinarAccount, MinarBattle, MinarLedger, MinarLesson, MinarPurchase, MinarQuest, MinarResult,
@@ -185,6 +186,10 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
     checkins = [k[0].split(":", 1)[1] for k in db.query(MinarLedger.ref_key).filter(
         MinarLedger.account_id == acc.id, MinarLedger.kind == "checkin").order_by(MinarLedger.local_date).all()]
 
+    game_rewards = {g: int(n) for g, n in db.query(MinarResult.game, func.count(MinarResult.id)).filter(
+        MinarResult.account_id == acc.id, MinarResult.local_date == today_key(), MinarResult.award > 0,
+    ).group_by(MinarResult.game).all()}
+
     return {
         "version": 1,
         "profile": {
@@ -205,6 +210,8 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
         "completedLessons": lessons,
         "claimedQuests": quests,
         "checkins": checkins,
+        "gameRewards": game_rewards,
+        "dailyRewardLimit": C.DAILY_REWARDED_GAMES,
     }
 
 
@@ -353,54 +360,15 @@ def _num(r: dict, key: str, lo: int, hi: int, default: int | None = None) -> int
     return int(round(v))
 
 
-def validate_result(r: dict) -> tuple[dict, bool]:
-    """Client natijasini mantiqiy chegaralar bilan tekshiradi.
-    (saqlanadigan maydonlar, "yutuq sharti bajarilganmi").  Battle sharti alohida (server hisobi bilan)."""
-    game = r.get("game")
-    if game not in C.GAME_BASE:
-        raise MinarError(400, "O‘yin topilmadi.")
-    if game == "typing":
-        correct = _num(r, "correct", 0, 5000)
-        accuracy = _num(r, "accuracy", 0, 100)
-        wpm = _num(r, "wpm", 0, 400)
-        duration = _num(r, "duration", 1, 180)
-        if correct > duration * 15 + 15:
-            raise MinarError(400, BAD_RESULT)                     # 15 belgi/soniyadan tez emas
-        expected = correct / 5 / (duration / 60)
-        if abs(wpm - expected) > max(3, expected * 0.25):
-            raise MinarError(400, BAD_RESULT)
-        return ({"game": game, "correct": correct, "accuracy": accuracy, "wpm": wpm,
-                 "duration": duration, "score": correct}, correct >= 15 and accuracy >= 80)
-    if game == "ztype":
-        duration = _num(r, "duration", 1, 120)
-        score = _num(r, "score", 0, 300)
-        if score > duration * 2 + 2:
-            raise MinarError(400, BAD_RESULT)
-        return {"game": game, "score": score, "duration": duration}, score >= 5
-    if game == "quiz":
-        score = _num(r, "score", 0, C.QUIZ_TOTAL)
-        if _num(r, "total", 0, 100, C.QUIZ_TOTAL) != C.QUIZ_TOTAL:
-            raise MinarError(400, BAD_RESULT)
-        return {"game": game, "score": score, "total": C.QUIZ_TOTAL}, score >= 3
-    if game == "memory":
-        score = _num(r, "score", 0, C.MEMORY_PAIRS)
-        moves = _num(r, "moves", 0, 1000)
-        if score == C.MEMORY_PAIRS and moves < C.MEMORY_PAIRS:
-            raise MinarError(400, BAD_RESULT)
-        return {"game": game, "score": score, "moves": moves}, score == C.MEMORY_PAIRS
-    if game == "bug":
-        score = _num(r, "score", 0, C.BUG_TOTAL)
-        if _num(r, "total", 0, 100, C.BUG_TOTAL) != C.BUG_TOTAL:
-            raise MinarError(400, BAD_RESULT)
-        return {"game": game, "score": score, "total": C.BUG_TOTAL}, score >= 2
-    # battle
+def validate_battle(r: dict) -> tuple[dict, bool]:
+    """Battle natijasi (g'alaba sharti alohida — server hisobi bilan, `battle_win_confirmed`)."""
     mode = r.get("mode")
     if mode not in ("typing", "quiz"):
         raise MinarError(400, BAD_RESULT)
     match_id = r.get("matchId")
     if not isinstance(match_id, str) or not (8 <= len(match_id) <= 64):
         raise MinarError(400, BAD_RESULT)
-    return ({"game": game, "mode": mode, "won": r.get("won") is True, "draw": r.get("draw") is True,
+    return ({"game": "battle", "mode": mode, "won": r.get("won") is True, "draw": r.get("draw") is True,
              "score": _num(r, "score", 0, 1000, 0), "matchId": match_id, "practice": r.get("practice") is True},
             r.get("won") is True and r.get("practice") is not True)
 
@@ -414,17 +382,28 @@ def battle_win_confirmed(db: Session, acc: MinarAccount, match_id: str) -> bool:
 def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
     if not isinstance(result, dict):
         raise MinarError(400, "Natija topilmadi.")
-    rid = result.get("id")
-    if not isinstance(rid, str) or not (8 <= len(rid) <= 64):
-        raise MinarError(400, "Natija identifikatori noto‘g‘ri.")
+    session = None
+    if result.get("game") == "battle":
+        rid = result.get("id")
+        if not isinstance(rid, str) or not (8 <= len(rid) <= 64):
+            raise MinarError(400, "Natija identifikatori noto‘g‘ri.")
+    else:
+        session = games.load(db, acc, result.get("session") or result.get("id"))
+        rid = session.id
     prev = db.query(MinarResult).filter(MinarResult.account_id == acc.id, MinarResult.result_id == rid).first()
     if prev:
         return prev.award, "Natija allaqachon saqlangan."
 
-    payload, eligible = validate_result(result)
+    if session is None:
+        payload, eligible = validate_battle(result)
+        if eligible:
+            eligible = battle_win_confirmed(db, acc, payload["matchId"])
+    else:
+        payload, eligible = games.finish(session, result)
+        payload = {"game": session.game, **payload}
+        session.finished_at = datetime.utcnow()
     game = payload["game"]
-    if game == "battle" and eligible:
-        eligible = battle_win_confirmed(db, acc, payload["matchId"])
+    payload["eligible"] = eligible
 
     today = today_key()
     played = db.query(func.count(MinarResult.id)).filter(
@@ -443,9 +422,9 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
     _commit(db)
     if award:
         return award, f"Zo‘r natija! +{award} coin seniki."
-    if played >= C.DAILY_REWARDED_GAMES and eligible:
-        return 0, "Bugungi mukofotlar olindi. Mashqni davom ettir!"
-    return 0, "Yaxshi urinish! Yana mashq qilib ko‘r."
+    if eligible:
+        return 0, "Bugungi mukofotlar olindi. Mashqni davom ettir — ertaga yana coin olasan!"
+    return 0, games.GOAL_HINT.get(game, "Yaxshi urinish! Yana mashq qilib ko‘r.")
 
 
 # ── Reyting ─────────────────────────────────────────────────────────────────

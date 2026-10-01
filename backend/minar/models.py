@@ -133,3 +133,20 @@ class MinarBattle(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
+
+
+class MinarGameSession(Base):
+    """O'yinlar olami sessiyasi: kontent (savollar, so'zlar, kartalar) seed'dan serverda yasaladi,
+    javoblar/kartalar serverda tekshiriladi. Natija shu sessiya id'si bilan bir marta saqlanadi."""
+    __tablename__ = "minar_game_sessions"
+
+    id = Column(String(32), primary_key=True)
+    account_id = Column(Integer, ForeignKey("minar_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    game = Column(String(12), nullable=False)
+    course = Column(String(20), nullable=False)
+    difficulty = Column(String(10), nullable=True)
+    duration = Column(Integer, nullable=True)            # typing: tanlangan 30/60 s
+    seed = Column(Integer, nullable=False)
+    state = Column(Text, nullable=False, default="{}")   # quiz/bug: {"answers": [...]}, memory: {"open", "matched", "moves"}
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)

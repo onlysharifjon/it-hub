@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 from backend import models, tz
 from backend.main import app
 from backend.minar import auth as minar_auth
-from backend.minar import battles, catalog as C, service
-from backend.minar.models import MinarAccount, MinarBattle
+from backend.minar import battles, catalog as C, games, service
+from backend.minar.models import MinarAccount, MinarBattle, MinarGameSession
 from backend.tests.conftest import TestSessionLocal
 
 
@@ -226,64 +226,170 @@ def test_lesson_and_quest_flow(client, acct):
 
 # ── O'yin natijalari ────────────────────────────────────────────────────────
 
-def typing_result(**kw):
-    r = {"id": str(uuid.uuid4()), "game": "typing", "correct": 60, "accuracy": 95, "wpm": 12, "duration": 60, "score": 60}
-    r.update(kw)
-    return r
+def start_game(client, game, **kw):
+    r = post(client, "/games/start", {"game": game, **kw})
+    assert r.status_code == 200, r.text
+    return r.json()
 
 
-def test_game_reward_xp_and_idempotency(client, acct):
-    res = typing_result()
-    r = post(client, "/games/results", {"type": "game", "result": res}, key=res["id"]).json()
+def session_row(db, sid):
+    db.expire_all()
+    return db.query(MinarGameSession).filter(MinarGameSession.id == sid).one()
+
+
+def backdate(db, sid, seconds):
+    row = session_row(db, sid)
+    row.started_at -= timedelta(seconds=seconds)
+    db.commit()
+
+
+def finish(client, sess, **raw):
+    return post(client, "/games/results", {"type": "game", "result": {"session": sess["id"], "game": sess["game"], **raw}})
+
+
+def play_questions(client, db, game, correct):
+    sess = start_game(client, game)
+    row = session_row(db, sess["id"])
+    for i, q in enumerate(games.questions(game, row.course, row.seed)):
+        choice = q["answer"] if i < correct else (q["answer"] + 1) % len(q["options"])
+        r = post(client, "/games/answer", {"session": sess["id"], "index": i, "choice": choice}).json()
+        assert r["correct"] == (i < correct) and r["answer"] == q["answer"] and r["explain"]
+    return sess
+
+
+def play_typing(client, db, n_words, wrong=0, duration=30):
+    sess = start_game(client, "typing", duration=duration)
+    words = sess["words"][:n_words]
+    typed = " ".join(w if i >= wrong else w + "x" for i, w in enumerate(words)) + " "
+    backdate(db, sess["id"], duration)
+    return sess, finish(client, sess, typed=typed, duration=duration)
+
+
+def test_session_hides_answers_and_shuffles_options(client, db, acct):
+    sess = start_game(client, "quiz")
+    assert len(sess["questions"]) == 5 and all("answer" not in q and "explain" not in q for q in sess["questions"])
+    positions = set()
+    for _ in range(12):
+        row = session_row(db, start_game(client, "quiz")["id"])
+        positions |= {q["answer"] for q in games.questions("quiz", row.course, row.seed)}
+    assert len(positions) >= 3                                                    # to'g'ri javob doim bir joyda emas
+    assert start_game(client, "memory")["cards"] == 12 and "values" not in start_game(client, "memory")
+    assert post(client, "/games/start", {"game": "hack"}).status_code == 400
+    assert post(client, "/games/start", {"game": "typing", "duration": 999}).status_code == 400
+
+
+def test_quiz_answer_once_and_server_score(client, db, acct):
+    sess = start_game(client, "quiz")
+    assert finish(client, sess).status_code == 400                                # javobsiz yakunlab bo'lmaydi
+    row = session_row(db, sess["id"])
+    qs = games.questions("quiz", row.course, row.seed)
+    wrong = (qs[0]["answer"] + 1) % 4
+    assert post(client, "/games/answer", {"session": sess["id"], "index": 0, "choice": wrong}).json()["correct"] is False
+    again = post(client, "/games/answer", {"session": sess["id"], "index": 0, "choice": qs[0]["answer"]})
+    assert again.status_code == 409                                               # javobni almashtirib bo'lmaydi
+    assert post(client, "/games/answer", {"session": sess["id"], "index": 3, "choice": 0}).status_code == 409
+    for i in range(1, 5):
+        post(client, "/games/answer", {"session": sess["id"], "index": i, "choice": qs[i]["answer"]})
+    r = finish(client, sess, score=5, total=5).json()                             # mijoz "score"i e'tiborsiz
+    assert r["award"] == 10 and r["state"]["results"][0]["score"] == 4 and r["state"]["results"][0]["eligible"]
+
+
+def test_game_reward_xp_and_idempotency(client, db, acct):
+    sess, r = play_typing(client, db, 10)
+    r = r.json()
     assert r["award"] == 10 and r["state"]["balance"] == 10 and r["state"]["xp"] == 50
-    assert r["state"]["results"][0]["id"] == res["id"] and r["state"]["results"][0]["award"] == 10
-    dup = post(client, "/games/results", {"type": "game", "result": res}, key=res["id"]).json()
-    assert dup["state"]["balance"] == 10 and dup["state"]["xp"] == 50           # ikkinchi marta coin yo'q
-    weak = typing_result(correct=10, wpm=2)
-    r = post(client, "/games/results", {"type": "game", "result": weak}).json()
-    assert r["award"] == 0 and r["state"]["xp"] == 60                            # urinish +10 XP
+    assert r["state"]["results"][0]["id"] == sess["id"] and r["state"]["gameRewards"] == {"typing": 1}
+    dup = finish(client, sess, typed="x", duration=30).json()
+    assert dup["state"]["balance"] == 10 and dup["state"]["xp"] == 50            # ikkinchi marta coin yo'q
+    _, weak = play_typing(client, db, 2)
+    weak = weak.json()
+    assert weak["award"] == 0 and weak["state"]["xp"] == 60 and "15 ta harf" in weak["message"]
 
 
-def test_daily_cap_three_rewards_per_game(client, acct):
-    awards = [post(client, "/games/results", {"type": "game", "result": typing_result()}).json()["award"]
-              for _ in range(5)]
-    assert awards == [10, 10, 10, 0, 0]
-    quiz = {"id": str(uuid.uuid4()), "game": "quiz", "score": 4, "total": 5}
-    assert post(client, "/games/results", {"type": "game", "result": quiz}).json()["award"] == 10   # boshqa o'yin — alohida chegara
+def test_typing_word_level_accuracy(client, db, acct):
+    words = ["html", "css", "code", "flex"]
+    assert games.typing_stats(words, "html css code ") == {"correct": 14, "words": 3, "accuracy": 100}
+    assert games.typing_stats(words, "htm css code fl") == {"correct": 9, "words": 2, "accuracy": 67}
+    assert games.typing_stats(words, "")["accuracy"] == 0
+    _, r = play_typing(client, db, 10, wrong=3)
+    assert r.json()["award"] == 0                                                 # 70% aniqlik — yetmaydi
 
 
-@pytest.mark.parametrize("result", [
-    {"game": "typing", "correct": 9999, "accuracy": 99, "wpm": 200, "duration": 30, "score": 9999},   # imkonsiz tezlik
-    {"game": "typing", "correct": 100, "accuracy": 100, "wpm": 400, "duration": 60, "score": 100},    # wpm mos emas
-    {"game": "typing", "correct": 60, "accuracy": 140, "wpm": 12, "duration": 60, "score": 60},
-    {"game": "ztype", "score": 100, "duration": 10},
-    {"game": "quiz", "score": 9, "total": 5},
-    {"game": "quiz", "score": -1, "total": 5},
-    {"game": "memory", "score": 6, "moves": 2},
-    {"game": "bug", "score": 3, "total": 99},
-    {"game": "nonsense", "score": 1},
-    {"game": "typing", "correct": "60", "accuracy": 95, "wpm": 12, "duration": 60},
-])
-def test_implausible_results_rejected(client, acct, result):
-    r = post(client, "/games/results", {"type": "game", "result": {"id": str(uuid.uuid4()), **result}})
-    assert r.status_code == 400 and "message" in r.json()
+def test_daily_cap_three_rewards_per_game(client, db, acct):
+    awards, msgs = [], []
+    for _ in range(4):
+        r = play_typing(client, db, 10)[1].json()
+        awards.append(r["award"]); msgs.append(r["message"])
+    assert awards == [10, 10, 10, 0] and "Bugungi mukofotlar olindi" in msgs[-1]
+    r = finish(client, play_questions(client, db, "quiz", 3)).json()
+    assert r["award"] == 10 and r["state"]["gameRewards"] == {"typing": 3, "quiz": 1}
+    assert r["state"]["dailyRewardLimit"] == 3
+
+
+def test_timing_and_tamper_rejected(client, db, acct):
+    sess = start_game(client, "typing", duration=60)
+    typed = " ".join(sess["words"][:20]) + " "
+    assert finish(client, sess, typed=typed, duration=60).status_code == 400      # 60 s o'tmagan
+    assert finish(client, sess, typed=typed, duration=90).status_code == 400
+    z = start_game(client, "ztype")
+    backdate(db, z["id"], 10)
+    assert finish(client, z, hits=list(range(30)), duration=10).status_code == 400   # 10 s'da 30 ta imkonsiz
+    assert finish(client, z, hits=[1, 1, 2], duration=10).status_code == 400
+    assert finish(client, {"id": "nonexistent-session", "game": "quiz"}).status_code == 404
+    old = {"id": str(uuid.uuid4()), "game": "quiz", "score": 5, "total": 5}       # eski (sessiyasiz) natija
+    assert post(client, "/games/results", {"type": "game", "result": old}).status_code == 404
     assert client.get("/space/students/me/bootstrap").json()["balance"] == 0
 
 
-def test_all_game_rules(client, acct):
-    cases = [
-        ({"game": "ztype", "score": 5, "duration": 60}, 15),
-        ({"game": "ztype", "score": 4, "duration": 60}, 0),
-        ({"game": "quiz", "score": 3, "total": 5}, 10),
-        ({"game": "quiz", "score": 2, "total": 5}, 0),
-        ({"game": "memory", "score": 6, "moves": 14}, 8),
-        ({"game": "memory", "score": 5, "moves": 14}, 0),
-        ({"game": "bug", "score": 2, "total": 3}, 10),
-        ({"game": "bug", "score": 1, "total": 3}, 0),
-    ]
-    for res, want in cases:
-        r = post(client, "/games/results", {"type": "game", "result": {"id": str(uuid.uuid4()), **res}})
-        assert r.status_code == 200 and r.json()["award"] == want, (res, r.text)
+def test_session_expires_and_belongs_to_owner(client, db, metodist_token, acct):
+    sess = play_questions(client, db, "bug", 2)
+    backdate(db, sess["id"], 31 * 60)
+    assert finish(client, sess).status_code == 410
+    other = start_game(client, "quiz")
+    client.post("/space/auth/logout")
+    _, creds = new_account(client, db, metodist_token, name="Boshqa Bola")
+    login(client, creds)
+    assert post(client, "/games/answer", {"session": other["id"], "index": 0, "choice": 0}).status_code == 404
+
+
+def test_memory_server_side_flips(client, db, acct):
+    sess = start_game(client, "memory")
+    cards = games.memory_cards(session_row(db, sess["id"]).course, session_row(db, sess["id"]).seed)
+    flip = lambda c: post(client, "/games/flip", {"session": sess["id"], "card": c})
+    first = flip(0).json()
+    assert first["value"] == cards[0] and "pair" not in first
+    assert flip(0).status_code == 400                                              # o'sha karta yana emas
+    wrong = next(i for i in range(12) if cards[i] != cards[0])
+    assert flip(wrong).json()["match"] is False
+    for v in dict.fromkeys(cards):
+        a, b = [i for i, c in enumerate(cards) if c == v]
+        flip(a); assert flip(b).json()["match"] is True
+    r = finish(client, sess, score=0, moves=0).json()
+    assert r["award"] == 8 and r["state"]["results"][0]["moves"] == 7
+
+
+def test_memory_move_limit(client, db, acct):
+    sess = start_game(client, "memory")
+    row = session_row(db, sess["id"])
+    cards = games.memory_cards(row.course, row.seed)
+    a = 0
+    b = next(i for i in range(12) if cards[i] != cards[0])
+    for _ in range(games.MEMORY_MAX_MOVES):
+        post(client, "/games/flip", {"session": sess["id"], "card": a})
+        post(client, "/games/flip", {"session": sess["id"], "card": b})
+    assert post(client, "/games/flip", {"session": sess["id"], "card": a}).status_code == 409
+    r = finish(client, sess).json()
+    assert r["award"] == 0 and "18 urinish" in r["message"]
+
+
+def test_all_game_rules(client, db, acct):
+    assert finish(client, play_questions(client, db, "quiz", 2)).json()["award"] == 0
+    assert finish(client, play_questions(client, db, "bug", 2)).json()["award"] == 10
+    assert finish(client, play_questions(client, db, "bug", 1)).json()["award"] == 0
+    for n, want in ((5, 15), (4, 0)):
+        z = start_game(client, "ztype", difficulty="hard")
+        backdate(db, z["id"], 60)
+        assert finish(client, z, hits=list(range(n)), duration=60).json()["award"] == want
 
 
 def test_battle_reward_needs_server_confirmed_win(client, db, acct):
