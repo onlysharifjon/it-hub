@@ -182,6 +182,19 @@ class Group(Base):
     payments = relationship("Payment", back_populates="group", order_by="Payment.id")
 
 
+class GroupTeacherHistory(Base):
+    """Guruh o'qituvchisi tarixi: `teacher_id` `started_at` dan keyingi yozuvgacha
+    amal qiladi. Maosh har bir dars sanasidagi o'qituvchiga hisoblanadi — guruh
+    o'qituvchisi almashtirilsa, o'tgan oylar oyligi yangi o'qituvchiga o'tib ketmaydi."""
+    __tablename__ = "group_teacher_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    started_at = Column(DateTime, nullable=False)   # UTC
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class GroupStudent(Base):
     __tablename__ = "group_students"
 

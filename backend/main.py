@@ -1538,6 +1538,7 @@ def create_group(payload: schemas.GroupCreate, db: Session = Depends(get_db), ac
     g = models.Group(**data)
     db.add(g)
     db.flush()
+    db.add(models.GroupTeacherHistory(group_id=g.id, teacher_id=g.teacher_id, started_at=datetime.utcnow()))
     write_audit(db, entity_type="group", entity_id=g.id, action="create",
                 changed_by_id=actor.id, new_value=data)
     db.commit()
@@ -1552,6 +1553,10 @@ def update_group(group_id: int, payload: schemas.GroupUpdate, db: Session = Depe
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
     changes = payload.dict(exclude_unset=True)
     old = {k: str(getattr(g, k)) for k in changes}
+    if "teacher_id" in changes and changes["teacher_id"] != g.teacher_id:
+        # O'qituvchi tarixi — maosh har dars sanasidagi o'qituvchiga hisoblanadi
+        db.add(models.GroupTeacherHistory(group_id=g.id, teacher_id=changes["teacher_id"],
+                                          started_at=datetime.utcnow()))
     if "is_active" in changes and changes["is_active"] != g.is_active:
         # Arxivlash sanasi — qarz hisobi shu oygacha davom etadi (core_calc.group_billable_in)
         g.closed_at = None if changes["is_active"] else datetime.utcnow()
@@ -1913,127 +1918,13 @@ def delete_payment(payment_id: int, db: Session = Depends(get_db), actor: models
 
 # ── Salary helper ─────────────────────────────────────────────────────────────
 
-def _group_salary(db: Session, group: models.Group, month: int, year: int):
-    """
-    O'qituvchi maoshini hisoblaydi — bitta manba (`_teacher_salary_breakdown`
-    bilan bir xil formula): 50 000 so'm / shu oyda o'tilgan darslar soni ×
-    talaba kelgan darslar soni. Qaytaradi: (jami summa, talabalar ro'yxati,
-    shu oyda o'tilgan darslar soni).
-    """
-    lessons_held = db.query(
-        func.count(func.distinct(models.Attendance.lesson_date))
-    ).filter(
-        models.Attendance.group_id == group.id,
-        extract('month', models.Attendance.lesson_date) == month,
-        extract('year', models.Attendance.lesson_date) == year,
-    ).scalar() or 0
-    if lessons_held <= 0:
-        return Decimal(0), [], 0
-
-    # 1-query: guruh a'zolari va ismlari — shu OY davomida haqiqatan a'zo
-    # bo'lganlar (keyinroq chiqarilgan/o'tkazilgan bo'lsa ham, ko'ring: left_at).
-    all_members = (
-        db.query(models.GroupStudent, models.Student.full_name)
-        .join(models.Student, models.Student.id == models.GroupStudent.student_id)
-        .filter(models.GroupStudent.group_id == group.id)
-        .order_by(models.GroupStudent.id)
-        .all()
-    )
-    member_rows = [(gs, name) for gs, name in all_members if core_calc.covers_month(gs, month, year)]
-    if not member_rows:
-        return Decimal(0), [], lessons_held
-
-    student_ids = [gs.student_id for gs, _ in member_rows]
-    name_map    = {gs.student_id: name for gs, name in member_rows}
-
-    # 2-query: bir oyda har talaba uchun kelgan darslar soni (GROUP BY)
-    att_rows = (
-        db.query(
-            models.Attendance.student_id,
-            func.count(models.Attendance.id).label('cnt'),
-        )
-        .filter(
-            models.Attendance.group_id  == group.id,
-            models.Attendance.is_present == True,
-            extract('month', models.Attendance.lesson_date) == month,
-            extract('year',  models.Attendance.lesson_date) == year,
-            models.Attendance.student_id.in_(student_ids),
-        )
-        .group_by(models.Attendance.student_id)
-        .all()
-    )
-    attended_map = {r.student_id: r.cnt for r in att_rows}
-
-    per_lesson = TEACHER_STUDENT_BONUS_UNIT / Decimal(lessons_held)
-    total    = Decimal(0)
-    students = []
-    for sid, sname in name_map.items():
-        attended = attended_map.get(sid, 0)
-        share    = (per_lesson * Decimal(str(attended))).quantize(Decimal('1'))
-        total   += share
-        students.append({
-            "student_id":   sid,
-            "student_name": sname,
-            "attended":     attended,
-            "salary_share": float(share),
-        })
-    return total, students, lessons_held
-
-
-def _batch_salary_by_month(db: Session, groups: list, year: int) -> dict:
-    """
-    Barcha guruhlar uchun 12 oylik maoshni ("talaba ulushi" formulasi bilan,
-    `_teacher_salary_breakdown` bilan bir xil) 2 query da hisoblaydi.
-    Qaytaradi: {month: total_salary}
-    """
-    taught = [g for g in groups if g.teacher_id]
+def _batch_salary_by_month(db: Session, year: int) -> dict:
+    """12 oylik o'qituvchi ulushi jami ("talaba ulushi" formulasi,
+    `_teacher_bonus_items` — yagona manba). Qaytaradi: {month: total_salary}"""
     result = {m: Decimal(0) for m in range(1, 13)}
-    if not taught:
-        return result
-
-    group_ids = [g.id for g in taught]
-
-    # Har (oy, guruh) uchun shu oyda o'tilgan darslar soni
-    held_rows = (
-        db.query(
-            extract('month', models.Attendance.lesson_date).label('mon'),
-            models.Attendance.group_id,
-            func.count(func.distinct(models.Attendance.lesson_date)).label('cnt'),
-        )
-        .filter(
-            models.Attendance.group_id.in_(group_ids),
-            extract('year', models.Attendance.lesson_date) == year,
-        )
-        .group_by(extract('month', models.Attendance.lesson_date), models.Attendance.group_id)
-        .all()
-    )
-    held_map = {(int(r.mon), r.group_id): r.cnt for r in held_rows}
-
-    rows = (
-        db.query(
-            extract('month', models.Attendance.lesson_date).label('mon'),
-            models.Attendance.group_id,
-            models.Attendance.student_id,
-            func.count(models.Attendance.id).label('cnt'),
-        )
-        .filter(
-            models.Attendance.group_id.in_(group_ids),
-            models.Attendance.is_present == True,
-            extract('year', models.Attendance.lesson_date) == year,
-        )
-        .group_by(
-            extract('month', models.Attendance.lesson_date),
-            models.Attendance.group_id,
-            models.Attendance.student_id,
-        )
-        .all()
-    )
-    for row in rows:
-        held = held_map.get((int(row.mon), row.group_id), 0)
-        if held <= 0:
-            continue
-        per_lesson = TEACHER_STUDENT_BONUS_UNIT / Decimal(held)
-        result[int(row.mon)] += (per_lesson * Decimal(str(row.cnt))).quantize(Decimal('1'))
+    for m in range(1, 13):
+        result[m] = sum((it["share"] for it in _teacher_bonus_items(db, m, year)
+                         if it["teacher_id"] is not None), Decimal(0))
     return result
 
 
@@ -2119,9 +2010,6 @@ def stats_overview(
     total_groups = db.query(func.count(models.Group.id)).scalar()
     active_groups_count = db.query(func.count(models.Group.id)).filter(models.Group.is_active == True).scalar()
 
-    # Load active groups (1 query)
-    active_grps = db.query(models.Group).filter(models.Group.is_active == True).all()
-
     # Batch: barcha to'lovlar yil bo'yicha (1 query)
     pay_rows = (
         db.query(models.Payment.month, models.Payment.year,
@@ -2144,8 +2032,8 @@ def stats_overview(
     exp_map = {(r.month, r.year): r.total or Decimal(0) for r in exp_rows}
 
     # Batch: 12 oylik maosh (1 query)
-    salary_cur_year = _batch_salary_by_month(db, active_grps, cur_year)
-    salary_sel_year = salary_cur_year if sel_year == cur_year else _batch_salary_by_month(db, active_grps, sel_year)
+    salary_cur_year = _batch_salary_by_month(db, cur_year)
+    salary_sel_year = salary_cur_year if sel_year == cur_year else _batch_salary_by_month(db, sel_year)
 
     this_income = pay_map.get((cur_month, cur_year), (Decimal(0), 0))[0]
     last_income = pay_map.get((prev_month, prev_year), (Decimal(0), 0))[0]
@@ -2224,48 +2112,53 @@ def teacher_salaries_breakdown(
     """
     Per-teacher salary breakdown based on attendance.
     Formula: 50 000 so'm / shu oyda o'tilgan darslar soni × talaba kelgan
-    darslar soni (`_group_salary` / `_teacher_salary_breakdown` bilan bir xil).
+    darslar soni — `_teacher_bonus_items` (Oylik sahifasi bilan yagona manba).
+    Ulush har bir dars sanasidagi o'qituvchiga beriladi; arxivlangan guruhlar ham kiradi.
     """
-    groups = db.query(models.Group).filter(models.Group.is_active == True).order_by(models.Group.id).all()
+    items = _teacher_bonus_items(db, month, year)
+    group_map = {g.id: g for g in db.query(models.Group).filter(
+        models.Group.id.in_({it["group_id"] for it in items})).all()} if items else {}
+    teacher_ids = {it["teacher_id"] for it in items if it["teacher_id"] is not None}
+    teacher_names = {u.id: u.full_name or u.username for u in db.query(models.User).filter(
+        models.User.id.in_(teacher_ids)).all()} if teacher_ids else {}
+
     teachers: dict = {}
     grand_total = Decimal(0)
-
-    for g in groups:
-        group_salary, student_details, total_lessons_held = _group_salary(db, g, month, year)
-        if group_salary == 0 and not student_details:
-            continue
-
-        per_lesson = (TEACHER_STUDENT_BONUS_UNIT / Decimal(total_lessons_held)).quantize(Decimal('1')) \
-            if total_lessons_held else Decimal(0)
-
-        grand_total += group_salary
-        tid = g.teacher_id  # may be None
-        if tid not in teachers:
-            if tid is not None and g.teacher:
-                tname = g.teacher.full_name or g.teacher.username
-            else:
-                tname = "O'qituvchi tayinlanmagan"
-            teachers[tid] = {
-                "teacher_id": tid,
-                "teacher_name": tname,
-                "groups": [],
-                "total_salary": Decimal(0),
-            }
-        teachers[tid]["groups"].append({
-            "group_id": g.id,
-            "group_name": g.name,
-            "stage": g.stage or "foundation",
-            "per_lesson": float(per_lesson),
-            "total_lessons_held": total_lessons_held,
-            "students": student_details,
-            "total_attended": sum(s["attended"] for s in student_details),
-            "group_salary": float(group_salary),
+    for it in sorted(items, key=lambda x: (x["group_id"], x["student_name"])):
+        tid, gid = it["teacher_id"], it["group_id"]
+        t = teachers.setdefault(tid, {
+            "teacher_id": tid,
+            "teacher_name": teacher_names.get(tid, "O'qituvchi tayinlanmagan"),
+            "groups": {},
+            "total_salary": Decimal(0),
         })
-        teachers[tid]["total_salary"] += group_salary
+        g = group_map.get(gid)
+        grp = t["groups"].setdefault(gid, {
+            "group_id": gid,
+            "group_name": it["group_name"],
+            "stage": (g.stage if g else None) or "foundation",
+            "per_lesson": float(it["per_lesson"].quantize(Decimal('1'))),
+            "total_lessons_held": it["lessons_held"],
+            "students": [],
+            "total_attended": 0,
+            "group_salary": Decimal(0),
+        })
+        grp["students"].append({
+            "student_id": it["student_id"],
+            "student_name": it["student_name"],
+            "attended": it["attended"],
+            "salary_share": float(it["share"]),
+        })
+        grp["total_attended"] += it["attended"]
+        grp["group_salary"] += it["share"]
+        t["total_salary"] += it["share"]
+        grand_total += it["share"]
 
     result = sorted(
         [
-            {**t, "total_salary": float(t["total_salary"])}
+            {**t,
+             "groups": [{**g, "group_salary": float(g["group_salary"])} for g in t["groups"].values()],
+             "total_salary": float(t["total_salary"])}
             for t in teachers.values()
         ],
         key=lambda t: t["total_salary"],
@@ -2300,10 +2193,15 @@ def teacher_my_dashboard(
     # ko'rinadi, aks holda kurs tugab guruh yopilgach o'qituvchi hisobidan
     # butunlay yo'qolib qolardi (jumladan sertifikat generatsiyasi uchun ham
     # kerak). Faol guruhlar avval, keyin yopilganlari ko'rsatiladi.
+    # Maosh ulushi — yagona manba, shu o'qituvchi o'tgan darslar bo'yicha
+    # (guruh keyinroq boshqa o'qituvchiga o'tgan bo'lsa ham, uning darslari unda qoladi)
+    my_items = [it for it in _teacher_bonus_items(db, sel_month, sel_year)
+                if it["teacher_id"] == actor.id]
+    taught_ids = {it["group_id"] for it in my_items}
     groups = (
         db.query(models.Group)
         .options(selectinload(models.Group.members))
-        .filter(models.Group.teacher_id == actor.id)
+        .filter(or_(models.Group.teacher_id == actor.id, models.Group.id.in_(taught_ids)))
         .order_by(models.Group.is_active.desc(), models.Group.name)
         .all()
     )
@@ -2335,23 +2233,10 @@ def teacher_my_dashboard(
     )
     month_lessons_map = {r.group_id: r.cnt for r in mless_rows}
 
-    # Batch 3: all attendance for salary (1 query)
-    att_rows = (
-        db.query(models.Attendance.group_id, models.Attendance.student_id,
-                 func.count(models.Attendance.id).label('cnt'))
-        .filter(
-            models.Attendance.group_id.in_(group_ids),
-            models.Attendance.is_present == True,
-            extract('month', models.Attendance.lesson_date) == sel_month,
-            extract('year',  models.Attendance.lesson_date) == sel_year,
-        )
-        .group_by(models.Attendance.group_id, models.Attendance.student_id)
-        .all()
-    )
-    # {group_id: {student_id: attended_count}}
+    # Batch 3: maosh ulushi (my_items) — {group_id: {student_id: item}}
     att_map: dict = {}
-    for r in att_rows:
-        att_map.setdefault(r.group_id, {})[r.student_id] = r.cnt
+    for it in my_items:
+        att_map.setdefault(it["group_id"], {})[it["student_id"]] = it
 
     # Batch 4: student names (1 query)
     all_student_ids = [m.student_id for g in groups for m in g.members]
@@ -2374,24 +2259,22 @@ def teacher_my_dashboard(
         held      = month_lessons_map.get(g.id, 0)
         per_lesson = (TEACHER_STUDENT_BONUS_UNIT / Decimal(held)) if held > 0 else Decimal(0)
 
-        # Hozirgi a'zolar emas — sel_month/sel_year davomida haqiqatan a'zo
-        # bo'lganlar: aks holda shu oyda dars qatnashib, keyin guruhdan
-        # chiqarilgan/boshqa guruhga o'tkazilgan talaba uchun o'qituvchi
-        # maoshidan judo bo'lardi (davomat yozuvi saqlanib qolgan bo'lsa ham).
+        # Shu oyda a'zo bo'lganlar + a'zoligi saqlanmagan bo'lsa ham shu
+        # o'qituvchi darsiga qatnashganlar (davomat — maosh manbai)
         month_members = core_calc.members_covering_month(g.members, sel_month, sel_year)
+        g_att = att_map.get(g.id, {})
+        student_ids = list(dict.fromkeys([m.student_id for m in month_members] + list(g_att)))
 
         group_salary    = Decimal(0)
         student_salaries = []
-        g_att = att_map.get(g.id, {})
-
-        for mem in month_members:
-            attended = g_att.get(mem.student_id, 0)
-            share    = (per_lesson * Decimal(str(attended))).quantize(Decimal('1'))
+        for sid in student_ids:
+            it = g_att.get(sid)
+            share = it["share"] if it else Decimal(0)
             group_salary += share
             student_salaries.append({
-                "student_id":   mem.student_id,
-                "student_name": student_name_map.get(mem.student_id, ""),
-                "attended":     attended,
+                "student_id":   sid,
+                "student_name": it["student_name"] if it else student_name_map.get(sid, ""),
+                "attended":     it["attended"] if it else 0,
                 "salary_share": float(share),
             })
 
@@ -2649,85 +2532,110 @@ TEACHER_BASE_SALARY = Decimal('5000000')       # FIX oylik
 TEACHER_STUDENT_BONUS_UNIT = Decimal('50000')  # talaba shu oydagi BARCHA darsga qatnasa oladigan to'liq ulush
 
 
-def _teacher_salary_breakdown(db: Session, month: int, year: int) -> dict:
-    """Har bir o'qituvchi uchun shu oydagi "talaba ulushi" haqqoniy taqsimoti,
-    guruh darajasida hisoblanadi:
+def _group_teacher_timeline(db: Session, groups: list) -> dict:
+    """{group_id: [(boshlanish sanasi (Toshkent), teacher_id), ...]} — o'sish tartibida.
+    Tarix yozuvi bo'lmagan guruh uchun hozirgi `teacher_id` boshidan amal qiladi."""
+    timeline = {g.id: [] for g in groups}
+    if not timeline:
+        return timeline
+    rows = (
+        db.query(models.GroupTeacherHistory)
+        .filter(models.GroupTeacherHistory.group_id.in_(list(timeline)))
+        .order_by(models.GroupTeacherHistory.started_at, models.GroupTeacherHistory.id)
+        .all()
+    )
+    for r in rows:
+        timeline[r.group_id].append((tz.to_local(r.started_at).date(), r.teacher_id))
+    for g in groups:
+        if not timeline[g.id]:
+            timeline[g.id] = [(date.min, g.teacher_id)]
+    return timeline
+
+
+def _teacher_on(periods: list, d: date) -> Optional[int]:
+    """Dars sanasi `d` dagi o'qituvchi. Birinchi davrdan oldingi sana — birinchi davr o'qituvchisi."""
+    teacher = periods[0][1]
+    for start, tid in periods:
+        if start <= d:
+            teacher = tid
+        else:
+            break
+    return teacher
+
+
+def _teacher_bonus_items(db: Session, month: int, year: int) -> list:
+    """O'qituvchi "talaba ulushi"ning YAGONA manbasi (Oylik, Statistika,
+    Dashboard va o'qituvchi kabineti shu funksiyadan foydalanadi):
 
         lessons_held  = guruhda shu oyda haqiqatda o'tilgan (Attendance
                          yozuvi mavjud) noyob dars sanalari soni
         per_lesson    = 50 000 / lessons_held
-        talaba ulushi = per_lesson × (talaba shu guruhda qatnashgan darslar soni)
+        talaba ulushi = per_lesson × (talaba qatnashgan darslar soni)
 
-    Guruhning o'qituvchisi (Group.teacher_id) shu guruhdagi barcha talabalar
-    ulushini oladi. Talaba oy ichida bir guruhdan (demak bir o'qituvchidan)
-    ikkinchisiga o'tkazilgan bo'lsa, har ikki guruh o'z ulushini alohida
-    hisoblaydi — shuning uchun ikkala o'qituvchi ham o'z darslariga mos
-    ulushini oladi (hech kim "yutib olmaydi"). Talaba oy oxirida arxivga
-    o'tkazilgan bo'lsa ham, shu oydagi haqiqiy davomat asosida hisoblanadi.
+    Har bir dars o'sha SANADAGI guruh o'qituvchisiga yoziladi
+    (`group_teacher_history`) — guruh keyin boshqa o'qituvchiga o'tkazilsa ham
+    o'tgan darslar ulushi avvalgi o'qituvchida qoladi; oy o'rtasida almashsa,
+    ikkalasi o'z darslari bo'yicha oladi. Manba — davomat: a'zolik yozuvi
+    saqlanmagan (eski usulda o'chirilgan) talabaning haqiqiy darslari ham kiradi.
+    Arxivlangan guruhlar ham hisoblanadi.
+
+    Qaytaradi: [{teacher_id (None bo'lishi mumkin), group_id, group_name,
+    student_id, student_name, lessons_held, attended, per_lesson, share}, ...]
+    """
+    month_filter = (
+        extract('month', models.Attendance.lesson_date) == month,
+        extract('year', models.Attendance.lesson_date) == year,
+    )
+    lessons_held: dict = {}
+    for gid, _ld in db.query(models.Attendance.group_id, models.Attendance.lesson_date) \
+            .filter(*month_filter).distinct().all():
+        lessons_held[gid] = lessons_held.get(gid, 0) + 1
+    if not lessons_held:
+        return []
+
+    groups = db.query(models.Group).filter(models.Group.id.in_(list(lessons_held))).all()
+    name_by_group = {g.id: g.name for g in groups}
+    timeline = _group_teacher_timeline(db, groups)
+
+    att_rows = (
+        db.query(models.Attendance.group_id, models.Attendance.student_id,
+                 models.Student.full_name, models.Attendance.lesson_date)
+        .join(models.Student, models.Student.id == models.Attendance.student_id)
+        .filter(models.Attendance.is_present.is_(True), *month_filter)
+        .all()
+    )
+    counts: dict = {}   # (teacher_id, group_id, student_id) -> [student_name, attended]
+    for gid, sid, sname, ld in att_rows:
+        key = (_teacher_on(timeline[gid], ld), gid, sid)
+        counts.setdefault(key, [sname, 0])[1] += 1
+
+    items = []
+    for (tid, gid, sid), (sname, attended) in counts.items():
+        held = lessons_held[gid]
+        per_lesson = TEACHER_STUDENT_BONUS_UNIT / Decimal(held)
+        items.append({
+            "teacher_id": tid, "group_id": gid, "group_name": name_by_group.get(gid, ''),
+            "student_id": sid, "student_name": sname,
+            "lessons_held": held, "attended": attended,
+            "per_lesson": per_lesson,
+            "share": (per_lesson * Decimal(attended)).quantize(Decimal('1')),
+        })
+    return items
+
+
+def _teacher_salary_breakdown(db: Session, month: int, year: int) -> dict:
+    """Har bir o'qituvchi uchun shu oydagi "talaba ulushi" (`_teacher_bonus_items`).
 
     Qaytaradi: {teacher_id: {"total": Decimal, "items": [ {...}, ... ]}}
     """
-    groups = (
-        db.query(models.Group)
-        .filter(models.Group.teacher_id.isnot(None))
-        .all()
-    )
-    if not groups:
-        return {}
-    group_ids = [g.id for g in groups]
-    teacher_by_group = {g.id: g.teacher_id for g in groups}
-    name_by_group = {g.id: g.name for g in groups}
-
-    lesson_date_rows = (
-        db.query(models.Attendance.group_id, models.Attendance.lesson_date)
-        .filter(
-            models.Attendance.group_id.in_(group_ids),
-            extract('month', models.Attendance.lesson_date) == month,
-            extract('year', models.Attendance.lesson_date) == year,
-        )
-        .distinct()
-        .all()
-    )
-    lessons_held: dict = {}
-    for gid, _ld in lesson_date_rows:
-        lessons_held[gid] = lessons_held.get(gid, 0) + 1
-
-    att_rows = (
-        db.query(
-            models.Attendance.group_id,
-            models.Attendance.student_id,
-            models.Student.full_name,
-            func.count(models.Attendance.id).label('cnt'),
-        )
-        .join(models.Student, models.Student.id == models.Attendance.student_id)
-        .filter(
-            models.Attendance.group_id.in_(group_ids),
-            models.Attendance.is_present.is_(True),
-            extract('month', models.Attendance.lesson_date) == month,
-            extract('year', models.Attendance.lesson_date) == year,
-        )
-        .group_by(models.Attendance.group_id, models.Attendance.student_id, models.Student.full_name)
-        .all()
-    )
-
     breakdown: dict = {}
-    for gid, sid, sname, attended in att_rows:
-        held = lessons_held.get(gid, 0)
-        if held <= 0 or not attended:
+    for it in _teacher_bonus_items(db, month, year):
+        tid = it["teacher_id"]
+        if tid is None:
             continue
-        teacher_id = teacher_by_group.get(gid)
-        if teacher_id is None:
-            continue
-        per_lesson = TEACHER_STUDENT_BONUS_UNIT / Decimal(held)
-        share = (per_lesson * Decimal(attended)).quantize(Decimal('1'))
-        entry = breakdown.setdefault(teacher_id, {"total": Decimal('0'), "items": []})
-        entry["total"] += share
-        entry["items"].append({
-            "group_id": gid, "group_name": name_by_group.get(gid, ''),
-            "student_id": sid, "student_name": sname,
-            "lessons_held": held, "attended": attended,
-            "per_lesson": per_lesson, "share": share,
-        })
+        entry = breakdown.setdefault(tid, {"total": Decimal('0'), "items": []})
+        entry["total"] += it["share"]
+        entry["items"].append({k: v for k, v in it.items() if k != "teacher_id"})
     return breakdown
 
 
