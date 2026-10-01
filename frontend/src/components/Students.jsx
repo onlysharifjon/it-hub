@@ -9,12 +9,12 @@ import {
   faBoxArchive, faArrowUpFromBracket,
   faClockRotateLeft, faArrowRightToBracket, faArrowRightFromBracket,
   faUmbrellaBeach, faXmark, faHourglassHalf, faLayerGroup, faRotateLeft,
-  faPaperPlane, faSpinner,
+  faPaperPlane, faSpinner, faUsersSlash,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchStudents, createStudent, updateStudent, archiveStudent, unarchiveStudent, fetchStudentCameraAttendance,
   fetchStudentVacations, createStudentVacation, deleteStudentVacation,
-  fetchGroups, addStudentToGroup, checkStudentTelegram, tashkentToday,
+  fetchGroups, fetchTariffs, addStudentToGroup, checkStudentTelegram, tashkentToday,
 } from '../api'
 import useConfirm from './ui/useConfirm'
 import DataTable from './ui/DataTable'
@@ -33,7 +33,7 @@ const EMPTY = {
 export default function Students({ currentUser, onOpenStudent } = {}) {
   const [confirmUI, ask] = useConfirm()
   const isHunter = currentUser?.role === 'hunter' || currentUser?.role === 'admin'
-  const [tab, setTab] = useState('active')          // 'active' | 'demo' | 'archived'
+  const [tab, setTab] = useState('active')          // 'active' | 'demo' | 'ungrouped' | 'archived'
   const [data, setData] = useState({ items: [], meta: null })
   const [search, setSearch] = useState('')
   const [dateFilter, setDateFilter] = useState({ preset: 'all', date_from: '', date_to: '' })
@@ -49,8 +49,18 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
   const [vacationModal, setVacationModal] = useState(null)      // student object
   const [attachModal, setAttachModal] = useState(null)          // student object (demo -> guruhga biriktirish)
   const [tgCheck, setTgCheck] = useState({})   // { [studentId]: 'checking' | 'ok' | 'fail' }
+  const [ungroupedCount, setUngroupedCount] = useState(null)
 
   useEffect(() => { load(search, dateFilter, page, tab) }, [tab])
+  useEffect(() => { if (isHunter) loadUngroupedCount() }, [])
+
+  // Guruhsiz faol talabalar soni — tab yorlig'i uchun
+  async function loadUngroupedCount() {
+    try {
+      const res = await fetchStudents({ is_active: true, no_group: true, page_size: 1 })
+      setUngroupedCount(res.meta?.total ?? null)
+    } catch { /* jim — faqat yorliq */ }
+  }
 
   async function load(s = search, df = dateFilter, p = page, t = tab) {
     setLoading(true)
@@ -59,6 +69,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
         search: s || undefined,
         is_archived: t === 'archived' ? true : false,
         is_demo: t === 'demo' ? true : false,
+        ...(t === 'ungrouped' ? { is_active: true, no_group: true } : {}),
         date_from: df.date_from || undefined,
         date_to: df.date_to || undefined,
         page: p, page_size: 20,
@@ -268,6 +279,11 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
               </button>
             </>
           )}
+          {tab === 'ungrouped' && (
+            <button className="btn-icon" onClick={() => setAttachModal(s)} title="Guruhga biriktirish" aria-label="Guruhga biriktirish">
+              <FontAwesomeIcon icon={faLayerGroup} />
+            </button>
+          )}
           {tab === 'demo' && (
             <>
               <button className="btn-icon" onClick={() => setAttachModal(s)} title="Guruhga biriktirish" aria-label="Guruhga biriktirish">
@@ -316,6 +332,14 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
         >
           <FontAwesomeIcon icon={faUserGraduate} /> Faol talabalar
         </button>
+        {isHunter && (
+          <button
+            className={`tab-btn ${tab === 'ungrouped' ? 'active' : ''}`}
+            onClick={() => switchTab('ungrouped')}
+          >
+            <FontAwesomeIcon icon={faUsersSlash} /> Guruhsiz{ungroupedCount ? ` (${ungroupedCount})` : ''}
+          </button>
+        )}
         <button
           className={`tab-btn ${tab === 'archived' ? 'active' : ''}`}
           onClick={() => switchTab('archived')}
@@ -351,6 +375,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
           icon: faUserGraduate,
           title: tab === 'archived' ? "Arxivlangan talabalar yo'q"
             : tab === 'demo' ? "Demo bo'limida talaba yo'q"
+            : tab === 'ungrouped' ? "Guruhsiz talaba yo'q"
             : 'Talabalar topilmadi',
           description: tab === 'active' ? "Qidiruv yoki sana filtrini o'zgartirib ko'ring." : undefined,
         }}
@@ -481,7 +506,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
         <AttachGroupModal
           student={attachModal}
           onClose={() => setAttachModal(null)}
-          onAttached={() => { setAttachModal(null); load() }}
+          onAttached={() => { setAttachModal(null); load(); if (isHunter) loadUngroupedCount() }}
         />
       )}
     </div>
@@ -634,6 +659,8 @@ function VacationModal({ student, onClose }) {
 function AttachGroupModal({ student, onClose, onAttached }) {
   const [groups, setGroups] = useState([])
   const [groupId, setGroupId] = useState('')
+  const [tariffs, setTariffs] = useState([])
+  const [tariffId, setTariffId] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -641,8 +668,12 @@ function AttachGroupModal({ student, onClose, onAttached }) {
   async function load() {
     setLoading(true)
     try {
-      const res = await fetchGroups({ is_active: true, page_size: 100 })
+      const [res, tr] = await Promise.all([
+        fetchGroups({ is_active: true, page_size: 100 }),
+        fetchTariffs().catch(() => []),
+      ])
       setGroups(res.items || res || [])
+      setTariffs((tr || []).filter(t => t.is_active !== false))
     } catch { toast.error("Guruhlarni yuklab bo'lmadi") } finally { setLoading(false) }
   }
 
@@ -650,8 +681,8 @@ function AttachGroupModal({ student, onClose, onAttached }) {
     if (!groupId) return toast.error('Guruhni tanlang')
     setSaving(true)
     try {
-      await addStudentToGroup(parseInt(groupId), student.id)
-      toast.success("Talaba guruhga biriktirildi — endi haqiqiy talaba")
+      await addStudentToGroup(parseInt(groupId), student.id, tariffId ? parseInt(tariffId) : null)
+      toast.success(student.is_demo ? "Talaba guruhga biriktirildi — endi haqiqiy talaba" : "Talaba guruhga biriktirildi")
       onAttached()
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
@@ -664,9 +695,11 @@ function AttachGroupModal({ student, onClose, onAttached }) {
           <button className="modal-close" onClick={onClose}><FontAwesomeIcon icon={faXmark} /></button>
         </div>
         <div className="modal-body">
-          <p className="text-muted" style={{ fontSize: 12.5, marginTop: 0 }}>
-            Guruh tanlab biriktirilgach, talaba avtomatik "Faol talabalar" ro'yxatiga o'tadi.
-          </p>
+          {student.is_demo && (
+            <p className="text-muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+              Guruh tanlab biriktirilgach, talaba avtomatik "Faol talabalar" ro'yxatiga o'tadi.
+            </p>
+          )}
           {loading ? (
             <div className="muted center py-4">Yuklanmoqda...</div>
           ) : (
@@ -676,6 +709,13 @@ function AttachGroupModal({ student, onClose, onAttached }) {
                 <option value="">— tanlang —</option>
                 {groups.map(g => (
                   <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+              <label style={{ marginTop: 12 }}>Tarif</label>
+              <select className="field" value={tariffId} onChange={e => setTariffId(e.target.value)}>
+                <option value="">— guruh narxi bo'yicha —</option>
+                {tariffs.map(t => (
+                  <option key={t.id} value={t.id}>{t.name} — {Number(t.price).toLocaleString()} so'm</option>
                 ))}
               </select>
             </>

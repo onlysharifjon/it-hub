@@ -1253,6 +1253,7 @@ def list_students(
     is_active: Optional[bool] = Query(None),
     is_archived: Optional[bool] = Query(None),
     is_demo: Optional[bool] = Query(None),
+    no_group: Optional[bool] = Query(None, description="true — hech qaysi faol guruhga biriktirilmaganlar"),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     payment: Optional[str] = Query(None, description="debtor | partial | paid | unpaid"),
@@ -1283,6 +1284,19 @@ def list_students(
         q = q.filter(models.Student.is_demo == False)
     else:
         q = q.filter(models.Student.is_demo == is_demo)
+    if no_group:
+        # Hozir hech qaysi faol guruhda a'zo emas (chiqib ketgan a'zoliklar va
+        # arxivlangan guruhlar hisobga olinmaydi)
+        in_group = (
+            db.query(models.GroupStudent.id)
+            .join(models.Group, models.Group.id == models.GroupStudent.group_id)
+            .filter(
+                models.GroupStudent.student_id == models.Student.id,
+                models.GroupStudent.left_at.is_(None),
+                models.Group.is_active == True,  # noqa: E712
+            )
+        )
+        q = q.filter(~in_group.exists())
     if search:
         q = q.filter(
             models.Student.full_name.ilike(f"%{search}%") |

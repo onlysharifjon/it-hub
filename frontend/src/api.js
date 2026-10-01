@@ -216,6 +216,7 @@ export async function fetchStudents(params = {}) {
   if (params.is_active !== undefined)   q.set('is_active', params.is_active)
   if (params.is_archived !== undefined) q.set('is_archived', params.is_archived)
   if (params.is_demo !== undefined)     q.set('is_demo', params.is_demo)
+  if (params.no_group)            q.set('no_group', 'true')
   if (params.date_from)           q.set('date_from', params.date_from)
   if (params.date_to)             q.set('date_to', params.date_to)
   if (params.payment)             q.set('payment', params.payment)
