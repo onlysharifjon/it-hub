@@ -150,3 +150,28 @@ class MinarGameSession(Base):
     state = Column(Text, nullable=False, default="{}")   # quiz/bug: {"answers": [...]}, memory: {"open", "matched", "moves"}
     started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     finished_at = Column(DateTime, nullable=True)
+
+
+class MinarNotification(Base):
+    """O'quvchi bildirishnomasi (ustoz coini, buyurtma holati, uy vazifasi, yutuq...)."""
+    __tablename__ = "minar_notifications"
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("minar_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(20), nullable=False)          # coin | order | homework | achievement | tournament | system
+    title = Column(String(200), nullable=False)
+    body = Column(Text, nullable=True)
+    link = Column(String(40), nullable=True)           # Space sahifasi: shop | homework | achievements | ...
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    read_at = Column(DateTime, nullable=True)
+
+
+class MinarAchievement(Base):
+    """Ochilgan yutuq (nishon). Ro'yxat va shartlar — achievements.py katalogida."""
+    __tablename__ = "minar_achievements"
+    __table_args__ = (UniqueConstraint("account_id", "code", name="uq_minar_achievement"),)
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey("minar_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(40), nullable=False)
+    unlocked_at = Column(DateTime, nullable=False, default=datetime.utcnow)

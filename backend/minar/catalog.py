@@ -26,6 +26,11 @@ PRODUCTS = {
     "keyboard": ("Mexanik klaviatura", "space", None, 1200),
 }
 
+# Daraja bilan ochiladigan imkoniyatlar: "o'yin:qiyinlik" -> daraja
+UNLOCK_LEVEL = {"typing:normal": 2, "ztype:normal": 2, "ztype:hard": 4}
+# Hero buyumlari: id -> kerakli daraja (sotib olingani darajadan qat'i nazar qoladi)
+PRODUCT_MIN_LEVEL = {"space": 2, "hoodie": 3, "crown": 4}
+
 LESSONS_PER_COURSE = 3
 LESSON_COIN = 5
 LESSON_XP = 50

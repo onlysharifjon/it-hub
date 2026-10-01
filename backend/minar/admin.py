@@ -19,6 +19,7 @@ from ..database import get_db
 from ..models import UserRole
 from . import auth as student_auth
 from . import catalog as C
+from . import notify
 from .models import MinarAccount, MinarPurchase
 
 router = APIRouter()
@@ -252,5 +253,8 @@ def update_order(order_id: str, payload: OrderPatch, db: Session = Depends(get_d
     old = p.status
     p.status, p.updated_at, p.updated_by_id = payload.status, datetime.utcnow(), user.id
     _audit(db, user, "order_status", acc.id, {"order_id": p.id, "from": old, "to": payload.status})
+    if payload.status == "ready" and old != "ready":
+        notify.to_account(db, acc.id, "order", f"{p.name} tayyor! 🎁",
+                          "Buyurtmangni o‘quv markazidan olib ketishing mumkin.", "shop")
     db.commit()
     return _order_dict(p, acc, st)

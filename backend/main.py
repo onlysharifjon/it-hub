@@ -319,6 +319,7 @@ def serve_upload(rel_path: str, exp: Optional[str] = None, sig: Optional[str] = 
 # Ota-ona mobil ilovasi API (/parent/...) — alohida paketda
 from .parent.router_parent import router as parent_router
 from .parent.notifications import notify_parents_of_student
+from .minar import notify as minar_notify
 app.include_router(parent_router)
 
 # Facebook Lead Ads webhook (Make.com -> /leads/facebook) — alohida paketda
@@ -5301,6 +5302,8 @@ def give_coins(payload: schemas.CoinGive, db: Session = Depends(get_db), actor: 
         title=f"Farzandingiz {t.amount} coin oldi 🎉",
         body=t.reason or "O'qituvchi rag'bati",
     )
+    minar_notify.to_student(db, t.student_id, "coin", f"Ustoz senga {t.amount} coin berdi 🎉",
+                            t.reason or "Faol qatnashganing uchun rag‘bat.", "history")
     db.commit()
     db.refresh(t)
     return _coin_tx_read(t)

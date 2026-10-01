@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, tz
+from . import achievements, notify
 from . import catalog as C
 from . import games
 from .errors import MinarError
@@ -212,6 +213,11 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
         "checkins": checkins,
         "gameRewards": game_rewards,
         "dailyRewardLimit": C.DAILY_REWARDED_GAMES,
+        "level": C.level_of(acc.xp),
+        "unlocks": C.UNLOCK_LEVEL,
+        "productLevels": C.PRODUCT_MIN_LEVEL,
+        "achievements": achievements.progress(db, acc),
+        "unreadNotifications": notify.unread_count(db, acc),
     }
 
 
@@ -238,7 +244,10 @@ def run(db: Session, acc: MinarAccount, fn: Callable[..., tuple[int, str]], *arg
         db.refresh(acc)
         award, message = fn(db, acc, *args)
         db.refresh(acc)
-        return {"state": build_state(db, acc), "award": award, "message": message}
+        unlocked = achievements.evaluate(db, acc)
+        if unlocked:
+            _commit(db)
+        return {"state": build_state(db, acc), "award": award, "message": message, "unlocked": unlocked}
 
 
 def act_checkin(db: Session, acc: MinarAccount) -> tuple[int, str]:
@@ -275,6 +284,9 @@ def act_purchase(db: Session, acc: MinarAccount, product_id: Any, request_id: An
     name, category, _slot, price = product
     if category == "hero" and product_id in owned_hero_items(db, acc):
         raise MinarError(409, "Bu buyum senda bor.")
+    need = C.PRODUCT_MIN_LEVEL.get(product_id, 1)
+    if C.level_of(acc.xp) < need:
+        raise MinarError(403, f"Bu buyum {need}-darajada ochiladi. XP yig‘ishda davom et!")
     balance, _ = balance_and_earned(db, acc)
     if balance < price:
         raise MinarError(400, "Coinlaring hali yetmaydi. Yana bir o‘yin o‘ynab ko‘r!")

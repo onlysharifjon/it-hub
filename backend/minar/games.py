@@ -157,6 +157,9 @@ def start(db: Session, acc: MinarAccount, payload: dict) -> dict:
         duration = ZTYPE_SECONDS
         if difficulty not in ZTYPE_DIFFICULTIES:
             raise MinarError(400, "O‘yin sozlamasi noto‘g‘ri.")
+    need = C.UNLOCK_LEVEL.get(f"{game}:{difficulty}", 1)
+    if C.level_of(acc.xp) < need:
+        raise MinarError(403, f"Bu qiyinlik {need}-darajada ochiladi.")
     now = datetime.utcnow()
     db.query(MinarGameSession).filter(MinarGameSession.account_id == acc.id,
                                       MinarGameSession.started_at < now - timedelta(days=1)).delete()

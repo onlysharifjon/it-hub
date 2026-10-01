@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from backend import models, tz
 from backend.main import app
 from backend.minar import auth as minar_auth
-from backend.minar import battles, catalog as C, games, service
+from backend.minar import achievements, battles, catalog as C, games, service
 from backend.minar.models import MinarAccount, MinarBattle, MinarGameSession
 from backend.tests.conftest import TestSessionLocal
 
@@ -308,10 +308,13 @@ def test_quiz_answer_once_and_server_score(client, db, acct):
 def test_game_reward_xp_and_idempotency(client, db, acct):
     sess, r = play_typing(client, db, 10)
     r = r.json()
-    assert r["award"] == 10 and r["state"]["balance"] == 10 and r["state"]["xp"] == 50
+    first_win = achievements.BY_CODE["first_win"].reward                       # birinchi g'alaba yutug'i
+    assert r["award"] == 10 and r["state"]["balance"] == 10 + first_win and r["state"]["xp"] == 50
+    assert [a["id"] for a in r["unlocked"]] == ["first_win"]
     assert r["state"]["results"][0]["id"] == sess["id"] and r["state"]["gameRewards"] == {"typing": 1}
     dup = finish(client, sess, typed="x", duration=30).json()
-    assert dup["state"]["balance"] == 10 and dup["state"]["xp"] == 50            # ikkinchi marta coin yo'q
+    assert dup["state"]["balance"] == 10 + first_win and dup["state"]["xp"] == 50  # ikkinchi marta coin yo'q
+    assert dup["unlocked"] == []
     _, weak = play_typing(client, db, 2)
     weak = weak.json()
     assert weak["award"] == 0 and weak["state"]["xp"] == 60 and "15 ta harf" in weak["message"]
@@ -398,7 +401,7 @@ def test_all_game_rules(client, db, acct):
     assert finish(client, play_questions(client, db, "bug", 2)).json()["award"] == 10
     assert finish(client, play_questions(client, db, "bug", 1)).json()["award"] == 0
     for n, want in ((5, 15), (4, 0)):
-        z = start_game(client, "ztype", difficulty="hard")
+        z = start_game(client, "ztype")
         backdate(db, z["id"], 60)
         assert finish(client, z, hits=list(range(n)), duration=60).json()["award"] == want
 
@@ -459,8 +462,13 @@ def test_equip_toggle_and_ownership(client, db, acct, metodist_user):
     st, _ = acct
     give_coins(db, st, 500, metodist_user.id)
     assert post(client, "/avatar/equipment", {"type": "equip", "productId": "cap"}).status_code == 400    # olinmagan
+    locked = post(client, "/shop/purchases", {"productId": "crown", "requestId": str(uuid.uuid4())})
+    assert locked.status_code == 403 and "4-darajada" in locked.json()["message"]       # daraja qulfi
+    acc = db.query(MinarAccount).one()
+    acc.xp = (C.PRODUCT_MIN_LEVEL["crown"] - 1) * C.LEVEL_XP
+    db.commit()
     for pid in ("cap", "crown"):
-        post(client, "/shop/purchases", {"productId": pid, "requestId": str(uuid.uuid4())})
+        assert post(client, "/shop/purchases", {"productId": pid, "requestId": str(uuid.uuid4())}).status_code == 200
     eq = post(client, "/avatar/equipment", {"type": "equip", "productId": "cap"}).json()["state"]["equipment"]
     assert eq["hat"] == "cap"
     eq = post(client, "/avatar/equipment", {"type": "equip", "productId": "crown"}).json()["state"]["equipment"]

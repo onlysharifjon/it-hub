@@ -10,7 +10,7 @@ from fastapi import APIRouter, Body, Depends, Header, Request, Response, WebSock
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from . import assistant, auth, battles, games, service
+from . import assistant, auth, battles, games, notify, service
 from .errors import MinarError
 from .models import MinarAccount
 
@@ -90,6 +90,16 @@ def game_answer(payload: dict = Body(...), acc: MinarAccount = Account, db: Sess
 @router.post("/games/flip")
 def game_flip(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
     return games.flip(db, acc, payload)
+
+
+@router.get("/notifications")
+def notifications(acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return notify.list_for(db, acc)
+
+
+@router.post("/notifications/read")
+def notifications_read(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return notify.mark_read(db, acc, payload.get("ids"))
 
 
 @router.post("/quests/claim")
