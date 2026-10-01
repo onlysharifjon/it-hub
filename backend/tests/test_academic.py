@@ -310,8 +310,10 @@ def test_coin_budget_resets_next_month(client, db, teacher_user):
     _enroll(db, group, s1)
 
     # O'tgan oyda budjet to'liq sarflangan deb yozamiz
-    now = datetime.utcnow()
-    prev = now.replace(day=1) - timedelta(days=1)
+    # Toshkent oyi bo'yicha (UTC'da 19:00 dan keyin 1-sanada UTC oyi hali eski bo'ladi)
+    from backend import tz
+    start_utc, _ = tz.month_bounds(tz.now().year, tz.now().month)
+    prev = start_utc - timedelta(hours=1)
     db.add(CoinTransaction(student_id=s1.id, teacher_id=teacher_user.id,
                            group_id=group.id, amount=50, created_at=prev))
     db.commit()

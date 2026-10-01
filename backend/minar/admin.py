@@ -123,6 +123,9 @@ def list_accounts(group_id: Optional[int] = Query(None), q: Optional[str] = Quer
         out.append({
             "student_id": st.id, "full_name": st.full_name, "group": g.name if g else None,
             "login_id": acc.login_id, "course": acc.course, "is_active": acc.is_active,
+            # Akkaunt yoqilgan, lekin talaba arxivda/nofaol bo'lsa o'quvchi kira olmaydi ("Akkaunt faol emas")
+            "student_inactive": bool(st.is_archived or not st.is_active), "is_test": acc.is_test,
+            "can_login": student_auth.account_usable(acc, st),
             "locked": bool(acc.locked_until and acc.locked_until > now),
             "xp": acc.xp, "streak": acc.streak,
             "last_login_at": tz.isoformat(acc.last_login_at) if acc.last_login_at else None,

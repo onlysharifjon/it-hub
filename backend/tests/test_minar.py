@@ -176,6 +176,17 @@ def test_test_account_logs_in_though_student_archived(client, db, metodist_token
     assert all(row["id"] != creds["login_id"] for row in client.get("/space/leaderboard").json())  # reytingda yo'q
 
 
+def test_admin_list_flags_archived_student(client, db, metodist_token, acct):
+    st, creds = acct
+    row = lambda: next(r for r in client.get("/space/admin/accounts", headers=H(metodist_token)).json()
+                       if r["login_id"] == creds["login_id"])
+    assert row()["can_login"] is True and row()["student_inactive"] is False
+    st.is_active, st.is_archived = False, True
+    db.commit()
+    r = row()
+    assert r["is_active"] is True and r["can_login"] is False and r["student_inactive"] is True
+
+
 def test_bulk_create_for_group(client, db, metodist_token):
     st1, group = make_student(db, "Bir Ikki")
     st2, _ = make_student(db, "Uch To‘rt", group=group)

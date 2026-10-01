@@ -172,9 +172,14 @@ export default function MinarAccounts({ currentUser }) {
     {
       key: 'is_active', header: 'Holat', sortable: true,
       render: r => (
-        <span className={`status-badge ${r.is_active ? 'active' : 'inactive'}`}>
-          {r.locked ? <><FontAwesomeIcon icon={faLock} /> Qulflangan</> : (r.is_active ? 'Faol' : 'Bloklangan')}
-        </span>
+        r.is_active && r.can_login === false
+          ? <span className="status-badge inactive"
+              title="Talaba CRM'da arxivda yoki nofaol — o'quvchi kirganda «Akkaunt faol emas» chiqadi. Talabani arxivdan chiqaring.">
+              Talaba arxivda
+            </span>
+          : <span className={`status-badge ${r.is_active ? 'active' : 'inactive'}`}>
+              {r.locked ? <><FontAwesomeIcon icon={faLock} /> Qulflangan</> : (r.is_active ? (r.is_test ? 'Faol (test)' : 'Faol') : 'Bloklangan')}
+            </span>
       ),
     },
     ...(canManage ? [{
@@ -211,7 +216,8 @@ export default function MinarAccounts({ currentUser }) {
 
       <SummaryRow items={[
         { label: 'Jami hisoblar', value: items.length },
-        { label: 'Faol', value: items.filter(r => r.is_active).length },
+        { label: 'Faol', value: items.filter(r => r.is_active && r.can_login !== false).length },
+        { label: 'Talaba arxivda', value: items.filter(r => r.is_active && r.can_login === false).length },
         { label: 'Qulflangan', value: items.filter(r => r.locked).length },
       ]} />
 
@@ -226,7 +232,7 @@ export default function MinarAccounts({ currentUser }) {
         columns={columns}
         rows={items}
         loading={loading}
-        rowClassName={r => (!r.is_active ? 'row-inactive' : undefined)}
+        rowClassName={r => (!r.is_active || r.can_login === false ? 'row-inactive' : undefined)}
         clientPageSize={25}
         densityToggle densityKey="minar_accounts"
         empty={{
