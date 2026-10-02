@@ -62,6 +62,7 @@ export default function Expenses({ currentUser }) {
     setForm({
       name: e.name, amount: String(e.amount), description: e.description || '',
       category: e.category || 'other', staff_id: e.staff_id ? String(e.staff_id) : '',
+      month: e.month, year: e.year,
     })
     setModal(e)
   }
@@ -82,8 +83,11 @@ export default function Expenses({ currentUser }) {
         await createExpense({ ...payload, month, year })
         toast.success("Xarajat qo'shildi")
       } else {
-        await updateExpense(modal.id, payload)
-        toast.success("Saqlandi")
+        await updateExpense(modal.id, { ...payload, month: form.month, year: form.year })
+        // Boshqa oyga ko'chirilgan bo'lsa — joriy ro'yxatdan yo'qoladi, shuni aytamiz
+        toast.success(form.month !== modal.month || form.year !== modal.year
+          ? `Saqlandi — ${MONTHS[form.month - 1]} ${form.year} ga ko'chirildi`
+          : "Saqlandi")
       }
       setModal(null)
       load()
@@ -236,13 +240,22 @@ export default function Expenses({ currentUser }) {
           onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
           placeholder="500000"
         />
-        {modal === 'add' && (
+        {modal === 'add' ? (
           <div className="field-row">
             <Select label="Oy" value={month} onChange={e => setMonth(Number(e.target.value))}>
               {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
             </Select>
             <Select label="Yil" value={year} onChange={e => setYear(Number(e.target.value))}>
               {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+            </Select>
+          </div>
+        ) : modal && (
+          <div className="field-row">
+            <Select label="Oy" value={form.month} onChange={e => setForm(f => ({ ...f, month: Number(e.target.value) }))}>
+              {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </Select>
+            <Select label="Yil" value={form.year} onChange={e => setForm(f => ({ ...f, year: Number(e.target.value) }))}>
+              {(YEARS.includes(form.year) ? YEARS : [form.year, ...YEARS]).map(y => <option key={y} value={y}>{y}</option>)}
             </Select>
           </div>
         )}
