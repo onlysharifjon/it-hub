@@ -27,7 +27,8 @@ QUIZ_COUNT = 5
 BUG_COUNT = 3
 MEMORY_PAIRS = 6
 MEMORY_MAX_MOVES = 18
-TYPING_DURATIONS = (15, 30, 60, 120)  # "so'zlar" rejimi ham 120 soniyalik sessiyada o'ynaladi
+TYPING_DURATIONS = (10, 15, 20, 25, 30, 60)
+TYPING_WORDS_SECONDS = 300  # "so'zlar" rejimi (10–100 so'z): vaqt cheklovi faqat yuqori chegara
 TYPING_WORDS_COUNT = 300
 TYPING_DIFFICULTIES = ("easy", "normal")
 ZTYPE_DIFFICULTIES = ("easy", "normal", "hard")
@@ -150,8 +151,8 @@ def start(db: Session, acc: MinarAccount, payload: dict) -> dict:
     difficulty = duration = None
     if game == "typing":
         difficulty = payload.get("difficulty") or "easy"
-        duration = payload.get("duration") or 30
-        if difficulty not in TYPING_DIFFICULTIES or duration not in TYPING_DURATIONS:
+        duration = TYPING_WORDS_SECONDS if payload.get("mode") == "words" else payload.get("duration") or 30
+        if difficulty not in TYPING_DIFFICULTIES or duration not in (*TYPING_DURATIONS, TYPING_WORDS_SECONDS):
             raise MinarError(400, "O‘yin sozlamasi noto‘g‘ri.")
     elif game == "ztype":
         difficulty = payload.get("difficulty") or "easy"

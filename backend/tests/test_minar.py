@@ -722,7 +722,9 @@ def test_existing_crm_error_format_unchanged(client):
 
 
 def test_typing_monkeytype_modes(client, db, acct):
-    for d in (15, 30, 60, 120):                                                   # vaqt rejimlari; "so'zlar" — 120 s sessiya
+    for d in (10, 15, 20, 25, 30, 60):                                            # vaqt rejimlari
         assert len(start_game(client, "typing", duration=d)["words"]) == games.TYPING_WORDS_COUNT
-    sess, r = play_typing(client, db, 12, duration=120)
+    assert post(client, "/games/start", {"game": "typing", "duration": 120}).status_code == 400
+    assert start_game(client, "typing", mode="words")["duration"] == games.TYPING_WORDS_SECONDS
+    sess, r = play_typing(client, db, 12, duration=10)
     assert r.status_code == 200
