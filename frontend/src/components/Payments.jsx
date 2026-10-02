@@ -6,7 +6,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faTrash, faFileExcel, faCreditCard,
   faFilter, faPrint, faMoneyBillWave, faPen,
-  faTriangleExclamation, faList, faBolt, faBullseye, faComment,
+  faTriangleExclamation, faList, faBolt, faBullseye, faComment, faMagnifyingGlass,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchPayments, createPayment, updatePayment, deletePayment, fetchStudents, fetchGroups,
@@ -50,6 +50,7 @@ export default function Payments({ currentUser }) {
   const [statsLoading, setStatsLoading] = useState(true)
   const [quickPayLoading, setQuickPayLoading] = useState(null)   // student_id
   const [voidTarget, setVoidTarget] = useState(null)             // bekor qilinayotgan to'lov
+  const [debtorSearch, setDebtorSearch] = useState('')            // qarzdorlar: ism/telefon qidiruvi
 
   // ── Qarzdorlik izohlari (hunter/call_center qo'ng'iroq eslatmalari) ──
   const [noteStudent, setNoteStudent] = useState(null)   // izoh oynasi ochilgan talaba
@@ -119,6 +120,13 @@ export default function Payments({ currentUser }) {
     .filter(s => s.payment_status === 'debtor' || s.payment_status === 'partial')
     .sort((a, b) => Number(b.debt || 0) - Number(a.debt || 0))
   const totalDebt = debtors.reduce((sum, s) => sum + Number(s.debt || 0), 0)
+  const debtorQuery = debtorSearch.trim().toLowerCase()
+  const debtorDigits = debtorQuery.replace(/\D/g, '')
+  const visibleDebtors = debtorQuery
+    ? debtors.filter(s =>
+        (s.full_name || '').toLowerCase().includes(debtorQuery) ||
+        (debtorDigits && [s.phone1, s.phone2].some(p => (p || '').replace(/\D/g, '').includes(debtorDigits))))
+    : debtors
   const totalExpected = monthStudents.reduce((sum, s) => sum + Number(s.owed_month || 0), 0)
   const totalPaidMonth = monthStudents.reduce((sum, s) => sum + Number(s.paid_month || 0), 0)
 
@@ -397,17 +405,32 @@ export default function Payments({ currentUser }) {
             </button>
           </>
         )}
+        {view === 'debtors' && (
+          <div className="search-wrap">
+            <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
+            <input
+              className="search-input"
+              placeholder="Ism yoki telefon..."
+              value={debtorSearch}
+              onChange={e => setDebtorSearch(e.target.value)}
+            />
+          </div>
+        )}
       </div>
 
       {view === 'debtors' ? (
         <DataTable
           columns={debtorColumns}
-          rows={debtors}
+          rows={visibleDebtors}
           loading={statsLoading}
           rowKey={s => s.id}
           clientPageSize={25}
           densityToggle densityKey="debtors"
-          empty={{
+          empty={debtorQuery ? {
+            icon: faMagnifyingGlass,
+            title: 'Topilmadi',
+            description: `"${debtorSearch.trim()}" bo'yicha qarzdor talaba yo'q.`,
+          } : {
             icon: faMoneyBillWave,
             title: 'Qarzdorlar yo\'q',
             description: `${MONTHS[filter.month - 1]} ${filter.year} uchun barcha to'lovlar yig'ilgan.`,
