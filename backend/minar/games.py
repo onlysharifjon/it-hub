@@ -27,7 +27,8 @@ QUIZ_COUNT = 5
 BUG_COUNT = 3
 MEMORY_PAIRS = 6
 MEMORY_MAX_MOVES = 18
-TYPING_DURATIONS = (30, 60)
+TYPING_DURATIONS = (15, 30, 60, 120)  # "so'zlar" rejimi ham 120 soniyalik sessiyada o'ynaladi
+TYPING_WORDS_COUNT = 300
 TYPING_DIFFICULTIES = ("easy", "normal")
 ZTYPE_DIFFICULTIES = ("easy", "normal", "hard")
 ZTYPE_SECONDS = 60
@@ -75,7 +76,7 @@ def _sequence(rng: random.Random, pool: list[str], n: int) -> list[str]:
 
 
 def typing_words(course: str, difficulty: str, seed: int) -> list[str]:
-    return _sequence(random.Random(seed), bank.TYPING_WORDS[course][difficulty], 150)
+    return _sequence(random.Random(seed), bank.TYPING_WORDS[course][difficulty], TYPING_WORDS_COUNT)
 
 
 def ztype_words(course: str, seed: int) -> list[str]:

@@ -719,3 +719,10 @@ def test_battle_ticket_is_not_a_staff_token(client, db, metodist_token):
 def test_existing_crm_error_format_unchanged(client):
     r = client.post("/auth/login", json={"username": "nobody", "password": "nope"})
     assert r.status_code == 401 and "detail" in r.json() and "message" not in r.json()
+
+
+def test_typing_monkeytype_modes(client, db, acct):
+    for d in (15, 30, 60, 120):                                                   # vaqt rejimlari; "so'zlar" — 120 s sessiya
+        assert len(start_game(client, "typing", duration=d)["words"]) == games.TYPING_WORDS_COUNT
+    sess, r = play_typing(client, db, 12, duration=120)
+    assert r.status_code == 200
