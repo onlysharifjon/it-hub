@@ -20,14 +20,26 @@ import useConfirm from './ui/useConfirm'
 import DataTable from './ui/DataTable'
 import Badge from './ui/Badge'
 import Modal from './ui/Modal'
-import { Input, Textarea } from './ui/Field'
+import { Input, Textarea, Select } from './ui/Field'
 import DateFilter from './DateFilter'
 
 const EMPTY = {
   full_name: '', phone1: '',
   father_name: '', father_phone: '',
   mother_name: '', mother_phone: '',
-  telegram_user_id: '', notes: '',
+  telegram_user_id: '', notes: '', source: '',
+}
+
+// Talaba qayerdan kelgani (manba statusi)
+export const STUDENT_SOURCES = [
+  { value: 'facebook', label: 'Facebook', color: '#1877f2' },
+  { value: 'minar',    label: 'Minar',    color: '#7c3aed' },
+]
+
+export function SourceBadge({ source }) {
+  const src = STUDENT_SOURCES.find(x => x.value === source)
+  if (!src) return <span className="text-muted">—</span>
+  return <Badge size="sm" color={src.color}>{src.label}</Badge>
 }
 
 export default function Students({ currentUser, onOpenStudent } = {}) {
@@ -37,6 +49,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
   const [data, setData] = useState({ items: [], meta: null })
   const [search, setSearch] = useState('')
   const [dateFilter, setDateFilter] = useState({ preset: 'all', date_from: '', date_to: '' })
+  const [sourceFilter, setSourceFilter] = useState('')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [modal, setModal] = useState(null)
@@ -51,7 +64,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
   const [tgCheck, setTgCheck] = useState({})   // { [studentId]: 'checking' | 'ok' | 'fail' }
   const [ungroupedCount, setUngroupedCount] = useState(null)
 
-  useEffect(() => { load(search, dateFilter, page, tab) }, [tab])
+  useEffect(() => { load(search, dateFilter, page, tab) }, [tab, sourceFilter])
   useEffect(() => { if (isHunter) loadUngroupedCount() }, [])
 
   // Guruhsiz faol talabalar soni — tab yorlig'i uchun
@@ -72,6 +85,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
         ...(t === 'ungrouped' ? { is_active: true, no_group: true } : {}),
         date_from: df.date_from || undefined,
         date_to: df.date_to || undefined,
+        source: sourceFilter || undefined,
         page: p, page_size: 20,
       })
       setData(res)
@@ -107,6 +121,7 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
 
   async function handleSave() {
     if (!form.full_name.trim() || !form.phone1.trim()) return toast.error("Ism va telefon majburiy")
+    if (!form.source) return toast.error("Talaba qayerdan kelganini tanlang")
     setSaving(true)
     try {
       await createStudent(tab === 'demo' ? { ...form, is_demo: true } : form)
@@ -248,6 +263,8 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
         ? <div onClick={e => { e.stopPropagation(); setVacationModal(s) }} style={{ cursor: 'pointer' }}
             title="Ta'til belgilash uchun bosing"><PayStatus s={s} /></div>
         : <PayStatus s={s} /> },
+    { key: 'source', header: 'Manba', sortable: true,
+      render: s => <SourceBadge source={s.source} /> },
     { key: 'created_at', header: "Qo'shilgan", sortable: true,
       render: s => <span className="text-muted cell-sm">{fmtDate(s.created_at)}</span> },
     { key: 'updated_at', header: 'Yangilangan', sortable: true,
@@ -359,6 +376,11 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
           />
         </div>
         <span style={{ flex: 1 }} />
+        <select className="field-sm" value={sourceFilter} aria-label="Manba bo'yicha filtr"
+          onChange={e => { setSourceFilter(e.target.value); setPage(1) }}>
+          <option value="">Barcha manbalar</option>
+          {STUDENT_SOURCES.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}
+        </select>
         <DateFilter value={dateFilter} onChange={handleDateFilter} />
         {meta && <span className="toolbar-count">Jami: <strong>{meta.total}</strong> ta talaba</span>}
       </div>
@@ -476,6 +498,11 @@ export default function Students({ currentUser, onOpenStudent } = {}) {
           onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))} placeholder="To'liq ism" />
         <Input label="Telefon" required value={form.phone1}
           onChange={e => setForm(p => ({ ...p, phone1: e.target.value }))} placeholder="+998901234567" />
+        <Select label="Qayerdan kelgan" required value={form.source}
+          onChange={e => setForm(p => ({ ...p, source: e.target.value }))}>
+          <option value="" disabled>Tanlang...</option>
+          {STUDENT_SOURCES.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}
+        </Select>
         <div className="field-row">
           <Input label="Otasining ismi" value={form.father_name}
             onChange={e => setForm(p => ({ ...p, father_name: e.target.value }))} placeholder="Ixtiyoriy" />

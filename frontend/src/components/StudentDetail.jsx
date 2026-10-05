@@ -16,6 +16,7 @@ import {
   fetchGroups, addStudentToGroup, checkStudentTelegram, API_BASE, tashkentToday,
 } from '../api'
 import useConfirm from './ui/useConfirm'
+import { STUDENT_SOURCES, SourceBadge } from './Students'
 
 const fmtSum = n => Number(n || 0).toLocaleString('uz-UZ')
 const VAC_TODAY = tashkentToday()
@@ -56,6 +57,7 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
       father_name: st.father_name || '', father_phone: st.father_phone || '',
       mother_name: st.mother_name || '', mother_phone: st.mother_phone || '',
       telegram_user_id: st.telegram_user_id || '', notes: st.notes || '',
+      source: st.source || '',
     }
   }
 
@@ -104,7 +106,7 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
     if (!form.full_name.trim() || !form.phone1.trim()) return toast.error('Ism va telefon majburiy')
     setSaving(true)
     try {
-      const updated = await updateStudent(s.id, form)
+      const updated = await updateStudent(s.id, { ...form, source: form.source || undefined })
       setS(updated)
       onChanged?.(updated)
       toast.success('Saqlandi')
@@ -238,6 +240,7 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
 
           <div className="info-card">
             <div className="info-card-title"><FontAwesomeIcon icon={faPhone} /> Aloqa</div>
+            <div className="stat-row"><span>Qayerdan kelgan</span><SourceBadge source={s.source} /></div>
             {s.father_name && <div className="stat-row"><span>Ota</span><strong>{s.father_name}{s.father_phone ? ` · ${s.father_phone}` : ''}</strong></div>}
             {s.mother_name && <div className="stat-row"><span>Ona</span><strong>{s.mother_name}{s.mother_phone ? ` · ${s.mother_phone}` : ''}</strong></div>}
             {s.telegram_user_id && (
@@ -354,6 +357,11 @@ export default function StudentDetail({ student: studentProp, onBack, currentUse
                   <input className="field" value={form.mother_phone} onChange={e => setForm(p => ({ ...p, mother_phone: e.target.value }))} placeholder="+998..." />
                 </div>
               </div>
+              <label>Qayerdan kelgan</label>
+              <select className="field" value={form.source} onChange={e => setForm(p => ({ ...p, source: e.target.value }))}>
+                <option value="" disabled>Tanlang...</option>
+                {STUDENT_SOURCES.map(x => <option key={x.value} value={x.value}>{x.label}</option>)}
+              </select>
               <label>Telegram ID (bot xabar yuborishi uchun) *muhim*</label>
               <input className="field" value={form.telegram_user_id} onChange={e => setForm(p => ({ ...p, telegram_user_id: e.target.value }))} placeholder="123456789" />
               <label>Izoh</label>

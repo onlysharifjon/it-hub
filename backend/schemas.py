@@ -872,6 +872,10 @@ class TariffUpdate(BaseModel):
 
 # ── Students ──────────────────────────────────────────────────────────────────
 
+# Talaba qayerdan kelgani (manba statusi)
+StudentSource = Literal['facebook', 'minar']
+
+
 class StudentRead(BaseModel):
     id: int
     full_name: str
@@ -889,6 +893,7 @@ class StudentRead(BaseModel):
     is_active: bool
     is_archived: bool = False
     is_demo: bool = False
+    source: Optional[str] = None   # facebook | minar
     sales_credited: bool = False   # sales rolidagi xodimga allaqachon +1 hisoblanganmi
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -924,6 +929,7 @@ class StudentCreate(BaseModel):
     notes: Optional[str] = None
     advance: Decimal = Field(Decimal('0'), ge=0)   # avans (yangi ro'yxatda)
     is_demo: bool = False   # Demo bo'limidan qo'shilsa — hali demo darsga kelmagan
+    source: StudentSource   # qayerdan kelgani — ro'yxatga olishda majburiy
 
 
 class StudentUpdate(BaseModel):
@@ -939,6 +945,7 @@ class StudentUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_archived: Optional[bool] = None
     is_demo: Optional[bool] = None
+    source: Optional[StudentSource] = None
     advance_balance: Optional[Decimal] = Field(None, ge=0, le=_MAX_MONEY)  # faqat admin o'zgartira oladi
 
 

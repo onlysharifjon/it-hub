@@ -1242,7 +1242,7 @@ def _student_read(s: models.Student, pay: Optional[tuple] = None) -> schemas.Stu
         mother_name=s.mother_name, mother_phone=s.mother_phone,
         telegram_id=s.telegram_id, telegram_user_id=s.telegram_user_id,
         photo=uploads_sign.sign(s.photo), notes=s.notes, is_active=s.is_active,
-        is_archived=s.is_archived, is_demo=s.is_demo, advance_balance=s.advance_balance,
+        is_archived=s.is_archived, is_demo=s.is_demo, source=s.source, advance_balance=s.advance_balance,
         sales_credited=s.sales_credited_at is not None,
         created_at=s.created_at, updated_at=s.updated_at,
         group_count=sum(1 for m in s.group_memberships if m.left_at is None),
@@ -1260,6 +1260,7 @@ def list_students(
     is_archived: Optional[bool] = Query(None),
     is_demo: Optional[bool] = Query(None),
     no_group: Optional[bool] = Query(None, description="true — hech qaysi faol guruhga biriktirilmaganlar"),
+    source: Optional[str] = Query(None, description="facebook | minar"),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     payment: Optional[str] = Query(None, description="debtor | partial | paid | unpaid"),
@@ -1303,6 +1304,8 @@ def list_students(
             )
         )
         q = q.filter(~in_group.exists())
+    if source:
+        q = q.filter(models.Student.source == source)
     if search:
         q = q.filter(
             models.Student.full_name.ilike(f"%{search}%") |
@@ -6146,6 +6149,8 @@ def convert_lead_to_student(
         notes=lead.notes,
         is_active=True,
         is_demo=payload.is_demo,
+        # Facebook reklamasidan kelgan lid — facebook, qolganlari — minar
+        source="facebook" if lead.source and lead.source.name.strip().lower() == "facebook" else "minar",
         created_at=datetime.utcnow(),
     )
     db.add(student)

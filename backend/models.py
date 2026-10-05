@@ -140,6 +140,7 @@ class Student(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     is_archived = Column(Boolean, nullable=False, default=False)
     is_demo = Column(Boolean, nullable=False, default=False, index=True)  # hali demo darsga kelmagan, guruhga biriktirilmagan
+    source = Column(String(20), nullable=True, index=True)  # qayerdan kelgan: facebook | minar (schemas.StudentSource)
     # Sales orqali jalb qilingan talaba — to'lov qo'shishda "Sales" tugmasi bosilsa
     # belgilanadi, LeadReferralStat.paid_count'ga faqat BIR MARTA hisoblanadi.
     sales_credited_at = Column(DateTime, nullable=True)
