@@ -1627,6 +1627,72 @@ def add_student_to_group(group_id: int, payload: schemas.AddStudentToGroup, db: 
     return {"message": "Talaba guruhga qo'shildi"}
 
 
+def _tariff_snapshot(t: Optional[models.Tariff]) -> dict:
+    return {"id": t.id, "name": t.name, "price": t.price} if t else {"id": None, "name": None, "price": None}
+
+
+@app.put("/groups/{group_id}/students/{student_id}/tariff")
+def update_member_tariff(group_id: int, student_id: int, payload: schemas.MemberTariffUpdate, db: Session = Depends(get_db), actor: models.User = Depends(require_hunter)):
+    gs = db.query(models.GroupStudent).filter(
+        models.GroupStudent.group_id == group_id,
+        models.GroupStudent.student_id == student_id,
+        models.GroupStudent.left_at.is_(None),
+    ).first()
+    if not gs:
+        raise HTTPException(status_code=404, detail="Topilmadi")
+    new_tariff = None
+    if payload.tariff_id is not None:
+        new_tariff = db.query(models.Tariff).filter(models.Tariff.id == payload.tariff_id).first()
+        if not new_tariff:
+            raise HTTPException(status_code=404, detail="Tarif topilmadi")
+    if gs.tariff_id == payload.tariff_id:
+        return {"message": "O'zgarish yo'q"}
+    # Tarix admin sahifasida o'qiladi — keyin tarif/talaba nomi o'zgarsa ham
+    # o'sha paytdagi nomlar saqlanib qolishi uchun snapshot yoziladi.
+    context = {"student_id": gs.student_id, "student_name": gs.student.full_name,
+               "group_id": gs.group_id, "group_name": gs.group.name}
+    write_audit(db, entity_type="member_tariff", entity_id=gs.id, action="update",
+                changed_by_id=actor.id,
+                old_value={**context, "tariff": _tariff_snapshot(gs.tariff)},
+                new_value={**context, "tariff": _tariff_snapshot(new_tariff)})
+    gs.tariff_id = payload.tariff_id
+    db.commit()
+    return {"message": "Tarif o'zgartirildi"}
+
+
+@app.get("/tariff-changes")
+def list_tariff_changes(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """Talabalar tarifi o'zgarishlari tarixi: kim, qaysi talaba, qaysi tarifdan qaysiga, qachon."""
+    q = (db.query(models.AuditLog)
+         .options(joinedload(models.AuditLog.changed_by_user))
+         .filter(models.AuditLog.entity_type == "member_tariff")
+         .order_by(models.AuditLog.changed_at.desc()))
+    total = q.count()
+    items = []
+    for log in q.offset((page - 1) * page_size).limit(page_size).all():
+        old, new = json.loads(log.old_value or "{}"), json.loads(log.new_value or "{}")
+        u = log.changed_by_user
+        items.append({
+            "id": log.id,
+            "changed_at": log.changed_at,
+            "changed_by_name": (u.full_name or u.username) if u else None,
+            "changed_by_role": u.role if u else None,
+            "student_id": new.get("student_id"), "student_name": new.get("student_name"),
+            "group_id": new.get("group_id"), "group_name": new.get("group_name"),
+            "old_tariff_name": old.get("tariff", {}).get("name"),
+            "old_tariff_price": old.get("tariff", {}).get("price"),
+            "new_tariff_name": new.get("tariff", {}).get("name"),
+            "new_tariff_price": new.get("tariff", {}).get("price"),
+        })
+    return {"items": items, "meta": {"total": total, "page": page, "page_size": page_size,
+                                     "total_pages": max(1, (total + page_size - 1) // page_size)}}
+
+
 @app.delete("/groups/{group_id}/students/{student_id}", status_code=204)
 def remove_student_from_group(group_id: int, student_id: int, db: Session = Depends(get_db), actor: models.User = Depends(require_lms_write)):
     gs = db.query(models.GroupStudent).filter(
@@ -2674,13 +2740,21 @@ def _salary_row_for(db: Session, u: models.User, month: int, year: int,
     else:
         auto_salary = None
         student_count = None
+        # Boshqa rol (masalan support_teacher) guruhga dars o'tgan bo'lsa —
+        # belgilangan oylik + o'tgan darslari bo'yicha talaba ulushi
+        if breakdown_map is None:
+            breakdown_map = _teacher_salary_breakdown(db, month, year)
+        entry = breakdown_map.get(u.id)
+        if entry and not u.salary_exempt:
+            auto_salary = (u.salary or Decimal('0')) + entry["total"]
+            student_count = len({it["student_id"] for it in entry["items"]})
     base_salary = auto_salary if auto_salary is not None else (u.salary or Decimal('0'))
     if override is not None:
         salary = Decimal('0') if is_internship else override.amount
         is_auto = False
     else:
         salary = base_salary
-        is_auto = (u.role == UserRole.teacher.value)
+        is_auto = (u.role == UserRole.teacher.value) or auto_salary is not None
     return schemas.SalaryStaffRow(
         staff_id=u.id, full_name=u.full_name or u.username, role=u.role,
         salary=salary, paid=paid, remaining=salary - paid,
@@ -2934,7 +3008,12 @@ def salary_breakdown(
     items = entry["items"] if entry else []
     total = entry["total"] if entry else Decimal('0')
     items_sorted = sorted(items, key=lambda it: (it["group_name"], it["student_name"]))
-    base = TEACHER_BASE_SALARY if user.role == UserRole.teacher.value and not user.salary_exempt else Decimal('0')
+    if user.salary_exempt:
+        base = Decimal('0')
+    elif user.role == UserRole.teacher.value:
+        base = TEACHER_BASE_SALARY
+    else:
+        base = (user.salary or Decimal('0')) if entry else Decimal('0')
     return schemas.SalaryBreakdown(
         staff_id=user_id, month=month, year=year,
         base_salary=base,

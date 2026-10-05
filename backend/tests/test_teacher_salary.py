@@ -98,3 +98,17 @@ def test_archived_and_removed_student_lessons_still_paid(client, metodist_token,
     assert client.post(f"/students/{s.id}/archive", headers={"Authorization": f"Bearer {metodist_token}"}).status_code == 200
     db.expire_all()
     assert _teacher_salary_breakdown(db, 8, 2026)[a.id]["total"] == Decimal(12500)   # 3 × 50 000/12
+
+
+def test_support_teacher_gets_fixed_salary_plus_lesson_share(db):
+    from backend.main import _salary_row_for
+    a, b, g, s = _setup(db)
+    sup = User(username="uktam", full_name="uktam", role="support_teacher", hashed_password="x",
+               is_active=True, salary=Decimal(4000000))
+    db.add(sup); db.commit(); db.refresh(sup)
+    db.add(GroupTeacherHistory(group_id=g.id, teacher_id=sup.id, started_at=datetime(2026, 9, 14, 19, 0)))
+    db.commit()
+    _attend(db, g, s, [12, 15, 17], 9)   # 12-sentyabr B, 15 va 17 — support_teacher
+    row = _salary_row_for(db, sup, 9, 2026, Decimal(0), None)
+    assert row.salary == Decimal(4000000) + Decimal(8333)
+    assert row.auto and row.student_count == 1
