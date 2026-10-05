@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faMagnifyingGlass, faBars,
-  faRightFromBracket, faPen, faCamera, faPlus, faChevronDown,
+  faRightFromBracket, faPen, faCamera, faPlus, faChevronDown, faMoneyBillWave,
 } from '@fortawesome/free-solid-svg-icons'
 import { toast } from 'react-hot-toast'
 import { uploadAvatar, updateProfile, login, API_BASE } from '../api'
@@ -10,6 +10,7 @@ import { ROLE_LABELS } from '../constants/domain'
 import Modal from './ui/Modal'
 import { Input } from './ui/Field'
 import NotificationBell from './NotificationBell'
+import TeacherSalaryModal from './TeacherSalaryModal'
 import CommandPalette from './CommandPalette'
 import ThemeToggle from './ui/ThemeToggle'
 import BrandLogo from './ui/BrandLogo'
@@ -28,6 +29,7 @@ export default function Topbar({ currentUser, activePage, onNavigate, onAvatarUp
   const [menuOpen, setMenuOpen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [salaryOpen, setSalaryOpen] = useState(false)
   const [profileForm, setProfileForm] = useState({ full_name: '', current_password: '', password: '', password2: '' })
   const [profileErrors, setProfileErrors] = useState({})
   const [savingProfile, setSavingProfile] = useState(false)
@@ -168,6 +170,11 @@ export default function Topbar({ currentUser, activePage, onNavigate, onAvatarUp
                 <button className="topbar-dropdown-item" onClick={() => { setMenuOpen(false); fileInputRef.current?.click() }} disabled={uploading}>
                   <FontAwesomeIcon icon={faCamera} fixedWidth /> {uploading ? 'Yuklanmoqda...' : 'Rasm yuklash'}
                 </button>
+                {role === 'teacher' && (
+                  <button className="topbar-dropdown-item" onClick={() => { setMenuOpen(false); setSalaryOpen(true) }}>
+                    <FontAwesomeIcon icon={faMoneyBillWave} fixedWidth /> Oylik maoshim
+                  </button>
+                )}
                 <button className="topbar-dropdown-item" onClick={openProfile}>
                   <FontAwesomeIcon icon={faPen} fixedWidth /> Profilni tahrirlash
                 </button>
@@ -192,6 +199,10 @@ export default function Topbar({ currentUser, activePage, onNavigate, onAvatarUp
         role={role}
         onNavigate={onNavigate}
       />
+
+      {role === 'teacher' && (
+        <TeacherSalaryModal open={salaryOpen} onClose={() => setSalaryOpen(false)} currentUser={currentUser} />
+      )}
 
       <Modal
         open={profileOpen}
