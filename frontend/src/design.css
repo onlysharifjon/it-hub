@@ -741,8 +741,8 @@ div.field > textarea { min-height: 110px; }
 .modal.modal-full { width: 100%; max-width: none; max-height: none; height: 100dvh; border-radius: 0; border: 0; }
 .modal-full .modal-header { border-bottom: 1px solid var(--border); padding: 18px 32px; }
 .modal-full .modal-body { padding: 22px 32px 40px; background: var(--workspace); }
-.sal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
-.sal-page { display: grid; gap: 20px; max-width: 1400px; margin: 0 auto; transition: opacity .2s; }
+.sal-toolbar { max-width: 1400px; margin: 0 auto 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.sal-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; max-width: 1400px; margin: 0 auto; transition: opacity .2s; }
 .sal-page.is-loading { opacity: .55; pointer-events: none; }
 .sal-hero { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); border: 1px solid var(--primary-border); border-radius: var(--radius-card); overflow: hidden; background: var(--surface); }
 .sal-hero-main { display: grid; gap: 8px; align-content: start; padding: 28px; background: radial-gradient(ellipse at top right, var(--accent-light), transparent 75%), var(--primary-light); }
@@ -770,7 +770,7 @@ div.field > textarea { min-height: 110px; }
 .sal-kpi-value { font-size: 1.45rem; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .sal-kpi-hint { font-size: .6875rem; color: var(--muted); }
 .sal-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.sal-card { padding: 20px 22px; display: grid; gap: 14px; align-content: start; }
+.sal-card { min-width: 0; padding: 20px 22px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-content: start; }
 .sal-card > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .sal-card h4 { margin: 0; font-size: .9375rem; font-weight: 600; }
 .sal-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .75rem; color: var(--muted); }
@@ -811,7 +811,10 @@ div.field > textarea { min-height: 110px; }
   .modal.modal-full { max-height: none; height: 100dvh; border-radius: 0; }
   .modal-full .modal-header { padding: 14px 16px; }
   .modal-full .modal-body { padding: 16px 16px 32px; }
-  .sal-kpis { grid-template-columns: 1fr 1fr; }
+  .sal-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .sal-kpi { padding: 14px; min-width: 0; }
+  .sal-kpi-value { font-size: 1.15rem; overflow-wrap: anywhere; }
+  .sal-kpi .sal-delta { white-space: normal; flex-wrap: wrap; }
   .sal-hero-main { padding: 20px; }
   .sal-hero-value { font-size: 2rem; }
   .sal-hero-facts > div { padding: 14px 16px; }
