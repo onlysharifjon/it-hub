@@ -2,8 +2,9 @@ import { PageIntro } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faPen, faTrash, faTag, faToggleOn, faToggleOff } from '@fortawesome/free-solid-svg-icons'
-import { fetchTariffs, createTariff, updateTariff, deleteTariff } from '../api'
+import { faPlus, faPen, faTrash, faTag, faToggleOn, faToggleOff, faClockRotateLeft } from '@fortawesome/free-solid-svg-icons'
+import { fetchTariffs, createTariff, updateTariff, deleteTariff, fetchTariffChanges } from '../api'
+import { fmtDateTime } from '../utils/datetime'
 import DataTable from './ui/DataTable'
 import Modal from './ui/Modal'
 import ConfirmDialog from './ui/ConfirmDialog'
@@ -12,6 +13,73 @@ import { Input, Textarea } from './ui/Field'
 import Catalog from './ui/Catalog'
 
 const EMPTY = { name: '', price: '100000', description: '' }
+
+const ROLE_LABELS = { admin: 'Admin', hunter: 'Hunter' }
+
+function fmtTariff(name, price) {
+  if (!name) return <span className="text-muted">Tarif yo'q</span>
+  return <>{name} <span className="text-muted">· {Number(price).toLocaleString('uz-UZ')} so'm</span></>
+}
+
+const CHANGE_COLUMNS = [
+  { key: 'changed_at', header: 'Vaqti', render: c => fmtDateTime(c.changed_at) },
+  {
+    key: 'changed_by_name', header: "Kim o'zgartirdi",
+    render: c => <><strong>{c.changed_by_name || '—'}</strong>{c.changed_by_role && <span className="text-muted"> · {ROLE_LABELS[c.changed_by_role] || c.changed_by_role}</span>}</>,
+  },
+  { key: 'student_name', header: 'Talaba', render: c => c.student_name },
+  { key: 'group_name', header: 'Guruh', render: c => c.group_name },
+  { key: 'old', header: 'Eski tarif', render: c => fmtTariff(c.old_tariff_name, c.old_tariff_price) },
+  { key: 'new', header: 'Yangi tarif', render: c => fmtTariff(c.new_tariff_name, c.new_tariff_price) },
+]
+
+function TariffChanges() {
+  const [rows, setRows] = useState([])
+  const [meta, setMeta] = useState(null)
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => { load(page) }, [page])
+
+  async function load(p) {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await fetchTariffChanges({ page: p, page_size: 50 })
+      setRows(r.items)
+      setMeta(r.meta)
+    } catch (e) { setError(e) }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <section style={{ marginTop: '2rem' }}>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 18, marginBottom: 12 }}>
+        <FontAwesomeIcon icon={faClockRotateLeft} /> Talabalar tarifi o'zgarishlari
+      </h2>
+      <DataTable
+        columns={CHANGE_COLUMNS}
+        rows={rows}
+        loading={loading}
+        error={error}
+        onRetry={() => load(page)}
+        empty={{
+          icon: faClockRotateLeft,
+          title: "Hali o'zgarish yo'q",
+          description: "Hunter yoki admin talaba tarifini o'zgartirganda shu yerda ko'rinadi.",
+        }}
+      />
+      {meta && meta.total_pages > 1 && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end', marginTop: 12 }}>
+          <button className="button secondary small" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Oldingi</button>
+          <span className="text-muted">{page} / {meta.total_pages}</span>
+          <button className="button secondary small" disabled={page >= meta.total_pages} onClick={() => setPage(p => p + 1)}>Keyingi</button>
+        </div>
+      )}
+    </section>
+  )
+}
 
 export default function Tariffs() {
   const [tariffs, setTariffs] = useState([])
@@ -177,6 +245,8 @@ export default function Tariffs() {
       />
 
       </Catalog>
+
+      <TariffChanges />
 
       <Modal
         open={!!modal}

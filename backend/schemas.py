@@ -1028,6 +1028,10 @@ class AddStudentToGroup(BaseModel):
     tariff_id: Optional[int] = None
 
 
+class MemberTariffUpdate(BaseModel):
+    tariff_id: Optional[int] = None   # None — tarifsiz (guruh narxi)
+
+
 # ── Payments ──────────────────────────────────────────────────────────────────
 
 class StudentGroupFee(BaseModel):

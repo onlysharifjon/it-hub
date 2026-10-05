@@ -259,6 +259,12 @@ export async function addStudentToGroup(groupId, studentId, tariffId = null) {
     body: JSON.stringify({ student_id: studentId, tariff_id: tariffId }),
   })
 }
+export async function updateMemberTariff(groupId, studentId, tariffId) {
+  return request(`/groups/${groupId}/students/${studentId}/tariff`, {
+    method: 'PUT',
+    body: JSON.stringify({ tariff_id: tariffId }),
+  })
+}
 export async function removeStudentFromGroup(groupId, studentId) {
   return request(`/groups/${groupId}/students/${studentId}`, { method: 'DELETE' })
 }
@@ -345,6 +351,10 @@ export async function fetchTariffs()        { return request('/tariffs') }
 export async function createTariff(p)       { return request('/tariffs', { method: 'POST', body: JSON.stringify(p) }) }
 export async function updateTariff(id, p)   { return request(`/tariffs/${id}`, { method: 'PUT', body: JSON.stringify(p) }) }
 export async function deleteTariff(id)      { return request(`/tariffs/${id}`, { method: 'DELETE' }) }
+export async function fetchTariffChanges(params = {}) {
+  const q = new URLSearchParams(params)
+  return request(`/tariff-changes${q.toString() ? '?' + q : ''}`)
+}
 
 // ── Finance ───────────────────────────────────────────────────────────────────
 

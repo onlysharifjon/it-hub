@@ -8,7 +8,7 @@ import {
   faUserGraduate, faChartBar, faTag, faBookOpen, faPaperPlane,
   faVideo, faArrowRightToBracket, faArrowRightFromBracket, faAward,
 } from '@fortawesome/free-solid-svg-icons'
-import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework, fetchGroupCameraAttendance, tashkentToday, generateGroupCertificates, fetchGroupCertificates } from '../api'
+import { fetchAttendance, saveAttendance, deleteAttendanceDate, getGroup, fetchNextLesson, fetchHomeworks, createHomework, fetchGroupCameraAttendance, tashkentToday, generateGroupCertificates, fetchGroupCertificates, fetchTariffs, updateMemberTariff } from '../api'
 import useConfirm from './ui/useConfirm'
 import GroupCertificates from './GroupCertificates'
 import HomeworkSubmissions from './HomeworkSubmissions'
@@ -63,6 +63,8 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
   const [newDate, setNewDate] = useState('')
   const [addingDate, setAddingDate] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [tariffs, setTariffs] = useState([])
+  const [tariffSaving, setTariffSaving] = useState(null)
 
   // Metodika bo'yicha navbatdagi dars + uy vazifasi
   const [nextLesson, setNextLesson] = useState(null)
@@ -165,6 +167,22 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
       fetchHomeworks(group.id).then(setHomeworks).catch(() => {})
     } catch (e) { toast.error(e.message) }
     finally { setHwSending(false) }
+  }
+
+  useEffect(() => {
+    if (isHunter) fetchTariffs().then(setTariffs).catch(() => {})
+  }, [isHunter])
+
+  async function handleTariffChange(m, value) {
+    const tariffId = value ? Number(value) : null
+    if (tariffId === (m.tariff_id ?? null)) return
+    setTariffSaving(m.student_id)
+    try {
+      await updateMemberTariff(group.id, m.student_id, tariffId)
+      setGroup(await getGroup(group.id))
+      toast.success("Tarif o'zgartirildi")
+    } catch (e) { toast.error(e.message) }
+    finally { setTariffSaving(null) }
   }
 
   async function load() {
@@ -442,15 +460,32 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
               </div>
               {(group.members || []).map(m => {
                 const base = m.tariff_price ? Number(m.tariff_price) : null
+                // Nofaol tarif tanlovda faqat shu talabaga biriktirilgan bo'lsa ko'rinadi
+                const options = tariffs.filter(t => t.is_active || t.id === m.tariff_id)
                 return (
-                  <div key={m.student_id} className="student-summary-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+                  <div key={m.student_id} className="student-summary-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
                     <span className="student-summary-name">{m.student_name}</span>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {m.tariff_name
-                        ? <><span>{m.tariff_name}: </span><strong>{base?.toLocaleString()} so'm</strong></>
-                        : <span>Tarif yo'q</span>
-                      }
-                    </div>
+                    <select
+                      className="field-sm"
+                      style={{ width: '100%' }}
+                      value={m.tariff_id ?? ''}
+                      disabled={tariffSaving === m.student_id}
+                      onChange={e => handleTariffChange(m, e.target.value)}
+                      aria-label={`${m.student_name} tarifi`}
+                    >
+                      <option value="">Tarif yo'q (guruh narxi)</option>
+                      {options.map(t => (
+                        <option key={t.id} value={t.id}>{t.name} — {Number(t.price).toLocaleString()} so'm</option>
+                      ))}
+                    </select>
+                    {!tariffs.length && (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {m.tariff_name
+                          ? <><span>{m.tariff_name}: </span><strong>{base?.toLocaleString()} so'm</strong></>
+                          : <span>Tarif yo'q</span>
+                        }
+                      </div>
+                    )}
                   </div>
                 )
               })}
