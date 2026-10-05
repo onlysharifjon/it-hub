@@ -3260,6 +3260,17 @@ def health_check():
     return {"status": "ok", "version": "3.0.0"}
 
 
+@app.get("/server-time")
+def server_time():
+    """Server soati — frontend kirishda va har 30 soniyada sinxronlaydi."""
+    now_utc = tz.utcnow().replace(tzinfo=timezone.utc)
+    return {
+        "epoch_ms": int(now_utc.timestamp() * 1000),
+        "iso": now_utc.astimezone(tz.TASHKENT).isoformat(),
+        "tz": tz.TZ_NAME,
+    }
+
+
 # ── Teacher: Today's groups for quick attendance ───────────────────────────────
 
 # Uzbek day abbreviations → Python weekday (Mon=0)

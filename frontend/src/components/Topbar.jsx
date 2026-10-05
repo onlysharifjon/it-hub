@@ -10,6 +10,7 @@ import { ROLE_LABELS } from '../constants/domain'
 import Modal from './ui/Modal'
 import { Input } from './ui/Field'
 import NotificationBell from './NotificationBell'
+import ServerClock from './ServerClock'
 import TeacherSalaryModal from './TeacherSalaryModal'
 import CommandPalette from './CommandPalette'
 import ThemeToggle from './ui/ThemeToggle'
@@ -151,6 +152,8 @@ export default function Topbar({ currentUser, activePage, onNavigate, onAvatarUp
               )}
             </div>
           )}
+
+          <ServerClock />
 
           <NotificationBell onNavigate={onNavigate} />
 

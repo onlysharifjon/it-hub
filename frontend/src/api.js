@@ -55,6 +55,7 @@ export async function login(username, password) {
 }
 
 export async function fetchMe() { return request('/auth/me') }
+export async function fetchServerTime() { return request('/server-time') }
 
 export async function uploadAvatar(file) {
   const form = new FormData()
