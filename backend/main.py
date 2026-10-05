@@ -2771,6 +2771,145 @@ def my_salary(
     return _salary_row_for(db, actor, month, year, paid, override)
 
 
+def _teacher_month_stats(db: Session, teacher_id: int, month: int, year: int, exempt: bool) -> dict:
+    """O'qituvchining bir oydagi ko'rsatkichlari — `_teacher_bonus_items` bilan
+    bir xil qoidada (dars o'sha sanadagi guruh o'qituvchisiga yoziladi).
+
+    Qaytaradi: {"groups": {gid: {...}}, "daily": {date: {...}}, "lessons", "attendances",
+    "students", "bonus"}"""
+    month_filter = (
+        extract('month', models.Attendance.lesson_date) == month,
+        extract('year', models.Attendance.lesson_date) == year,
+    )
+    pairs = db.query(models.Attendance.group_id, models.Attendance.lesson_date) \
+        .filter(*month_filter).distinct().all()
+    empty = {"groups": {}, "daily": {}, "lessons": 0, "attendances": 0, "students": 0, "bonus": Decimal('0')}
+    if not pairs:
+        return empty
+    groups = db.query(models.Group).filter(models.Group.id.in_({gid for gid, _ in pairs})).all()
+    name_by_group = {g.id: g.name for g in groups}
+    timeline = _group_teacher_timeline(db, groups)
+
+    by_group: dict = {}
+    daily: dict = {}
+    for gid, ld in pairs:
+        if _teacher_on(timeline[gid], ld) != teacher_id:
+            continue
+        g = by_group.setdefault(gid, {"group_id": gid, "group_name": name_by_group.get(gid, ''),
+                                      "lessons": 0, "attendances": 0, "_students": {}})
+        g["lessons"] += 1
+        daily.setdefault(ld, {"lessons": 0, "attendances": 0})["lessons"] += 1
+    if not by_group:
+        return empty
+
+    present = (
+        db.query(models.Attendance.group_id, models.Attendance.student_id, models.Attendance.lesson_date)
+        .filter(models.Attendance.is_present.is_(True), models.Attendance.group_id.in_(list(by_group)),
+                *month_filter)
+        .all()
+    )
+    for gid, sid, ld in present:
+        if _teacher_on(timeline[gid], ld) != teacher_id:
+            continue
+        g = by_group[gid]
+        g["attendances"] += 1
+        g["_students"][sid] = g["_students"].get(sid, 0) + 1
+        daily[ld]["attendances"] += 1
+
+    all_students = set()
+    for g in by_group.values():
+        studs = g.pop("_students")
+        all_students |= set(studs)
+        g["students"] = len(studs)
+        # Ulush har bir talaba uchun alohida yaxlitlanadi — `_teacher_bonus_items` bilan bir xil
+        g["bonus"] = Decimal('0') if exempt else sum(
+            ((TEACHER_PER_LESSON * Decimal(n)).quantize(Decimal('1')) for n in studs.values()), Decimal('0'))
+    return {
+        "groups": by_group,
+        "daily": daily,
+        "lessons": sum(g["lessons"] for g in by_group.values()),
+        "attendances": sum(g["attendances"] for g in by_group.values()),
+        "students": len(all_students),
+        "bonus": sum((g["bonus"] for g in by_group.values()), Decimal('0')),
+    }
+
+
+@app.get("/salary/me/analytics")
+def my_salary_analytics(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    months: int = Query(6, ge=2, le=12),
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_auth),
+):
+    """"Oylik maoshim" tahlili: tanlangan oy va undan oldingi `months-1` oy
+    dinamikasi (oylik, to'langan, dars, talaba, qatnashuv), guruhlar kesimida
+    o'tgan oy bilan solishtirish va tanlangan oyning kunlik darslari."""
+    exempt = bool(actor.salary_exempt)
+    is_teacher = actor.role == UserRole.teacher.value
+    periods = []
+    m, y = month, year
+    for _ in range(months):
+        periods.append((m, y))
+        m, y = (12, y - 1) if m == 1 else (m - 1, y)
+    periods.reverse()
+
+    paid_map = {
+        (r.month, r.year): r.total
+        for r in db.query(models.Expense.month, models.Expense.year,
+                          func.sum(models.Expense.amount).label('total'))
+        .filter(models.Expense.category == 'salary', models.Expense.staff_id == actor.id)
+        .group_by(models.Expense.month, models.Expense.year).all()
+    }
+    override_map = {
+        (o.month, o.year): o
+        for o in db.query(models.SalaryOverride).filter(models.SalaryOverride.staff_id == actor.id).all()
+    }
+
+    trend = []
+    stats_by_period = {}
+    for pm, py in periods:
+        st = _teacher_month_stats(db, actor.id, pm, py, exempt) if is_teacher else None
+        stats_by_period[(pm, py)] = st
+        row = _salary_row_for(db, actor, pm, py, paid_map.get((pm, py)) or Decimal('0'),
+                              override_map.get((pm, py)))
+        trend.append({
+            "month": pm, "year": py,
+            "salary": row.salary, "paid": row.paid, "remaining": row.remaining,
+            "base": Decimal('0') if (exempt or not is_teacher or row.is_internship) else TEACHER_BASE_SALARY,
+            "bonus": st["bonus"] if st else Decimal('0'),
+            "lessons": st["lessons"] if st else 0,
+            "attendances": st["attendances"] if st else 0,
+            "students": st["students"] if st else 0,
+            "groups": len(st["groups"]) if st else 0,
+            "auto": row.auto, "is_internship": row.is_internship,
+        })
+
+    cur = stats_by_period[periods[-1]] or {"groups": {}, "daily": {}}
+    prev = stats_by_period[periods[-2]] or {"groups": {}, "daily": {}}
+    group_rows = []
+    for gid in set(cur["groups"]) | set(prev["groups"]):
+        c = cur["groups"].get(gid) or {}
+        p = prev["groups"].get(gid) or {}
+        group_rows.append({
+            "group_id": gid, "group_name": c.get("group_name") or p.get("group_name") or '',
+            "lessons": c.get("lessons", 0), "attendances": c.get("attendances", 0),
+            "students": c.get("students", 0), "bonus": c.get("bonus", Decimal('0')),
+            "prev_lessons": p.get("lessons", 0), "prev_attendances": p.get("attendances", 0),
+            "prev_students": p.get("students", 0), "prev_bonus": p.get("bonus", Decimal('0')),
+        })
+    group_rows.sort(key=lambda r: (-r["bonus"], r["group_name"]))
+    daily = [{"date": d.isoformat(), **v} for d, v in sorted(cur["daily"].items())]
+    prev_daily = [{"date": d.isoformat(), **v} for d, v in sorted(prev["daily"].items())]
+
+    return {
+        "month": month, "year": year,
+        "per_lesson": TEACHER_PER_LESSON.quantize(Decimal('1')),
+        "base_salary": TEACHER_BASE_SALARY,
+        "trend": trend, "groups": group_rows, "daily": daily, "prev_daily": prev_daily,
+    }
+
+
 @app.get("/salary/{user_id}/breakdown", response_model=schemas.SalaryBreakdown)
 def salary_breakdown(
     user_id: int,

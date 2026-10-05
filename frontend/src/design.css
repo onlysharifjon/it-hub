@@ -735,3 +735,85 @@ div.field > textarea { min-height: 110px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* ── To'liq ekran modal + "Oylik maoshim" tahlili ───────────────────────── */
+.modal-overlay:has(> .modal-full) { padding: 0; align-items: stretch; }
+.modal.modal-full { width: 100%; max-width: none; max-height: none; height: 100dvh; border-radius: 0; border: 0; }
+.modal-full .modal-header { border-bottom: 1px solid var(--border); padding: 18px 32px; }
+.modal-full .modal-body { padding: 22px 32px 40px; background: var(--workspace); }
+.sal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.sal-page { display: grid; gap: 20px; max-width: 1400px; margin: 0 auto; transition: opacity .2s; }
+.sal-page.is-loading { opacity: .55; pointer-events: none; }
+.sal-hero { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); border: 1px solid var(--primary-border); border-radius: var(--radius-card); overflow: hidden; background: var(--surface); }
+.sal-hero-main { display: grid; gap: 8px; align-content: start; padding: 28px; background: radial-gradient(ellipse at top right, var(--accent-light), transparent 75%), var(--primary-light); }
+.sal-hero-label { color: var(--text-2); font-size: .8125rem; }
+.sal-hero-value { font-size: 2.6rem; font-weight: 650; letter-spacing: -.04em; color: var(--primary-text); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.sal-hero-note { color: var(--muted); font-size: .8125rem; }
+.sal-hero-forecast { font-size: .8125rem; color: var(--text-2); }
+.sal-hero-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); margin: 0; }
+.sal-hero-facts > div { background: var(--surface); padding: 20px 22px; display: grid; gap: 6px; align-content: center; }
+.sal-hero-facts dt { font-size: .75rem; color: var(--muted); }
+.sal-hero-facts dd { margin: 0; font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 10px; }
+.sal-progress { flex: 1; height: 8px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+.sal-progress i { display: block; height: 100%; background: var(--success); border-radius: inherit; }
+.sal-delta { display: inline-flex; align-items: center; gap: 5px; font-size: .75rem; font-weight: 600; padding: 2px 8px; border-radius: 99px; width: fit-content; white-space: nowrap; }
+.sal-delta svg { font-size: .65rem; }
+.sal-delta em { font-style: normal; opacity: .8; font-weight: 500; }
+.sal-delta.is-up { color: var(--success-text); background: var(--success-bg); }
+.sal-delta.is-down { color: var(--danger-text); background: var(--danger-bg); }
+.sal-delta.is-flat { color: var(--muted); background: var(--surface-3); }
+.data-table .sal-delta { margin-left: 6px; font-size: .6875rem; padding: 1px 6px; }
+.sal-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.sal-kpi { display: grid; gap: 6px; align-content: start; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface); }
+.sal-kpi-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--primary-light); color: var(--primary-text); margin-bottom: 4px; }
+.sal-kpi-label { font-size: .75rem; color: var(--muted); }
+.sal-kpi-value { font-size: 1.45rem; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.sal-kpi-hint { font-size: .6875rem; color: var(--muted); }
+.sal-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.sal-card { padding: 20px 22px; display: grid; gap: 14px; align-content: start; }
+.sal-card > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.sal-card h4 { margin: 0; font-size: .9375rem; font-weight: 600; }
+.sal-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .75rem; color: var(--muted); }
+.sal-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sal-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.sal-legend .is-base { background: var(--primary); opacity: .35; }
+.sal-legend .is-bonus, .sal-legend .is-cur { background: var(--primary); }
+.sal-legend .is-paid { background: var(--success); border-radius: 99px; }
+.sal-legend .is-prev { background: var(--muted-2); }
+.sal-chart { width: 100%; height: auto; display: block; overflow: visible; }
+.sal-grid { stroke: var(--border); stroke-dasharray: 3 4; }
+.sal-axis { fill: var(--muted); font-size: 11px; }
+.sal-axis.is-strong { fill: var(--text); font-weight: 700; }
+.sal-bar-base { fill: var(--primary); opacity: .35; }
+.sal-bar-bonus { fill: var(--primary); }
+.sal-chart g:not(.is-selected) > .sal-bar-bonus { opacity: .7; }
+.sal-bar-label { fill: var(--text-2); font-size: 11px; font-weight: 600; }
+.sal-line-paid { fill: none; stroke: var(--success); stroke-width: 2.5; stroke-linejoin: round; }
+.sal-dot-paid { fill: var(--surface); stroke: var(--success); stroke-width: 2; }
+.sal-line-prev { fill: none; stroke: var(--muted-2); stroke-width: 2; stroke-dasharray: 5 5; }
+.sal-line-cur { fill: none; stroke: var(--primary); stroke-width: 2.75; stroke-linejoin: round; }
+.sal-area-cur { fill: var(--primary); opacity: .1; }
+.sal-dot-cur { fill: var(--primary); stroke: var(--surface); stroke-width: 2; }
+.sal-groups { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(0, 2fr); gap: 22px; align-items: start; }
+.sal-hbars { display: grid; gap: 14px; }
+.sal-hbar { display: grid; gap: 6px; }
+.sal-hbar-name { font-size: .8125rem; font-weight: 600; }
+.sal-hbar-tracks { display: grid; gap: 4px; }
+.sal-hbar-track { display: flex; align-items: center; gap: 8px; }
+.sal-hbar-track i { height: 9px; border-radius: 99px; min-width: 2px; }
+.sal-hbar-track i.is-cur { background: var(--primary); }
+.sal-hbar-track i.is-prev { background: var(--muted-2); opacity: .6; }
+.sal-hbar-track b { font-size: .6875rem; font-weight: 500; color: var(--muted); white-space: nowrap; }
+@media (max-width: 1279px) { .sal-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } .sal-groups { grid-template-columns: 1fr; } }
+@media (max-width: 1024px) { .sal-charts, .sal-hero { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .modal-overlay:has(> .modal-full) { align-items: stretch; }
+  .modal.modal-full { max-height: none; height: 100dvh; border-radius: 0; }
+  .modal-full .modal-header { padding: 14px 16px; }
+  .modal-full .modal-body { padding: 16px 16px 32px; }
+  .sal-kpis { grid-template-columns: 1fr 1fr; }
+  .sal-hero-main { padding: 20px; }
+  .sal-hero-value { font-size: 2rem; }
+  .sal-hero-facts > div { padding: 14px 16px; }
+  .sal-card { padding: 16px; }
+}

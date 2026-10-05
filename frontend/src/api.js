@@ -422,6 +422,9 @@ export async function fetchSalaryOverview(month, year) {
 export async function fetchMySalary(month, year) {
   return request(`/salary/me?month=${month}&year=${year}`)
 }
+export async function fetchMySalaryAnalytics(month, year, months = 6) {
+  return request(`/salary/me/analytics?month=${month}&year=${year}&months=${months}`)
+}
 export async function setStaffSalary(userId, salary, month, year) {
   const q = (month && year) ? `?month=${month}&year=${year}` : ''
   return request(`/salary/${userId}${q}`, { method: 'PUT', body: JSON.stringify({ salary }) })

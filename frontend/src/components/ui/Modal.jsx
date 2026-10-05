@@ -10,7 +10,7 @@ import useFocusTrap from './useFocusTrap'
  * qo'shimcha: Escape bilan yopish, Tab fokus tutqichi, role="dialog"/aria-modal
  * va sahifa scroll'ini bloklash.
  *
- * O'lchamlar: sm (400px) · md (480px, standart) · lg (640px) · xl (820px).
+ * O'lchamlar: sm (400px) · md (480px, standart) · lg (640px) · xl (820px) · full (to'liq ekran).
  * Yon paneli uchun — pastdagi <Drawer>.
  *
  *   <Modal open={!!modal} title="Yangi tarif" onClose={close}
