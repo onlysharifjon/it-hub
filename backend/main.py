@@ -319,10 +319,14 @@ def serve_upload(rel_path: str, exp: Optional[str] = None, sig: Optional[str] = 
 # Ota-ona mobil ilovasi API (/parent/...) — alohida paketda
 from .parent.router_parent import router as parent_router
 from .parent.notifications import notify_parents_of_student
+from .parent import errors as parent_errors
+from .parent.payments.router_callbacks import router as payment_callbacks_router
 from .minar import achievements as minar_achievements
 from .minar import notify as minar_notify
 from .minar.models import MinarAccount
 app.include_router(parent_router)
+app.include_router(payment_callbacks_router)
+parent_errors.install(app)   # /parent/* uchun yagona xato formati + X-Request-ID
 
 # Facebook Lead Ads webhook (Make.com -> /leads/facebook) — alohida paketda
 from .phone_utils import normalize_phone, dedup_key, is_placeholder_phone, format_phone
@@ -8560,6 +8564,48 @@ def unlink_parent_child(
     if link:
         db.delete(link)
         db.commit()
+
+
+@app.get("/parent-invoices")
+def list_parent_invoices(
+    status: Optional[str] = Query(None, regex="^(pending|paid|cancelled|expired|refunded)$"),
+    provider: Optional[str] = Query(None, regex="^(payme|click|uzum)$"),
+    student_id: Optional[int] = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    actor: models.User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Onlayn to'lov invoyslari va provayder tranzaksiyalari — solishtirish (reconciliation) uchun.
+    Muddati o'tgan, provayderga tushmagan pending invoyslar shu yerda 'expired' ko'rinadi."""
+    from .parent.payments.core import invoice_expired
+    q = db.query(models.ParentInvoice).options(
+        selectinload(models.ParentInvoice.transactions),
+        joinedload(models.ParentInvoice.student), joinedload(models.ParentInvoice.group),
+    )
+    if provider:
+        q = q.filter(models.ParentInvoice.provider == provider)
+    if student_id:
+        q = q.filter(models.ParentInvoice.student_id == student_id)
+    out = []
+    for inv in q.order_by(models.ParentInvoice.id.desc()).limit(limit).all():
+        st = inv.status
+        if st == "pending" and not inv.transactions and invoice_expired(inv):
+            st = "expired"
+        if status and st != status:
+            continue
+        out.append({
+            "id": inv.id, "provider": inv.provider, "status": st, "amount": int(inv.amount),
+            "student_id": inv.student_id, "student_name": inv.student.full_name if inv.student else None,
+            "group_id": inv.group_id, "group_name": inv.group.name if inv.group else None,
+            "parent_id": inv.parent_id, "created_at": inv.created_at, "paid_at": inv.paid_at,
+            "cancelled_at": inv.cancelled_at,
+            "transactions": [{
+                "provider_txn_id": t.provider_txn_id, "state": t.state, "amount": int(t.amount),
+                "create_time": t.create_time, "perform_time": t.perform_time,
+                "cancel_time": t.cancel_time, "cancel_reason": t.cancel_reason,
+            } for t in inv.transactions],
+        })
+    return out
 
 
 @app.post("/parents/broadcast", response_model=schemas.ParentBroadcastResult)

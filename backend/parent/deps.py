@@ -1,21 +1,19 @@
 """Parent API bog'liqliklari (dependencies)."""
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from .. import models
 from ..database import get_db
 from ..security import decode_parent_access_token
+from .errors import api_error
 
 _bearer = HTTPBearer(auto_error=False)
 
-_UNAUTH = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED,
-    detail={"error": {"code": "unauthorized", "message": "Token yaroqsiz yoki muddati tugagan"}},
-    headers={"WWW-Authenticate": "Bearer"},
-)
+_UNAUTH = api_error("unauthorized", "Token yaroqsiz yoki muddati tugagan", 401,
+                    headers={"WWW-Authenticate": "Bearer"})
 
 
 def get_current_parent(
@@ -48,14 +46,8 @@ def get_owned_child(
         .first()
     )
     if not link:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": {"code": "not_found", "message": "Bola topilmadi"}},
-        )
+        raise api_error("child_not_found", "Bola topilmadi", 404)
     child = db.query(models.Student).filter(models.Student.id == child_id).first()
     if not child:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": {"code": "not_found", "message": "Bola topilmadi"}},
-        )
+        raise api_error("child_not_found", "Bola topilmadi", 404)
     return child

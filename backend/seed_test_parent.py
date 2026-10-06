@@ -1,7 +1,7 @@
 """TEST ota-ona akkaunti — mobil ilova jonli API'da sinash uchun.
 
 Idempotent (qayta ishga tushirish xavfsiz). Eng boy ma'lumotli faol talabani
-tanlaydi, unga +998901234567 / Test1234 ota-onani bog'laydi va jadval bo'sh
+tanlaydi, unga +998901234567 / <TEST_PARENT_PASSWORD> ota-onani bog'laydi va jadval bo'sh
 bo'lmasligi uchun guruhga slot qo'shadi.
 
 Ishga tushirish:
@@ -9,6 +9,7 @@ Ishga tushirish:
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 
 from sqlalchemy import extract, func
@@ -18,7 +19,10 @@ from . import models
 from .security import hash_password
 
 TEST_PHONE = "+998901234567"
-TEST_PASSWORD = "Test1234"
+# Parol repoga yozilmaydi: TEST_PARENT_PASSWORD env orqali beriladi (kamida 10 belgi).
+# DIQQAT: bu skript HAQIQIY talabani test akkauntga bog'laydi. Production'dan ajratilgan
+# test fixture uchun backend/scripts/seed_parent_fixture.py dan foydalaning.
+TEST_PASSWORD = os.getenv("TEST_PARENT_PASSWORD", "")
 TEST_FULL_NAME = "Nodira Mominova"
 TEST_DISPLAY_NAME = "Nodira opa"
 
@@ -162,6 +166,8 @@ def _ensure_academic_demo(db, student, group, now):
 
 
 def main():
+    if len(TEST_PASSWORD) < 10:
+        raise SystemExit("TEST_PARENT_PASSWORD env (kamida 10 belgi) berilmagan")
     db = SessionLocal()
     try:
         now = datetime.utcnow()
@@ -212,7 +218,7 @@ def main():
         print("─" * 60)
         print(f"✓ TEST ota-ona {action}")
         print(f"  Login (username): {TEST_PHONE}")
-        print(f"  Parol:            {TEST_PASSWORD}")
+        print("  Parol:            (TEST_PARENT_PASSWORD env)")
         print(f"  Bola:             #{student.id} — {student.full_name}")
         print(f"  Guruh:            {group.name if group else '—'}")
         sched_msg = f"qo'shildi ({slots_added} ta)" if slots_added else "allaqachon bor"

@@ -52,3 +52,32 @@ def verify(rel: str, exp: Optional[str], sig: Optional[str]) -> bool:
     if exp_i < time.time():
         return False
     return hmac.compare_digest(sig, _sig(rel, exp_i))
+
+
+# ── Tashqi (mobil ilova) uchun to'liq HTTPS havolalar ────────────────────────
+import os as _os
+
+PUBLIC_BASE_URL = _os.getenv("PUBLIC_BASE_URL", "https://crm.minaracademy.uz").rstrip("/")
+PUBLIC_API_PREFIX = _os.getenv("PUBLIC_API_PREFIX", "/api")
+
+
+def public_url(rel: Optional[str]) -> Optional[str]:
+    """`students/x.jpg` -> `https://crm.../api/uploads/students/x.jpg?exp=..&sig=..`."""
+    if not rel:
+        return None
+    if rel.startswith("https://"):
+        return rel
+    if rel.startswith(("http://", "data:")):
+        return None
+    rel = rel[len("/uploads/"):] if rel.startswith("/uploads/") else rel.lstrip("/")
+    return f"{PUBLIC_BASE_URL}{PUBLIC_API_PREFIX}/uploads/{sign(rel)}"
+
+
+def sign_token(subject: str, ttl_seconds: int) -> tuple:
+    """Ixtiyoriy resurs (masalan `cert:12`) uchun (exp, sig). Soat boshiga yaxlitlanadi."""
+    exp = (int(time.time()) // 3600 + 1) * 3600 + ttl_seconds
+    return exp, _sig(subject, exp)
+
+
+def verify_token(subject: str, exp: Optional[str], sig: Optional[str]) -> bool:
+    return verify(subject, exp, sig)

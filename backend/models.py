@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
+from sqlalchemy import BigInteger, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -229,6 +229,9 @@ class Payment(Base):
     notes = Column(Text, nullable=True)                                   # to'lov izohi
     recorded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # kim qabul qilgan
     via_sales = Column(Boolean, nullable=False, default=False)  # "Sales" tugmasi bosilganmi (audit uchun)
+    # Ota-ona ilovasidan onlayn (Payme/Click/Uzum) to'lov — provayder tasdiqlagach yoziladi.
+    # Provayder to'lovni bekor qilsa (refund) shu invoysga tegishli qatorlar o'chiriladi.
+    parent_invoice_id = Column(Integer, ForeignKey("parent_invoices.id"), nullable=True, index=True)
 
     student = relationship("Student", back_populates="payments")
     group = relationship("Group", back_populates="payments")
@@ -618,22 +621,58 @@ class ScheduleSlot(Base):
 
 
 class ParentInvoice(Base):
-    """Onlayn to'lov uchun invoys (hozircha stub — Payme/Click/Uzum keyin)."""
+    """Ota-ona ilovasidan onlayn to'lov uchun invoys (Payme / Click / Uzum).
+
+    pending → paid (provayder tasdiqladi, Payment qatorlari yozildi)
+    pending → cancelled (provayder bekor qildi) | expired (muddati o'tdi)
+    paid → refunded (provayder to'lovni qaytardi, Payment qatorlari o'chirildi)
+    """
     __tablename__ = "parent_invoices"
 
     id = Column(Integer, primary_key=True, index=True)
     parent_id = Column(Integer, ForeignKey("parents.id", ondelete="CASCADE"), nullable=False, index=True)
     student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
-    amount = Column(Numeric(12, 2), nullable=False)
+    amount = Column(Numeric(12, 2), nullable=False)                  # so'm (butun)
     provider = Column(String(20), nullable=False, default="payme")   # payme | click | uzum
-    status = Column(String(20), nullable=False, default="pending")   # pending | paid | cancelled
+    status = Column(String(20), nullable=False, default="pending")   # pending | paid | cancelled | expired | refunded
     checkout_ref = Column(String(120), nullable=True)
+    expires_at = Column(DateTime, nullable=True)                     # shu vaqtdan keyin yangi tranzaksiya qabul qilinmaydi
+    paid_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     parent = relationship("Parent", foreign_keys=[parent_id])
     student = relationship("Student", foreign_keys=[student_id])
     group = relationship("Group", foreign_keys=[group_id])
+    transactions = relationship("PaymentTransaction", back_populates="invoice", order_by="PaymentTransaction.id")
+
+
+class PaymentTransaction(Base):
+    """Provayder tranzaksiyasi (Payme transaction / Click click_trans_id / Uzum transId).
+
+    (provider, provider_txn_id) unikal — takroriy callback ikkinchi yozuv yaratmaydi.
+    state: created → performed | cancelled;  performed → reversed (refund).
+    """
+    __tablename__ = "payment_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    invoice_id = Column(Integer, ForeignKey("parent_invoices.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String(20), nullable=False)
+    provider_txn_id = Column(String(100), nullable=False)
+    state = Column(String(20), nullable=False, default="created")   # created | performed | cancelled | reversed
+    amount = Column(Numeric(12, 2), nullable=False)                 # so'm
+    provider_time = Column(BigInteger, nullable=True)               # provayder yuborgan vaqt (ms)
+    create_time = Column(BigInteger, nullable=False)                # bizning vaqt (ms, epoch)
+    perform_time = Column(BigInteger, nullable=True)
+    cancel_time = Column(BigInteger, nullable=True)
+    cancel_reason = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("provider", "provider_txn_id", name="uq_payment_txn_provider_id"),)
+
+    invoice = relationship("ParentInvoice", back_populates="transactions")
 
 
 class Holiday(Base):

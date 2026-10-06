@@ -1,0 +1,355 @@
+openapi: 3.0.3
+info:
+  title: Minar Academy — Parent API
+  version: "1.0.0"
+  description: |
+    Ota-onalar mobil ilovasi shartnomasi. Javoblar xom JSON (o'ramsiz), pul — butun so'm,
+    sana — YYYY-MM-DD, vaqt — ISO-8601 +05:00. Batafsil: docs/parent-api/README.md.
+servers:
+  - url: https://crm.minaracademy.uz/api
+security:
+  - bearer: []
+
+components:
+  securitySchemes:
+    bearer: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    childId: {name: childId, in: path, required: true, schema: {type: integer}}
+    month: {name: month, in: query, required: true, schema: {type: integer, minimum: 1, maximum: 12}}
+    year:
+      name: year
+      in: query
+      required: true
+      description: 2020 … joriy yil + 1
+      schema: {type: integer, minimum: 2020}
+  responses:
+    BadRequest: {description: Buzilgan JSON, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: invalid_json, message: "So'rov tanasi yaroqli JSON emas.", errors: {}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}}
+    Unauthorized: {description: Token yo'q/yaroqsiz/eskirgan, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: unauthorized, message: Token yaroqsiz yoki muddati tugagan, errors: {}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}}
+    ChildNotFound: {description: Bola shu ota-onaga bog'lanmagan yoki mavjud emas, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: child_not_found, message: Bola topilmadi, errors: {}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}}
+    Validation: {description: Maydon validatsiyasi, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: validation_error, message: "So'rov ma'lumotlari noto'g'ri.", errors: {amount: ["Musbat butun son kiriting."]}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}}
+    RateLimited:
+      description: Juda ko'p urinish
+      headers: {Retry-After: {schema: {type: integer}, description: soniya}}
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+    Unavailable:
+      description: Baza yoki provayder vaqtincha ishlamaydi
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: payment_provider_unavailable, message: "Bu to'lov usuli hozircha ishlamayapti. Boshqa usulni tanlang.", errors: {}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}
+    Internal: {description: Kutilmagan xato, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  schemas:
+    Error:
+      type: object
+      required: [code, message, errors, request_id]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        errors:
+          type: object
+          additionalProperties: {type: array, items: {type: string}}
+        request_id: {type: string}
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: {type: string, example: "+998901234567", description: Telefon (istalgan formatda) yoki login}
+        password: {type: string, description: Trim qilinmaydi}
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties: {refresh_token: {type: string}}
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token]
+      properties:
+        access_token: {type: string}
+        refresh_token: {type: string}
+    Profile:
+      type: object
+      required: [display_name, full_name, phone]
+      properties:
+        display_name: {type: string, example: Nodira Mominova}
+        full_name: {type: string, example: Nodira Mominova}
+        phone: {type: string, example: "+998901234567"}
+    ProfileUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        display_name: {type: string, minLength: 1, maxLength: 100, description: Trim qilinadi}
+        avatar_base64: {type: string, description: "JPEG/PNG/WEBP, ≤ 2 MB; \"\" — o'chirish"}
+    Child:
+      type: object
+      required: [id, full_name, group_name, stage, teacher_name, schedule, tariff, start_date, discount_percent, avatar]
+      properties:
+        id: {type: integer, example: 101}
+        full_name: {type: string, minLength: 1, example: Alibek Mominov}
+        group_name: {type: string, example: Frontend G-101}
+        stage: {type: string, example: Frontend}
+        teacher_name: {type: string, example: Jasur Karimov}
+        schedule: {type: string, example: "Du · Chor · Ju, 14:00"}
+        tariff: {type: integer, example: 450000}
+        start_date: {type: string, format: date, nullable: true}
+        discount_percent: {type: integer, minimum: 0, maximum: 100}
+        avatar: {type: string, format: uri, nullable: true, description: Imzolangan HTTPS URL}
+    GroupFee:
+      type: object
+      required: [group_id, group_name, owed, paid, remaining]
+      properties:
+        group_id: {type: integer}
+        group_name: {type: string}
+        owed: {type: integer}
+        paid: {type: integer}
+        remaining: {type: integer, minimum: 0}
+    PaymentItem:
+      type: object
+      required: [amount, month, year, paid_at, recorded_by_name, notes, group_name]
+      properties:
+        amount: {type: integer}
+        month: {type: integer}
+        year: {type: integer}
+        paid_at: {type: string, format: date-time, example: "2026-10-05T10:30:00+05:00"}
+        recorded_by_name: {type: string, description: Onlayn to'lovda ""}
+        notes: {type: string, nullable: true}
+        group_name: {type: string, nullable: true}
+    PaymentSummary:
+      type: object
+      required: [month, year, total_owed, total_paid, advance_balance, advance_applied, debt, payment_status, groups, recent_payments]
+      properties:
+        month: {type: integer}
+        year: {type: integer}
+        total_owed: {type: integer, description: "Shu oy, barcha guruhlar"}
+        total_paid: {type: integer, description: Shu oyga yozilgan to'lovlar (avanssiz)}
+        advance_balance: {type: integer, minimum: 0, description: Ishlatilmagan ortiqcha to'lov/avans}
+        advance_applied: {type: integer, minimum: 0, description: Boshlang'ich avansning qarzga ketgan qismi}
+        debt: {type: integer, minimum: 0, description: Shu oygacha kumulyativ qarz (CRM)}
+        payment_status: {type: string, enum: [paid, partial, debtor]}
+        groups: {type: array, items: {$ref: '#/components/schemas/GroupFee'}}
+        recent_payments: {type: array, description: "Bolaning butun yakunlangan to'lov tarixi, yangisi oldinda", items: {$ref: '#/components/schemas/PaymentItem'}}
+    PayRequest:
+      type: object
+      additionalProperties: false
+      required: [amount, group_id, provider]
+      properties:
+        amount: {type: integer, minimum: 1000, maximum: 20000000, description: "so'm; qo'shimcha chegara — qarz + 3 oylik to'lov"}
+        group_id: {oneOf: [{type: integer}, {type: string, pattern: '^\d+$'}]}
+        provider: {type: string, enum: [payme, click, uzum]}
+    Checkout:
+      type: object
+      required: [checkout_url]
+      properties: {checkout_url: {type: string, format: uri}}
+    AttendanceRecord:
+      type: object
+      required: [lesson_date, is_present, group_name]
+      properties:
+        lesson_date: {type: string, format: date}
+        is_present: {type: boolean}
+        group_name: {type: string, nullable: true}
+    Attendance:
+      type: object
+      required: [percent, records]
+      properties:
+        percent: {type: integer, minimum: 0, maximum: 100}
+        records: {type: array, items: {$ref: '#/components/schemas/AttendanceRecord'}}
+    ScheduleSlot:
+      type: object
+      required: [day_of_week, start_time, end_time, group_name, teacher_name, stage, room]
+      properties:
+        day_of_week: {type: integer, minimum: 1, maximum: 7, description: 1=Dushanba}
+        start_time: {type: string, pattern: '^\d{2}:\d{2}$'}
+        end_time: {type: string, pattern: '^\d{2}:\d{2}$'}
+        group_name: {type: string}
+        teacher_name: {type: string}
+        stage: {type: string}
+        room: {type: string, nullable: true}
+    Notification:
+      type: object
+      required: [id, type, title, body, created_at, is_read]
+      properties:
+        id: {type: integer}
+        type: {type: string, enum: [payment, attendance, announcement]}
+        title: {type: string}
+        body: {type: string}
+        created_at: {type: string, format: date-time}
+        is_read: {type: boolean}
+    Grade:
+      type: object
+      required: [subject, score, max_score, date]
+      properties:
+        subject: {type: string}
+        score: {type: integer, minimum: 0}
+        max_score: {type: integer, minimum: 1}
+        date: {type: string, format: date}
+    Homework:
+      type: object
+      required: [id, title, due_date, status]
+      properties:
+        id: {type: integer}
+        title: {type: string}
+        due_date: {type: string, format: date-time, example: "2026-10-10T23:59:59+05:00"}
+        status: {type: string, enum: [pending, submitted, graded]}
+    Feedback:
+      type: object
+      required: [teacher_name, comment, date]
+      properties:
+        teacher_name: {type: string}
+        comment: {type: string, description: Oddiy matn}
+        date: {type: string, format: date}
+    Certificate:
+      type: object
+      required: [id, title, issue_date, url]
+      properties:
+        id: {type: integer}
+        title: {type: string}
+        issue_date: {type: string, format: date}
+        url: {type: string, format: uri, description: "Imzolangan, ~24 soat amal qiladigan HTTPS havola; Bearer'siz"}
+    Teacher:
+      type: object
+      additionalProperties: false
+      required: [name, phone, telegram]
+      properties:
+        name: {type: string}
+        phone: {type: string, description: 'E.164 yoki ""'}
+        telegram: {type: string, description: '"@username" yoki ""'}
+
+paths:
+  /parent/auth/login:
+    post:
+      security: []
+      summary: "[01] Login"
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/LoginRequest'}}}}
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/TokenPair'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {description: Telefon/parol xato yoki akkaunt nofaol (bir xil javob), content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: invalid_credentials, message: Telefon raqam yoki parol xato, errors: {}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}}
+        '422': {$ref: '#/components/responses/Validation'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /parent/auth/refresh:
+    post:
+      security: []
+      summary: "[02] Refresh (rotation)"
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RefreshRequest'}}}}
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/TokenPair'}}}}
+        '401': {description: "invalid_token | token_expired | token_reuse", content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '422': {$ref: '#/components/responses/Validation'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /parent/profile:
+    get:
+      summary: "[03] Profil"
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Profile'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    patch:
+      summary: "[04] Profilni yangilash"
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ProfileUpdate'}}}}
+      responses:
+        '204': {description: Saqlandi (tana yo'q)}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/Validation'}
+  /parent/children:
+    get:
+      summary: "[05] Farzandlar"
+      responses:
+        '200': {description: "OK (bo'sh bo'lsa [])", content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Child'}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /parent/children/{childId}/payment-summary:
+    get:
+      summary: "[06] To'lov xulosasi"
+      parameters: [{$ref: '#/components/parameters/childId'}, {$ref: '#/components/parameters/month'}, {$ref: '#/components/parameters/year'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/PaymentSummary'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/ChildNotFound'}
+        '422': {$ref: '#/components/responses/Validation'}
+  /parent/children/{childId}/pay:
+    post:
+      summary: "[07] Onlayn to'lov — checkout URL"
+      parameters: [{$ref: '#/components/parameters/childId'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PayRequest'}}}}
+      responses:
+        '200': {description: Invoys yaratildi (to'lov hali bajarilmagan), content: {application/json: {schema: {$ref: '#/components/schemas/Checkout'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {description: "child_not_found | group_not_found", content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '422': {description: "validation_error | invalid_amount | nothing_to_pay", content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /parent/children/{childId}/attendance:
+    get:
+      summary: "[08] Davomat"
+      parameters: [{$ref: '#/components/parameters/childId'}, {$ref: '#/components/parameters/month'}, {$ref: '#/components/parameters/year'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Attendance'}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/ChildNotFound'}
+        '422': {$ref: '#/components/responses/Validation'}
+  /parent/children/{childId}/schedule:
+    get:
+      summary: "[09] Haftalik jadval"
+      parameters: [{$ref: '#/components/parameters/childId'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/ScheduleSlot'}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/ChildNotFound'}
+  /parent/notifications:
+    get:
+      summary: "[10] Bildirishnomalar"
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Notification'}}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /parent/notifications/{id}/read:
+    post:
+      summary: "[11] O'qildi deb belgilash (idempotent)"
+      parameters: [{name: id, in: path, required: true, schema: {type: integer}}]
+      responses:
+        '204': {description: OK}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Boshqa ota-onaning bildirishnomasi, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: Mavjud emas, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /parent/children/{childId}/grades:
+    get:
+      summary: "[12] Baholar"
+      parameters: [{$ref: '#/components/parameters/childId'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Grade'}}}}}
+        '404': {$ref: '#/components/responses/ChildNotFound'}
+  /parent/children/{childId}/homework:
+    get:
+      summary: "[13] Uy vazifalari"
+      parameters: [{$ref: '#/components/parameters/childId'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Homework'}}}}}
+        '404': {$ref: '#/components/responses/ChildNotFound'}
+  /parent/children/{childId}/feedback:
+    get:
+      summary: "[14] O'qituvchi izohlari"
+      parameters: [{$ref: '#/components/parameters/childId'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Feedback'}}}}}
+        '404': {$ref: '#/components/responses/ChildNotFound'}
+  /parent/children/{childId}/certificates:
+    get:
+      summary: "[15] Sertifikatlar"
+      parameters: [{$ref: '#/components/parameters/childId'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Certificate'}}}}}
+        '404': {$ref: '#/components/responses/ChildNotFound'}
+  /parent/children/{childId}/teacher:
+    get:
+      summary: "[16] O'qituvchi kontakti"
+      parameters: [{$ref: '#/components/parameters/childId'}]
+      responses:
+        '200': {description: OK, content: {application/json: {schema: {$ref: '#/components/schemas/Teacher'}}}}
+        '404': {description: "child_not_found | teacher_not_assigned", content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: teacher_not_assigned, message: "Bolaga o'qituvchi biriktirilmagan", errors: {}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}}
+  /parent/certificates/{id}/file:
+    get:
+      security: []
+      summary: Sertifikat faylini ochish (imzolangan havola, Bearer'siz)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer}}
+        - {name: exp, in: query, required: true, schema: {type: integer}}
+        - {name: sig, in: query, required: true, schema: {type: string}}
+      responses:
+        '200': {description: PDF, content: {application/pdf: {}}}
+        '302': {description: Tashqi HTTPS manzilga yo'naltirish}
+        '403': {description: link_expired — ro'yxatni qayta oling}
+        '404': {description: Topilmadi}

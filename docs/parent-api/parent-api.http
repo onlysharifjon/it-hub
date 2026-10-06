@@ -1,0 +1,90 @@
+# Minar Academy — Parent API so'rovlari (VS Code REST Client / JetBrains HTTP Client).
+# O'zgaruvchilar environment faylida (http-client.env.json yoki settings.json "rest-client.environmentVariables"),
+# repoga real credential yozmang:
+#   { "staging": { "baseUrl": "https://crm.minaracademy.uz/api", "username": "+99890…", "password": "…",
+#                  "childId": "101", "groupId": "201", "notificationId": "501" } }
+
+@baseUrl = {{baseUrl}}
+
+### [01] Login
+# @name login
+POST {{baseUrl}}/parent/auth/login
+Content-Type: application/json
+
+{"username": "{{username}}", "password": "{{password}}"}
+
+###
+@access = {{login.response.body.access_token}}
+@refresh = {{login.response.body.refresh_token}}
+
+### [02] Refresh
+POST {{baseUrl}}/parent/auth/refresh
+Content-Type: application/json
+
+{"refresh_token": "{{refresh}}"}
+
+### [03] Profil
+GET {{baseUrl}}/parent/profile
+Authorization: Bearer {{access}}
+
+### [04] Profilni yangilash (204)
+PATCH {{baseUrl}}/parent/profile
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{"display_name": "Nodira Mominova"}
+
+### [05] Farzandlar
+GET {{baseUrl}}/parent/children
+Authorization: Bearer {{access}}
+
+### [06] To'lov xulosasi
+GET {{baseUrl}}/parent/children/{{childId}}/payment-summary?month=10&year=2026
+Authorization: Bearer {{access}}
+
+### [07] To'lov — checkout URL (provayder sozlanmagan bo'lsa 503)
+POST {{baseUrl}}/parent/children/{{childId}}/pay
+Authorization: Bearer {{access}}
+Content-Type: application/json
+
+{"amount": 250000, "group_id": {{groupId}}, "provider": "payme"}
+
+### [08] Davomat
+GET {{baseUrl}}/parent/children/{{childId}}/attendance?month=10&year=2026
+Authorization: Bearer {{access}}
+
+### [09] Jadval
+GET {{baseUrl}}/parent/children/{{childId}}/schedule
+Authorization: Bearer {{access}}
+
+### [10] Bildirishnomalar
+GET {{baseUrl}}/parent/notifications
+Authorization: Bearer {{access}}
+
+### [11] O'qildi (204)
+POST {{baseUrl}}/parent/notifications/{{notificationId}}/read
+Authorization: Bearer {{access}}
+
+### [12] Baholar
+GET {{baseUrl}}/parent/children/{{childId}}/grades
+Authorization: Bearer {{access}}
+
+### [13] Uy vazifalari
+GET {{baseUrl}}/parent/children/{{childId}}/homework
+Authorization: Bearer {{access}}
+
+### [14] Izohlar
+GET {{baseUrl}}/parent/children/{{childId}}/feedback
+Authorization: Bearer {{access}}
+
+### [15] Sertifikatlar
+GET {{baseUrl}}/parent/children/{{childId}}/certificates
+Authorization: Bearer {{access}}
+
+### [16] O'qituvchi
+GET {{baseUrl}}/parent/children/{{childId}}/teacher
+Authorization: Bearer {{access}}
+
+### Xato formati namunasi (422)
+GET {{baseUrl}}/parent/children/{{childId}}/payment-summary
+Authorization: Bearer {{access}}

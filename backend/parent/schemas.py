@@ -1,55 +1,71 @@
-"""Ota-ona API uchun Pydantic sxemalar. JSON — snake_case, mobil kontraktga mos."""
+"""Ota-ona API uchun Pydantic sxemalar — Flutter ilovasi bilan shartnoma.
+
+Qoidalar (docs/parent-api/README.md): snake_case, pul — butun so'm (int),
+sana — YYYY-MM-DD, vaqt — ISO-8601 +05:00, ro'yxatlar — xom JSON array.
+"Nullable" deb belgilanmagan maydonlar hech qachon null bo'lmaydi.
+"""
 from __future__ import annotations
 
 from datetime import datetime, date
-from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
+
+
+class _Strict(BaseModel):
+    class Config:
+        extra = "forbid"     # himoyalangan maydonlarni (phone, role, child_ids ...) yuborib bo'lmaydi
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
 class ParentLoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
 
 
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
-    token_type: str = "bearer"
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str = Field(..., min_length=1, max_length=200)
 
 
 # ── Profil / bolalar ─────────────────────────────────────────────────────────
 
 class ParentProfile(BaseModel):
+    display_name: str
     full_name: str
-    display_name: Optional[str] = None
     phone: str
-    avatar: Optional[str] = None             # base64 (mobil ilova yuklagan rasm)
 
 
-class ParentProfileUpdate(BaseModel):
-    display_name: Optional[str] = Field(None, max_length=120)
-    avatar_base64: Optional[str] = Field(None, max_length=2_800_000)  # ~2MB rasm chegarasi
+class ParentProfileUpdate(_Strict):
+    display_name: Optional[str] = None
+    avatar_base64: Optional[str] = Field(None, max_length=3_000_000)
+
+    @validator("display_name")
+    def _name(cls, v):
+        if v is None:
+            raise ValueError("display_name null bo'lishi mumkin emas")
+        v = v.strip()
+        if not 1 <= len(v) <= 100:
+            raise ValueError("Ism 1–100 belgi bo'lishi kerak")
+        return v
 
 
 class ChildRead(BaseModel):
     id: int
     full_name: str
-    group_name: Optional[str] = None
-    stage: Optional[str] = None
-    teacher_name: Optional[str] = None
-    schedule: Optional[str] = None          # inson o'qiy oladigan qisqa satr
-    tariff: int = 0                          # oylik narx (so'm, butun son)
-    start_date: Optional[date] = None
+    group_name: str = ""
+    stage: str = ""
+    teacher_name: str = ""
+    schedule: str = ""
+    tariff: int = 0
+    start_date: Optional[date] = None       # nullable
     discount_percent: int = 0
-    avatar: Optional[str] = None
+    avatar: Optional[str] = None            # nullable, HTTPS
 
 
 # ── To'lov ───────────────────────────────────────────────────────────────────
@@ -67,9 +83,9 @@ class ChildPaymentItem(BaseModel):
     month: int
     year: int
     paid_at: datetime
-    notes: Optional[str] = None
-    recorded_by_name: Optional[str] = None
-    group_name: Optional[str] = None
+    recorded_by_name: str = ""
+    notes: Optional[str] = None             # nullable
+    group_name: Optional[str] = None        # nullable
 
 
 class ChildPaymentSummary(BaseModel):
@@ -80,17 +96,34 @@ class ChildPaymentSummary(BaseModel):
     advance_balance: int
     advance_applied: int
     debt: int
-    payment_status: str                      # paid | partial | debtor | none
+    payment_status: str                     # paid | partial | debtor
     groups: List[ChildGroupFee]
     recent_payments: List[ChildPaymentItem]
+
+
+class PayRequest(_Strict):
+    amount: int = Field(..., gt=0)
+    group_id: int
+    provider: str = Field(..., regex="^(payme|click|uzum)$")
+
+    @validator("amount", pre=True)
+    def _int_amount(cls, v):
+        # 250000.5 yoki "250 000" emas — faqat butun son
+        if isinstance(v, bool) or (isinstance(v, float) and not v.is_integer()):
+            raise ValueError("Musbat butun son kiriting.")
+        return v
+
+
+class CheckoutResponse(BaseModel):
+    checkout_url: str
 
 
 # ── Davomat ──────────────────────────────────────────────────────────────────
 
 class AttendanceRecord(BaseModel):
-    lesson_date: datetime
+    lesson_date: date
     is_present: bool
-    group_name: Optional[str] = None
+    group_name: Optional[str] = None        # nullable
 
 
 class ChildAttendance(BaseModel):
@@ -101,68 +134,63 @@ class ChildAttendance(BaseModel):
 # ── Jadval ───────────────────────────────────────────────────────────────────
 
 class ScheduleSlotRead(BaseModel):
-    day_of_week: int                         # 1 = Dushanba .. 7 = Yakshanba
-    start_time: str
-    end_time: str
-    group_name: Optional[str] = None
-    teacher_name: Optional[str] = None
-    stage: Optional[str] = None
-    room: Optional[str] = None
+    day_of_week: int                        # 1 = Dushanba .. 7 = Yakshanba
+    start_time: str                         # HH:mm
+    end_time: str                           # HH:mm
+    group_name: str = ""
+    teacher_name: str = ""
+    stage: str = ""
+    room: Optional[str] = None              # nullable
 
 
 # ── Bildirishnomalar ─────────────────────────────────────────────────────────
 
 class ParentNotificationRead(BaseModel):
     id: int
-    type: str
+    type: str                               # payment | attendance | announcement
     title: str
-    body: Optional[str] = None
+    body: str = ""
     created_at: datetime
     is_read: bool
 
 
-# ── O'quv jarayoni (baholar / uy vazifasi / izohlar) ─────────────────────────
+# ── O'quv jarayoni ───────────────────────────────────────────────────────────
 
 class GradeRead(BaseModel):
-    id: int
     subject: str
     score: int
     max_score: int
-    exam_type: str                           # exam | test | quiz | project
     date: date
-    comment: Optional[str] = None
-    group_name: Optional[str] = None
 
 
 class HomeworkRead(BaseModel):
     id: int
     title: str
-    description: Optional[str] = None        # vazifa matni
-    assigned_date: date
-    due_date: Optional[date] = None
-    status: str                              # pending | submitted | graded
-    grade: Optional[int] = None              # graded bo'lsa: ball
-    teacher_comment: Optional[str] = None
-    group_name: Optional[str] = None
+    due_date: datetime                      # aniq muddat, +05:00
+    status: str                             # pending | submitted | graded
 
 
 class FeedbackRead(BaseModel):
-    id: int
     teacher_name: str
     comment: str
     date: date
-    group_name: Optional[str] = None
 
-
-# ── O'qituvchi / tadbirlar / sertifikatlar ───────────────────────────────────
 
 class TeacherContact(BaseModel):
+    """Mobil ilova Map<String,String> sifatida o'qiydi — faqat string qiymatlar."""
     name: str
-    phone: Optional[str] = None
-    telegram: Optional[str] = None           # @username
-    group_name: Optional[str] = None
-    avatar: Optional[str] = None
+    phone: str = ""
+    telegram: str = ""
 
+
+class CertificateRead(BaseModel):
+    id: int
+    title: str
+    issue_date: date
+    url: str                                # imzolangan, muddatli HTTPS havola
+
+
+# ── Qo'shimcha (joriy ilova chaqirmaydi, eski versiyalar uchun saqlangan) ────
 
 class EventRead(BaseModel):
     id: int
@@ -171,27 +199,6 @@ class EventRead(BaseModel):
     date: datetime
     location: Optional[str] = None
 
-
-class CertificateRead(BaseModel):
-    id: int
-    title: str
-    file_url: str                            # PDF havolasi
-    issued_at: Optional[date] = None
-
-
-# ── To'lov (stub) ────────────────────────────────────────────────────────────
-
-class PayRequest(BaseModel):
-    amount: int = Field(..., gt=0)
-    group_id: int
-    provider: str = Field("payme", regex="^(payme|click|uzum)$")
-
-
-class CheckoutResponse(BaseModel):
-    checkout_url: str
-
-
-# ── Coinlar ──────────────────────────────────────────────────────────────────
 
 class CoinItem(BaseModel):
     amount: int
