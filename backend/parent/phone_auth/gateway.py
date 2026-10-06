@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional
+import json
+import socket
+import urllib.error
+import urllib.request
+from typing import Any, Optional, Tuple
 
 log = logging.getLogger("ithub.telegram_gateway")
 
@@ -40,6 +44,7 @@ def _classify(error: str) -> str:
 class TelegramGatewayClient:
     def __init__(self, token: Optional[str] = None, base_url: Optional[str] = None,
                  timeout: float = 10.0, transport: Optional[Any] = None):
+        # transport: (url, payload, headers, timeout) -> (status, body) — testlar uchun
         self._token = (token if token is not None else os.getenv("TELEGRAM_GATEWAY_TOKEN", "")).strip()
         self._base = (base_url or os.getenv("TELEGRAM_GATEWAY_BASE_URL", "https://gatewayapi.telegram.org")).rstrip("/")
         self._timeout = timeout
@@ -49,34 +54,48 @@ class TelegramGatewayClient:
     def configured(self) -> bool:
         return bool(self._token)
 
+    def _post(self, url: str, payload: bytes, headers: dict) -> Tuple[int, bytes]:
+        """Standart kutubxona (urllib) — qo'shimcha dependency yo'q. Testlarda `transport` bilan almashtiriladi."""
+        if self._transport is not None:
+            return self._transport(url, payload, headers, self._timeout)
+        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as e:      # 4xx/5xx — javob tanasi bor
+            return e.code, e.read()
+
     def _call(self, method: str, body: dict, retry_connect: bool = False) -> dict:
         if not self._token:
             raise GatewayError("config", "TELEGRAM_GATEWAY_TOKEN not set")
-        import httpx   # prod image'da yo'q bo'lishi mumkin — app importini buzmasin
+        headers = {"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}
+        payload = json.dumps(body).encode()
         attempts = 2 if retry_connect else 1
         for i in range(attempts):
             try:
-                with httpx.Client(timeout=self._timeout, transport=self._transport) as c:
-                    resp = c.post(f"{self._base}/{method}", json=body,
-                                  headers={"Authorization": f"Bearer {self._token}"})
+                status, raw = self._post(f"{self._base}/{method}", payload, headers)
                 break
-            except httpx.ConnectError as e:
+            except (socket.timeout, TimeoutError):
+                raise GatewayError("unavailable", f"{method}: timeout")
+            except urllib.error.URLError as e:
+                reason = getattr(e, "reason", None)
+                if isinstance(reason, (socket.timeout, TimeoutError)):
+                    raise GatewayError("unavailable", f"{method}: timeout")
+                # Ulanish o'rnatilmadi (so'rov serverga yetmagan) — faqat shu holatda qayta urinish
                 if i + 1 < attempts:
                     continue
-                raise GatewayError("unavailable", f"{method}: connect error {type(e).__name__}")
-            except httpx.TimeoutException:
-                raise GatewayError("unavailable", f"{method}: timeout")
-            except httpx.HTTPError as e:
+                raise GatewayError("unavailable", f"{method}: connect error {type(reason).__name__}")
+            except OSError as e:
                 raise GatewayError("unavailable", f"{method}: {type(e).__name__}")
-        if resp.status_code >= 500:
-            raise GatewayError("unavailable", f"{method}: HTTP {resp.status_code}")
+        if status >= 500:
+            raise GatewayError("unavailable", f"{method}: HTTP {status}")
         try:
-            data = resp.json()
-        except ValueError:
-            raise GatewayError("unavailable", f"{method}: non-JSON HTTP {resp.status_code}")
+            data = json.loads(raw.decode() or "null")
+        except (ValueError, UnicodeDecodeError):
+            raise GatewayError("unavailable", f"{method}: non-JSON HTTP {status}")
         if not isinstance(data, dict) or not data.get("ok"):
-            err = str(data.get("error") if isinstance(data, dict) else "") or f"HTTP {resp.status_code}"
-            if resp.status_code == 429:
+            err = str(data.get("error") if isinstance(data, dict) else "") or f"HTTP {status}"
+            if status == 429:
                 raise GatewayError("rate_limited", f"{method}: {err}")
             raise GatewayError(_classify(err), f"{method}: {err}")
         result = data.get("result")

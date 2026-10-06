@@ -1,9 +1,10 @@
 """Telefon + Telegram Gateway OTP testlari. Haqiqiy Telegram API chaqirilmaydi:
-unit — httpx.MockTransport, integration — FastAPI dependency override (FakeGateway)."""
+unit — soxta transport (urllib o'rniga), integration — FastAPI dependency override (FakeGateway)."""
 import json
 from datetime import datetime, timedelta
 
-import httpx
+import socket
+import urllib.error
 import pytest
 
 from backend import security
@@ -17,18 +18,27 @@ PHONE = "+998901234567"
 
 # ── Unit: TelegramGatewayClient ──────────────────────────────────────────────
 
+class Resp:
+    def __init__(self, status, body):
+        self.status, self.body = status, body
+
+
 def _client(handler):
-    return TelegramGatewayClient(token="tg-token", base_url="https://gw.test", transport=httpx.MockTransport(handler))
+    """handler(url, json_body, headers) -> Resp | Exception."""
+    def transport(url, payload, headers, timeout):
+        out = handler(url, json.loads(payload), headers)
+        if isinstance(out, Exception):
+            raise out
+        return out.status, json.dumps(out.body).encode()
+    return TelegramGatewayClient(token="tg-token", base_url="https://gw.test", transport=transport)
 
 
 def test_gateway_send_success_sends_correct_request():
     seen = {}
 
-    def handler(req):
-        seen["url"] = str(req.url)
-        seen["auth"] = req.headers["authorization"]
-        seen["body"] = json.loads(req.content)
-        return httpx.Response(200, json={"ok": True, "result": {"request_id": "rid-1", "phone_number": PHONE}})
+    def handler(url, body, headers):
+        seen.update(url=url, auth=headers["Authorization"], body=body)
+        return Resp(200, {"ok": True, "result": {"request_id": "rid-1", "phone_number": PHONE}})
 
     assert _client(handler).send_verification_message(PHONE, 6, 120) == "rid-1"
     assert seen == {"url": "https://gw.test/sendVerificationMessage", "auth": "Bearer tg-token",
@@ -38,40 +48,49 @@ def test_gateway_send_success_sends_correct_request():
 def test_gateway_send_timeout_is_not_retried():
     calls = []
 
-    def handler(req):
+    def handler(url, body, headers):
         calls.append(1)
-        raise httpx.ReadTimeout("slow", request=req)
+        return socket.timeout("slow")
 
     with pytest.raises(GatewayError) as e:
         _client(handler).send_verification_message(PHONE, 6, 120)
     assert e.value.kind == "unavailable" and len(calls) == 1
 
 
-def test_gateway_error_mapping():
-    def make(status, body):
-        return lambda req: httpx.Response(status, json=body)
+def test_gateway_send_connect_error_is_not_retried():
+    calls = []
 
+    def handler(url, body, headers):
+        calls.append(1)
+        return urllib.error.URLError(ConnectionRefusedError())
+
+    with pytest.raises(GatewayError):
+        _client(handler).send_verification_message(PHONE, 6, 120)
+    assert len(calls) == 1
+
+
+def test_gateway_error_mapping():
     cases = [
-        (make(400, {"ok": False, "error": "PHONE_NUMBER_INVALID"}), "not_reachable"),
-        (make(429, {"ok": False, "error": "FLOOD_WAIT"}), "rate_limited"),
-        (make(401, {"ok": False, "error": "ACCESS_TOKEN_INVALID"}), "config"),
-        (make(400, {"ok": False, "error": "SOMETHING_ELSE"}), "rejected"),
-        (make(502, {"ok": False}), "unavailable"),
+        (400, {"ok": False, "error": "PHONE_NUMBER_INVALID"}, "not_reachable"),
+        (429, {"ok": False, "error": "FLOOD_WAIT"}, "rate_limited"),
+        (401, {"ok": False, "error": "ACCESS_TOKEN_INVALID"}, "config"),
+        (400, {"ok": False, "error": "SOMETHING_ELSE"}, "rejected"),
+        (502, {"ok": False}, "unavailable"),
     ]
-    for handler, kind in cases:
+    for status, body, kind in cases:
         with pytest.raises(GatewayError) as e:
-            _client(handler).send_verification_message(PHONE, 6, 120)
+            _client(lambda u, b, h, s=status, bd=body: Resp(s, bd)).send_verification_message(PHONE, 6, 120)
         assert e.value.kind == kind
 
 
 def test_gateway_check_retries_only_connect_error():
     calls = []
 
-    def handler(req):
+    def handler(url, body, headers):
         calls.append(1)
         if len(calls) == 1:
-            raise httpx.ConnectError("down", request=req)
-        return httpx.Response(200, json={"ok": True, "result": {
+            return urllib.error.URLError(ConnectionRefusedError())
+        return Resp(200, {"ok": True, "result": {
             "request_id": "rid", "verification_status": {"status": "code_valid", "updated_at": 1}}})
 
     assert _client(handler).check_verification_status("rid", "123456") == "code_valid"
