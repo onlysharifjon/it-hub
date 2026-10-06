@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
-
-import httpx
+from typing import Any, Optional
 
 log = logging.getLogger("ithub.telegram_gateway")
 
@@ -41,7 +39,7 @@ def _classify(error: str) -> str:
 
 class TelegramGatewayClient:
     def __init__(self, token: Optional[str] = None, base_url: Optional[str] = None,
-                 timeout: float = 10.0, transport: Optional[httpx.BaseTransport] = None):
+                 timeout: float = 10.0, transport: Optional[Any] = None):
         self._token = (token if token is not None else os.getenv("TELEGRAM_GATEWAY_TOKEN", "")).strip()
         self._base = (base_url or os.getenv("TELEGRAM_GATEWAY_BASE_URL", "https://gatewayapi.telegram.org")).rstrip("/")
         self._timeout = timeout
@@ -54,6 +52,7 @@ class TelegramGatewayClient:
     def _call(self, method: str, body: dict, retry_connect: bool = False) -> dict:
         if not self._token:
             raise GatewayError("config", "TELEGRAM_GATEWAY_TOKEN not set")
+        import httpx   # prod image'da yo'q bo'lishi mumkin — app importini buzmasin
         attempts = 2 if retry_connect else 1
         for i in range(attempts):
             try:
