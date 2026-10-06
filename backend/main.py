@@ -2473,6 +2473,10 @@ def create_expense(payload: schemas.ExpenseCreate, db: Session = Depends(get_db)
     _validate_salary_expense(db, data.get('category'), data.get('staff_id'))
     if data.get('category') != 'salary':
         data['staff_id'] = None
+    # Xarajat kiritilgan oyda turadi (masalan, sentyabr oyligi oktyabrda
+    # berilsa — oktyabr xarajati): oy/yil foydalanuvchidan emas, sanadan olinadi.
+    local_now = tz.now()
+    data['month'], data['year'] = local_now.month, local_now.year
     exp = models.Expense(**data)
     db.add(exp)
     db.flush()
@@ -2489,6 +2493,9 @@ def update_expense(expense_id: int, payload: schemas.ExpenseUpdate, db: Session 
     if not exp:
         raise HTTPException(status_code=404, detail="Xarajat topilmadi")
     changes = payload.dict(exclude_unset=True)
+    # Oy/yil kiritilgan sanaga bog'langan — tahrirda o'zgarmaydi
+    changes.pop('month', None)
+    changes.pop('year', None)
     new_category = changes.get('category', exp.category)
     new_staff_id = changes.get('staff_id', exp.staff_id)
     _validate_salary_expense(db, new_category, new_staff_id)

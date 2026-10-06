@@ -1124,8 +1124,9 @@ class ExpenseRead(BaseModel):
 class ExpenseCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=300)
     amount: Decimal = Field(..., gt=0, le=_MAX_MONEY)
-    month: int = Field(..., ge=1, le=12)
-    year: int = Field(..., ge=2020)
+    # E'tiborga olinmaydi — oy/yil har doim kiritilgan sanadan (Toshkent) olinadi
+    month: Optional[int] = Field(None, ge=1, le=12)
+    year: Optional[int] = Field(None, ge=2020)
     category: Literal['other', 'salary'] = 'other'
     staff_id: Optional[int] = None
 
