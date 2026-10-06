@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
+from sqlalchemy import BigInteger, Column, Index, text, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -553,11 +553,41 @@ class Parent(Base):
     hashed_password = Column(String(255), nullable=False)
     avatar = Column(Text, nullable=True)                            # base64 rasm (mobil ilova yuklaydi)
     is_active = Column(Boolean, nullable=False, default=True)
+    phone_verified_at = Column(DateTime, nullable=True)             # Telegram OTP bilan tasdiqlangan payt
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # qaysi xodim yaratgan
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     created_by = relationship("User", foreign_keys=[created_by_id])
     children = relationship("ParentChild", back_populates="parent", cascade="all, delete-orphan", order_by="ParentChild.id")
+
+
+class PhoneVerification(Base):
+    """Telegram Gateway orqali yuborilgan OTP (parent/phone_auth).
+
+    `public_id` — clientga beriladigan tasodifiy ID; Telegram `request_id` clientga
+    berilmaydi. Bir telefon uchun bir vaqtda faqat bitta `pending` (unikal qisman indeks).
+    status: pending → verified | cancelled | expired | max_attempts | failed
+    """
+    __tablename__ = "phone_verifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    public_id = Column(String(64), nullable=False, unique=True, index=True)
+    phone = Column(String(20), nullable=False, index=True)              # E.164
+    gateway_request_id = Column(String(128), nullable=True)
+    status = Column(String(20), nullable=False, default="pending")
+    attempts = Column(Integer, nullable=False, default=0)
+    resend_count = Column(Integer, nullable=False, default=0)
+    ip = Column(String(64), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_sent_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    verified_at = Column(DateTime, nullable=True)
+    parent_id = Column(Integer, ForeignKey("parents.id", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (
+        Index("uq_phone_verification_pending", "phone", unique=True,
+              postgresql_where=text("status = 'pending'"), sqlite_where=text("status = 'pending'")),
+    )
 
 
 class ParentChild(Base):

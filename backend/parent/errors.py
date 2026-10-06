@@ -54,9 +54,12 @@ def api_error(code: str, message: str, status_code: int = 400, *,
     return HTTPException(status_code=status_code, detail={"error": err}, headers=headers)
 
 
+PHONE_AUTH_PREFIX = "/auth/phone/"
+
+
 def _is_parent(request: Request) -> bool:
     path = request.url.path
-    return path == PARENT_PREFIX or path.startswith(PARENT_PREFIX + "/")
+    return path == PARENT_PREFIX or path.startswith(PARENT_PREFIX + "/") or path.startswith(PHONE_AUTH_PREFIX)
 
 
 def request_id(request: Request) -> str:
@@ -134,7 +137,9 @@ async def _validation_handler(request: Request, exc: RequestValidationError):
     fields: dict = {}
     for e in errs:
         fields.setdefault(_field_path(e.get("loc", ())), []).append(e.get("msg", "invalid"))
-    return _envelope(request, 422, "validation_error", "So'rov ma'lumotlari noto'g'ri.", fields)
+    # OTP endpointlari shartnomasi: validatsiya xatosi — 400 (parent API'da — 422)
+    status = 400 if request.url.path.startswith(PHONE_AUTH_PREFIX) else 422
+    return _envelope(request, status, "validation_error", "So'rov ma'lumotlari noto'g'ri.", fields)
 
 
 async def _db_unavailable_handler(request: Request, exc: Exception):

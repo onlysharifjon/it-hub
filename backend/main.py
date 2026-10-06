@@ -321,11 +321,13 @@ from .parent.router_parent import router as parent_router
 from .parent.notifications import notify_parents_of_student
 from .parent import errors as parent_errors
 from .parent.payments.router_callbacks import router as payment_callbacks_router
+from .parent.phone_auth.router import router as phone_auth_router
 from .minar import achievements as minar_achievements
 from .minar import notify as minar_notify
 from .minar.models import MinarAccount
 app.include_router(parent_router)
 app.include_router(payment_callbacks_router)
+app.include_router(phone_auth_router)
 parent_errors.install(app)   # /parent/* uchun yagona xato formati + X-Request-ID
 
 # Facebook Lead Ads webhook (Make.com -> /leads/facebook) — alohida paketda
