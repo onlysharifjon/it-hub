@@ -329,6 +329,10 @@ from .phone_utils import normalize_phone, dedup_key, is_placeholder_phone, forma
 from .facebook_leads import router as facebook_leads_router
 app.include_router(facebook_leads_router)
 
+# Payme Merchant API (JSON-RPC callback) — /payme
+from .payme import router as payme_router
+app.include_router(payme_router)
+
 
 # ── Rate limiting (in-memory; single-process pm2 fork) ───────────────────────
 from . import security as _security

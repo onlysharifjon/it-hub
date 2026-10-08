@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
+from sqlalchemy import BigInteger, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -634,6 +634,25 @@ class ParentInvoice(Base):
     parent = relationship("Parent", foreign_keys=[parent_id])
     student = relationship("Student", foreign_keys=[student_id])
     group = relationship("Group", foreign_keys=[group_id])
+
+
+class PaymeTransaction(Base):
+    """Payme Merchant API tranzaksiyasi (backend/payme.py). Vaqtlar — Payme formatida, ms."""
+    __tablename__ = "payme_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    paycom_id = Column(String(64), nullable=False, unique=True, index=True)   # Payme'dagi tranzaksiya ID
+    invoice_id = Column(Integer, ForeignKey("parent_invoices.id"), nullable=False, index=True)
+    amount = Column(BigInteger, nullable=False)                               # tiyin
+    state = Column(Integer, nullable=False, default=1)   # 1 yaratilgan | 2 to'langan | -1 bekor | -2 to'lovdan keyin bekor
+    reason = Column(Integer, nullable=True)
+    paycom_time = Column(BigInteger, nullable=False)
+    create_time = Column(BigInteger, nullable=False)
+    perform_time = Column(BigInteger, nullable=False, default=0)
+    cancel_time = Column(BigInteger, nullable=False, default=0)
+    payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True)
+
+    invoice = relationship("ParentInvoice", foreign_keys=[invoice_id])
 
 
 class Holiday(Base):

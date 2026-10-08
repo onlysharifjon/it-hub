@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from .. import models, tz
+from .. import models, payme, tz
 from ..database import get_db
 from .. import security
 from . import schemas, service
@@ -239,7 +239,7 @@ def mark_read(
     return None
 
 
-# ── To'lov (stub — Payme/Click/Uzum keyin) ───────────────────────────────────
+# ── To'lov (Payme — backend/payme.py; Click/Uzum hozircha stub) ───────────────────────────────────
 
 @router.post("/children/{child_id}/pay", response_model=schemas.CheckoutResponse)
 def pay(
@@ -269,9 +269,13 @@ def pay(
     )
     db.add(invoice)
     db.flush()
+    if payload.provider == "payme" and payme.is_configured():
+        invoice.checkout_ref = f"PAYME-{invoice.id}"
+        db.commit()
+        return schemas.CheckoutResponse(checkout_url=payme.checkout_url(invoice))
     invoice.checkout_ref = f"STUB-{payload.provider}-{invoice.id}"
     db.commit()
-    # STUB: haqiqiy Payme/Click/Uzum integratsiyasi alohida vazifa
+    # STUB: Click/Uzum integratsiyasi alohida vazifa
     return schemas.CheckoutResponse(
         checkout_url=f"https://checkout.minaracademy.uz/stub/{invoice.checkout_ref}",
     )
