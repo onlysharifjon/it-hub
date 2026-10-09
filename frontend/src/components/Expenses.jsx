@@ -237,7 +237,8 @@ export default function Expenses({ currentUser }) {
           onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
           placeholder="500000"
         />
-        <p className="muted-sm">Xarajat kiritilgan oyda ({modal === 'add' ? 'joriy oy' : `${MONTHS[modal.month - 1]} ${modal.year}`}) hisobga olinadi.</p>
+        {/* Modal yopiq bo'lsa ham bolalar JSX'i hisoblanadi — `modal` null bo'lishi mumkin */}
+        <p className="muted-sm">Xarajat kiritilgan oyda ({!modal || modal === 'add' ? 'joriy oy' : `${MONTHS[modal.month - 1]} ${modal.year}`}) hisobga olinadi.</p>
         <Select
           label="Turi" value={form.category}
           onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
