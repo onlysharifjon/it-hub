@@ -64,7 +64,7 @@ export default function Topbar({ currentUser, activePage, onNavigate, onAvatarUp
   const avatarLetter = (currentUser?.full_name || currentUser?.username)?.[0]?.toUpperCase() ?? '?'
   const avatarUrl = currentUser?.avatar ? `${API_BASE}/uploads/${currentUser.avatar}` : null
   const quickActions = QUICK_ACTIONS.filter(a => a.roles.includes(role))
-  const currentNav = flatNav(role).find(item => item.key === activePage || item.alsoActiveOn?.includes(activePage))
+  const currentNav = flatNav(role, currentUser?.finance_permissions).find(item => item.key === activePage || item.alsoActiveOn?.includes(activePage))
 
   function openProfile() {
     setProfileForm({ full_name: currentUser?.full_name || '', current_password: '', password: '', password2: '' })
@@ -200,6 +200,7 @@ export default function Topbar({ currentUser, activePage, onNavigate, onAvatarUp
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         role={role}
+        perms={currentUser?.finance_permissions}
         onNavigate={onNavigate}
       />
 

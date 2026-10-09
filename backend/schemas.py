@@ -36,6 +36,7 @@ class UserRead(BaseModel):
     blocked_at:      Optional[datetime] = None
     expires_at:      Optional[datetime] = None
     created_at: datetime
+    finance_permissions: List[str] = []   # Moliya bo'limi huquqlari (admin — hammasi)
 
     # /uploads faqat imzoli havola bilan ochiladi (backend/uploads_sign.py)
     @validator("avatar")
@@ -1090,6 +1091,9 @@ class PaymentCreate(BaseModel):
     year: int = Field(..., ge=2020)
     notes: Optional[str] = None
     via_sales: bool = False
+    # Moliya: qaysi usulda va qaysi kassaga (berilmasa — naqd, "Asosiy kassa")
+    method: Optional[Literal['cash', 'card', 'bank_transfer']] = None
+    account_id: Optional[int] = None
 
 
 class PaymentUpdate(BaseModel):

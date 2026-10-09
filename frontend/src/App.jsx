@@ -37,7 +37,15 @@ const Employees = lazy(() => import('./components/Employees'))
 const AuditWarnings = lazy(() => import('./components/AuditWarnings'))
 const MyWarnings = lazy(() => import('./components/MyWarnings'))
 const BotAdmin = lazy(() => import('./components/BotAdmin'))
+const FinOverview = lazy(() => import('./components/finance/FinOverview'))
+const FinIncome = lazy(() => import('./components/finance/FinIncome'))
+const FinExpenses = lazy(() => import('./components/finance/FinExpenses'))
+const FinDebts = lazy(() => import('./components/finance/FinDebts'))
+const FinAccounts = lazy(() => import('./components/finance/FinAccounts'))
+const FinReports = lazy(() => import('./components/finance/FinReports'))
+const FinHistory = lazy(() => import('./components/finance/FinHistory'))
 import { fetchMe, login as apiLogin, setToken } from './api'
+import { NAV_GROUPS, flatNav, hasPerm } from './constants/nav'
 
 function readHash() {
   const raw = window.location.hash.replace('#', '').trim()
@@ -85,7 +93,14 @@ const PAGE_ACCESS = {
   academic:         ['admin', 'support_teacher', 'teacher'],
   employees:        ['admin', 'audit'],
   audit_warnings:   ['admin', 'audit'],
-  my_warnings:      ['support_teacher', 'teacher', 'hunter', 'sales', 'call_center'],
+  my_warnings:      ['support_teacher', 'teacher', 'hunter', 'sales', 'call_center', 'finance'],
+  fin_overview:     ['admin', 'finance'],
+  fin_income:       ['admin', 'finance'],
+  fin_expenses:     ['admin', 'finance'],
+  fin_debts:        ['admin', 'finance'],
+  fin_accounts:     ['admin', 'finance'],
+  fin_reports:      ['admin', 'finance'],
+  fin_history:      ['admin', 'finance'],
 }
 
 const DEFAULT_PAGE_BY_ROLE = {
@@ -96,12 +111,22 @@ const DEFAULT_PAGE_BY_ROLE = {
   sales:           'leads',
   call_center:     'leads',
   audit:           'employees',
+  finance:         'fin_overview',
 }
 
-function pageAllowedForRole(page, role) {
+// Moliya sahifalari qo'shimcha ravishda huquq talab qiladi (nav.js dagi `perm`).
+const PAGE_PERM = Object.fromEntries(NAV_GROUPS.flatMap(g => g.items).filter(i => i.perm).map(i => [i.key, i.perm]))
+
+function pageAllowedForRole(page, role, perms) {
   const allowed = PAGE_ACCESS[page]
   if (!allowed) return true   // ro'yxatda yo'q sahifa — cheklanmagan
-  return allowed.includes(role)
+  return allowed.includes(role) && hasPerm(perms, PAGE_PERM[page])
+}
+
+function defaultPage(user) {
+  const preferred = DEFAULT_PAGE_BY_ROLE[user.role] || 'lessons'
+  if (pageAllowedForRole(preferred, user.role, user.finance_permissions)) return preferred
+  return flatNav(user.role, user.finance_permissions)[0]?.key || preferred
 }
 
 // Ommaviy (auth talab qilmaydigan) qabul formasi: #intake/<slug>
@@ -174,8 +199,8 @@ function App() {
   // xato holatda qolish o'rniga, rolga mos boshlang'ich sahifaga qaytaradi.
   useEffect(() => {
     if (!currentUser) return
-    if (!pageAllowedForRole(activePage, currentUser.role)) {
-      handleNavigate(DEFAULT_PAGE_BY_ROLE[currentUser.role] || 'lessons')
+    if (!pageAllowedForRole(activePage, currentUser.role, currentUser.finance_permissions)) {
+      handleNavigate(defaultPage(currentUser))
     }
   }, [currentUser, activePage])
 
@@ -359,6 +384,13 @@ function App() {
           {activePage === 'audit_warnings' && <AuditWarnings currentUser={currentUser} />}
           {activePage === 'my_warnings' && <MyWarnings />}
           {activePage === 'bot_admin' && <BotAdmin />}
+          {activePage === 'fin_overview' && <FinOverview currentUser={currentUser} onNavigate={handleNavigate} />}
+          {activePage === 'fin_income' && <FinIncome currentUser={currentUser} />}
+          {activePage === 'fin_expenses' && <FinExpenses currentUser={currentUser} />}
+          {activePage === 'fin_debts' && <FinDebts currentUser={currentUser} />}
+          {activePage === 'fin_accounts' && <FinAccounts currentUser={currentUser} />}
+          {activePage === 'fin_reports' && <FinReports currentUser={currentUser} />}
+          {activePage === 'fin_history' && <FinHistory currentUser={currentUser} />}
         </div>
         </Suspense>
       </main>

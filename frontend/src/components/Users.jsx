@@ -4,8 +4,9 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faUserShield, faPlus, faLock, faLockOpen,
-  faPen, faSearch, faXmark, faTrash, faPaperPlane,
+  faPen, faSearch, faXmark, faTrash, faPaperPlane, faKey,
 } from '@fortawesome/free-solid-svg-icons'
+import PermissionsModal from './finance/PermissionsModal'
 import {
   fetchUsers, createUser, updateUser, blockUser, unblockUser, deleteUserPermanent, broadcastToStaff,
 } from '../api'
@@ -38,6 +39,8 @@ export default function Users() {
 
   // Permanent delete modal
   const [deleteModal, setDeleteModal] = useState(null)  // null | user object
+  // Finans xodimi huquqlari
+  const [permUser, setPermUser] = useState(null)
   const [deleting, setDeleting] = useState(false)
 
   // Telegram orqali barcha xodimlarga xabar yuborish
@@ -214,6 +217,11 @@ export default function Users() {
           <button className="btn-icon" onClick={() => openEdit(u)} title="Tahrirlash" aria-label="Tahrirlash">
             <FontAwesomeIcon icon={faPen} />
           </button>
+          {u.role === 'finance' && (
+            <button className="btn-icon" onClick={() => setPermUser(u)} title="Moliya huquqlari" aria-label="Moliya huquqlari">
+              <FontAwesomeIcon icon={faKey} />
+            </button>
+          )}
           {u.blocked_at ? (
             <button className="btn-icon success" onClick={() => handleUnblock(u)} title="Blokni olib tashlash" aria-label="Blokni olib tashlash">
               <FontAwesomeIcon icon={faLockOpen} />
@@ -453,6 +461,7 @@ export default function Users() {
           </div>
         </Overlay>
       )}
+      <PermissionsModal user={permUser} onClose={() => setPermUser(null)} />
     </div>
   )
 }

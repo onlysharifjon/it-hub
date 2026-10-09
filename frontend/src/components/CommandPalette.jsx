@@ -15,7 +15,7 @@ import { fetchStudents, fetchGroups, fetchLeads } from '../api'
  * Bundan tashqari talaba/guruh/lidni ismi bo'yicha to'g'ridan-to'g'ri topadi —
  * ilovada bunday umumiy qidiruv umuman yo'q edi.
  */
-export default function CommandPalette({ open, onClose, role, onNavigate }) {
+export default function CommandPalette({ open, onClose, role, perms, onNavigate }) {
   const [q, setQ] = useState('')
   const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(false)
@@ -25,7 +25,7 @@ export default function CommandPalette({ open, onClose, role, onNavigate }) {
   const paletteRef = useRef(null)
   useFocusTrap(open, paletteRef, onClose)
 
-  const pages = useMemo(() => flatNav(role), [role])
+  const pages = useMemo(() => flatNav(role, perms), [role, perms])
 
   useEffect(() => {
     if (open) { setQ(''); setRecords([]); setActive(0); setTimeout(() => inputRef.current?.focus(), 30) }

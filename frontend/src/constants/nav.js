@@ -5,7 +5,8 @@ import {
   faRightLeft, faBookOpen, faGraduationCap, faCommentDots, faPeopleRoof,
   faTriangleExclamation, faRobot, faComments, faMoneyBillWave,
   faSitemap, faListCheck, faUsersGear, faCashRegister, faDesktop,
-  faRocket,
+  faRocket, faChartPie, faArrowDownLong, faFileInvoiceDollar, faBuildingColumns,
+  faFileLines, faClockRotateLeft, faHandHoldingDollar,
 } from '@fortawesome/free-solid-svg-icons'
 
 /**
@@ -21,7 +22,7 @@ import {
  * Backend baribir har bir endpoint'ni mustaqil tekshiradi (asosiy himoya shu).
  */
 
-const ALL = ['admin', 'support_teacher', 'teacher', 'hunter', 'sales', 'call_center', 'audit']
+const ALL = ['admin', 'support_teacher', 'teacher', 'hunter', 'sales', 'call_center', 'audit', 'finance']
 const EXCEPT = (...roles) => ALL.filter(r => !roles.includes(r))
 
 /**
@@ -78,15 +79,30 @@ export const NAV_GROUPS = [
     items: [
       { key: 'students',         label: 'Talabalar',      icon: faUserGraduate,     tone: TONE.students,   roles: ['admin', 'support_teacher', 'hunter', 'sales', 'call_center'] },
       { key: 'groups',           label: 'Guruhlar',       icon: faUsers,            tone: TONE.groups,     roles: ['admin', 'support_teacher', 'hunter', 'sales', 'call_center'], alsoActiveOn: ['group_detail'] },
-      { key: 'today_attendance', label: 'Bugungi darslar', icon: faCalendarCheck,   tone: TONE.attendance, roles: EXCEPT('audit') },
+      { key: 'today_attendance', label: 'Bugungi darslar', icon: faCalendarCheck,   tone: TONE.attendance, roles: EXCEPT('audit', 'finance') },
       { key: 'academic',         label: 'Baholar va izohlar', icon: faGraduationCap, tone: TONE.academic,   roles: ['admin', 'support_teacher', 'teacher'] },
       { key: 'lessons',          label: 'Dars rejalari',  icon: faBook,             tone: TONE.academic,   roles: ['admin', 'support_teacher', 'teacher'], expandable: 'categories' },
       { key: 'minar_accounts',   label: 'Minar Space',    icon: faRocket,           tone: TONE.students,   roles: ['admin', 'support_teacher'] },
     ],
   },
   {
-    id: 'finance',
+    // Moliya bo'limi (Finans roli). `perm` — qo'shimcha ravishda shu huquq
+    // ham bo'lishi kerak (backend/finance/permissions.py; admin — hammasi).
+    id: 'fin',
     label: 'Moliya',
+    items: [
+      { key: 'fin_overview', label: "Umumiy ko'rinish",    icon: faChartPie,          tone: TONE.finance,  roles: ['admin', 'finance'], perm: 'finance.dashboard' },
+      { key: 'fin_income',   label: 'Kirimlar',            icon: faArrowDownLong,     tone: TONE.payments, roles: ['admin', 'finance'], perm: ['finance.clients', 'finance.income'] },
+      { key: 'fin_expenses', label: 'Xarajatlar',          icon: faHandHoldingDollar, tone: TONE.expenses, roles: ['admin', 'finance'], perm: 'finance.expense' },
+      { key: 'fin_debts',    label: 'Qarzdorlik',          icon: faFileInvoiceDollar, tone: TONE.finance,  roles: ['admin', 'finance'], perm: 'finance.debts' },
+      { key: 'fin_accounts', label: 'Kassa va hisoblar',   icon: faBuildingColumns,   tone: TONE.payments, roles: ['admin', 'finance'] },
+      { key: 'fin_reports',  label: 'Hisobotlar',          icon: faFileLines,         tone: TONE.finance,  roles: ['admin', 'finance'], perm: 'finance.reports' },
+      { key: 'fin_history',  label: 'Operatsiyalar tarixi', icon: faClockRotateLeft,  tone: TONE.audit,    roles: ['admin', 'finance'], perm: 'finance.audit' },
+    ],
+  },
+  {
+    id: 'finance',
+    label: "To'lov va tariflar",
     items: [
       { key: 'payments',         label: "To'lovlar",         icon: faCreditCard,     tone: TONE.payments, roles: ['admin', 'hunter'] },
       { key: 'expenses',         label: 'Xarajatlar',        icon: faReceipt,        tone: TONE.expenses, roles: ['admin', 'hunter'] },
@@ -118,22 +134,29 @@ export const NAV_GROUPS = [
   },
 ]
 
-/** Rolga ko'rinadigan guruh/elementlarni qaytaradi (bo'sh guruhlar tushib qoladi). */
-export function navForRole(role) {
+/** `perm` — bitta huquq yoki ro'yxat (kamida bittasi bo'lsa yetarli). */
+export function hasPerm(perms, perm) {
+  if (!perm) return true
+  const need = Array.isArray(perm) ? perm : [perm]
+  return need.some(p => (perms || []).includes(p))
+}
+
+/** Rolga (va moliya huquqlariga) ko'rinadigan guruh/elementlar (bo'sh guruhlar tushib qoladi). */
+export function navForRole(role, perms = []) {
   return NAV_GROUPS
-    .map(g => ({ ...g, items: g.items.filter(i => i.roles.includes(role)) }))
+    .map(g => ({ ...g, items: g.items.filter(i => i.roles.includes(role) && hasPerm(perms, i.perm)) }))
     .filter(g => g.items.length > 0)
 }
 
 /** Sahifa kaliti bo'yicha uni o'z ichiga olgan guruh id'sini topadi. */
-export function groupIdForPage(role, page) {
-  for (const g of navForRole(role)) {
+export function groupIdForPage(role, page, perms = []) {
+  for (const g of navForRole(role, perms)) {
     if (g.items.some(i => i.key === page || i.alsoActiveOn?.includes(page))) return g.id
   }
   return null
 }
 
 /** Global qidiruv / command palette uchun tekis ro'yxat. */
-export function flatNav(role) {
-  return navForRole(role).flatMap(g => g.items.map(i => ({ ...i, group: g.label })))
+export function flatNav(role, perms = []) {
+  return navForRole(role, perms).flatMap(g => g.items.map(i => ({ ...i, group: g.label })))
 }

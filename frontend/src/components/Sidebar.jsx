@@ -23,7 +23,8 @@ function Sidebar({
   const sidebarRef = useRef(null)
   useFocusTrap(isOpen, sidebarRef, onClose)
   const role = currentUser?.role
-  const groups = navForRole(role)
+  const perms = currentUser?.finance_permissions
+  const groups = navForRole(role, perms)
 
   // Yig'ilgan guruhlar — brauzerda eslab qolinadi
   const [collapsed, setCollapsed] = useState(() => {
@@ -44,7 +45,7 @@ function Sidebar({
 
   // Joriy sahifa yopiq guruhda bo'lsa — o'sha guruhni ochib qo'yamiz
   useEffect(() => {
-    const gid = groupIdForPage(role, activePage)
+    const gid = groupIdForPage(role, activePage, perms)
     if (gid && collapsed.has(gid)) {
       setCollapsed(prev => { const n = new Set(prev); n.delete(gid); return n })
     }

@@ -27,7 +27,7 @@ const NOW = tashkentNow()
 const YEARS = Array.from({ length: 5 }, (_, i) => NOW.getFullYear() - 2 + i)
 const fmtn = n => Number(n || 0).toLocaleString('uz-UZ')
 
-const EMPTY = { student_id: '', group_id: '', amount: '', month: NOW.getMonth() + 1, year: NOW.getFullYear(), notes: '', via_sales: false }
+const EMPTY = { student_id: '', group_id: '', amount: '', month: NOW.getMonth() + 1, year: NOW.getFullYear(), notes: '', via_sales: false, method: 'cash' }
 
 export default function Payments({ currentUser }) {
   const isAdmin = currentUser?.role === 'admin'
@@ -220,6 +220,7 @@ export default function Payments({ currentUser }) {
           year: parseInt(form.year),
           notes: form.notes || null,
           via_sales: !!form.via_sales,
+          method: form.method || 'cash',
         })
         toast.success("To'lov qo'shildi")
       }
@@ -529,6 +530,15 @@ export default function Payments({ currentUser }) {
             )}
           </div>
         </div>
+
+        {!editing && (
+          <Select label="To'lov usuli" value={form.method || 'cash'} onChange={e => setForm(p => ({ ...p, method: e.target.value }))}
+            hint="Naqd — Asosiy kassaga; karta/bank — mos bank yoki karta hisobiga (ochilmagan bo'lsa Asosiy kassaga)">
+            <option value="cash">Naqd</option>
+            <option value="card">Karta</option>
+            <option value="bank_transfer">Bank o'tkazmasi</option>
+          </Select>
+        )}
 
         {expected && expected.expected > 0 && (() => {
           const entered = parseFloat(form.amount) || 0

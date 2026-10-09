@@ -11,6 +11,7 @@
 export const ROLE_LABELS = {
   admin: 'Admin', support_teacher: 'Support Teacher', teacher: "O'qituvchi",
   hunter: 'Hunter', call_center: 'Call Center', sales: 'Sales', audit: 'Audit',
+  finance: 'Finans',
 }
 
 // Rol ranglari — badge'da YUMSHOQ (10% tint fon + to'yingan matn) ishlatiladi,
@@ -27,11 +28,12 @@ export const ROLE_COLORS = {
   call_center:     'var(--stage-teal-text)',
   sales:           'var(--stage-green-text)',
   audit:           'var(--stage-red-text)',
+  finance:         'var(--stage-emerald-text)',
 }
 
 // Rol tanlash ro'yxati — ko'rsatish tartibi (eng ko'p ishlatiladigani yuqorida).
 export const ROLE_ORDER = [
-  'teacher', 'support_teacher', 'hunter', 'sales', 'call_center', 'audit', 'admin',
+  'teacher', 'support_teacher', 'hunter', 'sales', 'call_center', 'audit', 'finance', 'admin',
 ]
 export const ROLE_OPTIONS = ROLE_ORDER.map(value => ({ value, label: ROLE_LABELS[value] }))
 

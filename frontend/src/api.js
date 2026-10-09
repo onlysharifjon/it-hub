@@ -760,3 +760,71 @@ export async function fetchBotChats(search) {
 export async function fetchBotChatMessages(chatId, { page = 1, page_size = 50 } = {}) {
   return request(`/bot/chats/${chatId}/messages?page=${page}&page_size=${page_size}`)
 }
+
+
+// ── Moliya bo'limi (Finans roli) ─────────────────────────────────────────────
+
+function qs(params = {}) {
+  const q = new URLSearchParams()
+  Object.entries(params).forEach(([k, v]) => { if (v !== '' && v != null) q.set(k, v) })
+  const s = q.toString()
+  return s ? `?${s}` : ''
+}
+
+export const finance = {
+  me:              ()          => request('/finance/me'),
+  dashboard:       (p)         => request(`/finance/dashboard${qs(p)}`),
+  accounts:        ()          => request('/finance/accounts'),
+  createAccount:   (b)         => request('/finance/accounts', { method: 'POST', body: JSON.stringify(b) }),
+  updateAccount:   (id, b)     => request(`/finance/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(b) }),
+  categories:      ()          => request('/finance/categories'),
+  createCategory:  (b)         => request('/finance/categories', { method: 'POST', body: JSON.stringify(b) }),
+  updateCategory:  (id, b)     => request(`/finance/categories/${id}`, { method: 'PATCH', body: JSON.stringify(b) }),
+  staff:           ()          => request('/finance/staff'),
+  groups:          ()          => request('/finance/groups'),
+  students:        (search)    => request(`/finance/students${qs({ search })}`),
+  student:         (id)        => request(`/finance/students/${id}`),
+  expected:        (p)         => request(`/finance/expected${qs(p)}`),
+  transactions:    (p)         => request(`/finance/transactions${qs(p)}`),
+  transaction:     (id)        => request(`/finance/transactions/${id}`),
+  createIncome:    (b)         => request('/finance/income', { method: 'POST', body: JSON.stringify(b) }),
+  createExpense:   (b)         => request('/finance/expenses', { method: 'POST', body: JSON.stringify(b) }),
+  confirm:         (id)        => request(`/finance/transactions/${id}/confirm`, { method: 'POST' }),
+  cancel:          (id, reason) => request(`/finance/transactions/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  refund:          (id, b)     => request(`/finance/transactions/${id}/refund`, { method: 'POST', body: JSON.stringify(b) }),
+  adjust:          (id, b)     => request(`/finance/transactions/${id}/adjust`, { method: 'POST', body: JSON.stringify(b) }),
+  transfer:        (b)         => request('/finance/transfers', { method: 'POST', body: JSON.stringify(b) }),
+  debts:           (p)         => request(`/finance/debts${qs(p)}`),
+  report:          (kind, p)   => request(`/finance/reports/${kind}${qs(p)}`),
+  audit:           (p)         => request(`/finance/audit${qs(p)}`),
+  reconcile:       ()          => request('/finance/reconcile'),
+  updateSettings:  (b)         => request('/finance/settings', { method: 'PUT', body: JSON.stringify(b) }),
+  userPermissions: (id)        => request(`/finance/users/${id}/permissions`),
+  setUserPermissions: (id, permissions) => request(`/finance/users/${id}/permissions`, { method: 'PUT', body: JSON.stringify({ permissions }) }),
+  async uploadDocument(file) {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch(`${API_BASE}/finance/documents`, {
+      method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: fd,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw Object.assign(new Error(typeof data.detail === 'string' ? data.detail : 'Fayl yuklanmadi'), { status: res.status })
+    return data
+  },
+  // Eksport — token URL'da emas, sarlavhada yuboriladi; fayl blob sifatida saqlanadi.
+  async exportReport(kind, params, format) {
+    const res = await fetch(`${API_BASE}/finance/reports/${kind}/export${qs({ ...params, format })}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(typeof err.detail === 'string' ? err.detail : "Eksport qilib bo'lmadi")
+    }
+    const blob = await res.blob()
+    const name = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || `moliya-${kind}.${format}`
+    const url = URL.createObjectURL(blob)
+    const a = Object.assign(document.createElement('a'), { href: url, download: name })
+    document.body.appendChild(a); a.click(); a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+  },
+}

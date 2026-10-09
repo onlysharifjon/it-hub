@@ -15,6 +15,7 @@ class UserRole(str, enum.Enum):
     hunter      = "hunter"       # hunter     — lid qo'shish + talabalar/guruhlar
     sales       = "sales"        # sales      — CRM lidlar + talabalar/guruhlar (moliya yo'q)
     audit       = "audit"        # audit      — xodimlarga ogohlantirish/jarima berish
+    finance     = "finance"      # finans     — Moliya bo'limi (huquqlar User.permissions orqali)
 
 
 class LeadStatus(str, enum.Enum):
@@ -43,6 +44,9 @@ class User(Base):
     salary = Column(Numeric(12, 2), nullable=True)  # belgilangan oylik (admin tomonidan kiritiladi)
     # Oyliksiz ishlaydi — o'qituvchi uchun FIX ham, talaba ulushi (KPI) ham hisoblanmaydi
     salary_exempt = Column(Boolean, nullable=False, default=False, server_default='false')
+    # Moliya huquqlari (JSON ro'yxat, masalan ["finance.dashboard", ...]) — faqat
+    # admin o'zgartiradi. NULL — rolning standart to'plami (backend/finance/permissions.py).
+    permissions = Column(Text, nullable=True)
     # Block & expiry
     blocked_reason  = Column(Text, nullable=True)         # sabab matni
     blocked_contact = Column(String(300), nullable=True)  # bog'lanish ma'lumoti
@@ -55,6 +59,12 @@ class User(Base):
         order_by="Lesson.id",
     )
     audit_logs = relationship("AuditLog", back_populates="changed_by_user", order_by="AuditLog.id")
+
+    @property
+    def finance_permissions(self):
+        from .finance.permissions import effective_permissions
+        return effective_permissions(self)
+
     teaching_groups = relationship("Group", back_populates="teacher", order_by="Group.id")
 
 
@@ -90,6 +100,7 @@ class AuditLog(Base):
     changed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     old_value = Column(Text, nullable=True)
     new_value = Column(Text, nullable=True)
+    reason = Column(Text, nullable=True)   # amal sababi (moliya: qaytarim/tuzatish/bekor qilish)
 
     changed_by_user = relationship("User", back_populates="audit_logs")
 
@@ -1109,3 +1120,116 @@ class ComputerRental(Base):
     student = relationship("Student")
     given_by = relationship("User", foreign_keys=[given_by_id])
     returned_by = relationship("User", foreign_keys=[returned_by_id])
+
+
+# ── Moliya (Finans) ──────────────────────────────────────────────────────────
+
+class FinanceAccount(Base):
+    """Kassa yoki bank hisobi. `balance` — joriy qoldiq: har bir tasdiqlangan
+    operatsiya bilan BIR tranzaksiyada atomar yangilanadi
+    (`UPDATE ... SET balance = balance + :delta`, backend/finance/service.py).
+    `opening_balance` — modul ishga tushgan paytdagi boshlang'ich qoldiq."""
+    __tablename__ = "finance_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False)
+    kind = Column(String(12), nullable=False, default="cash")        # cash | bank | card | online
+    currency = Column(String(3), nullable=False, default="UZS")
+    code = Column(String(40), nullable=True, unique=True)            # tizim hisoblari: main_cash | online
+    opening_balance = Column(Numeric(14, 2), nullable=False, default=0)
+    balance = Column(Numeric(14, 2), nullable=False, default=0)
+    is_active = Column(Boolean, nullable=False, default=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ExpenseCategory(Base):
+    """Xarajat kategoriyasi — `finance.categories` huquqi bor xodim boshqaradi.
+    O'chirilmaydi (tarix uchun), faqat nofaol qilinadi."""
+    __tablename__ = "expense_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(120), nullable=False, unique=True)
+    code = Column(String(40), nullable=True, unique=True)            # salary | other (eski Expense.category bilan bog'lanish)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class FinanceTransaction(Base):
+    """Moliyaviy operatsiyalar jurnali (kirim, xarajat, qaytarim, tuzatish, o'tkazma).
+
+    Tasdiqlangan yozuv o'chirilmaydi va summasi o'zgartirilmaydi — tuzatish
+    va qaytarim `origin_id` orqali asl operatsiyaga bog'langan alohida yozuv.
+
+    `signed_amount` — pul oqimiga ta'siri (tx valyutasida): kirim +, xarajat −,
+    qaytarim −, o'tkazma 0. `flow` — hisobotdagi qatori: income | expense |
+    refund | transfer (tuzatish asl operatsiyaning `flow`ini oladi).
+
+    Talaba qarzi uchun manba avvalgidek `payments` jadvali (core_calc) —
+    tasdiqlangan kirim/qaytarim/tuzatish `payment_id` dagi Payment qatorini
+    yaratadi. Xarajat esa `expense_id` dagi Expense qatorini.
+    """
+    __tablename__ = "finance_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    number = Column(String(24), nullable=True, unique=True, index=True)   # KR-000001 ...
+    kind = Column(String(12), nullable=False, index=True)       # income | expense | refund | adjustment | transfer
+    flow = Column(String(12), nullable=False, index=True)       # income | expense | refund | transfer
+    status = Column(String(12), nullable=False, default="draft", index=True)  # draft | confirmed | cancelled
+    amount = Column(Numeric(14, 2), nullable=False)             # tuzatishda ishorali bo'lishi mumkin
+    signed_amount = Column(Numeric(14, 2), nullable=False, default=0)
+    currency = Column(String(3), nullable=False, default="UZS")
+    fx_rate = Column(Numeric(14, 4), nullable=True)             # 1 birlik = N so'm (UZS bo'lmagan talaba to'lovi)
+    amount_uzs = Column(Numeric(14, 2), nullable=True)          # talaba hisobiga yoziladigan so'm
+    op_date = Column(Date, nullable=False, index=True)          # operatsiya sanasi (Toshkent)
+    method = Column(String(16), nullable=True, index=True)      # cash | card | bank_transfer | online | unknown
+    account_id = Column(Integer, ForeignKey("finance_accounts.id"), nullable=True, index=True)
+    to_account_id = Column(Integer, ForeignKey("finance_accounts.id"), nullable=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=True, index=True)
+    group_id = Column(Integer, ForeignKey("groups.id"), nullable=True, index=True)
+    period_month = Column(Integer, nullable=True)
+    period_year = Column(Integer, nullable=True)
+    payment_id = Column(Integer, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True)
+    parent_invoice_id = Column(Integer, ForeignKey("parent_invoices.id", ondelete="SET NULL"), nullable=True, index=True)
+    expense_id = Column(Integer, ForeignKey("expenses.id", ondelete="SET NULL"), nullable=True, index=True)
+    origin_id = Column(Integer, ForeignKey("finance_transactions.id"), nullable=True, index=True)
+    category_id = Column(Integer, ForeignKey("expense_categories.id"), nullable=True, index=True)
+    counterparty = Column(String(200), nullable=True)           # oluvchi / kontragent
+    responsible_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    staff_id = Column(Integer, ForeignKey("users.id"), nullable=True)   # "Ish haqi" xarajati — kimga to'landi
+    # Haqiqiy bank/provayder tranzaksiyasi: usul (method) faqat qayd; bank
+    # tasdig'i esa alohida — `external_verified` faqat provayder callback'i
+    # (Payme/Click/Uzum) tasdiqlaganda True bo'ladi.
+    external_ref = Column(String(120), nullable=True)
+    external_verified = Column(Boolean, nullable=False, default=False)
+    reason = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    document_path = Column(String(500), nullable=True)
+    idempotency_key = Column(String(80), nullable=True, unique=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    confirmed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    confirmed_at = Column(DateTime, nullable=True)
+    cancelled_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    account = relationship("FinanceAccount", foreign_keys=[account_id])
+    to_account = relationship("FinanceAccount", foreign_keys=[to_account_id])
+    student = relationship("Student", foreign_keys=[student_id])
+    group = relationship("Group", foreign_keys=[group_id])
+    category = relationship("ExpenseCategory", foreign_keys=[category_id])
+    origin = relationship("FinanceTransaction", remote_side=[id], foreign_keys=[origin_id])
+    responsible = relationship("User", foreign_keys=[responsible_id])
+    staff = relationship("User", foreign_keys=[staff_id])
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    confirmed_by = relationship("User", foreign_keys=[confirmed_by_id])
+    cancelled_by = relationship("User", foreign_keys=[cancelled_by_id])
+
+
+class FinanceSetting(Base):
+    """Moliya sozlamalari (kalit-qiymat) — faqat admin o'zgartiradi."""
+    __tablename__ = "finance_settings"
+
+    key = Column(String(60), primary_key=True)
+    value = Column(String(200), nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -23,6 +23,7 @@ from sqlalchemy import func, extract, or_
 from sqlalchemy.orm import Session, selectinload, joinedload
 
 from . import models, schemas, core_calc, bot_client, work_center, tz
+from .finance import service as finance_service
 from .database import get_db
 from .models import UserRole
 
@@ -1935,11 +1936,15 @@ def create_payment(payload: schemas.PaymentCreate, db: Session = Depends(get_db)
     if not is_member:
         raise HTTPException(status_code=400, detail="Talaba shu guruhga biriktirilmagan")
 
-    p = models.Payment(**payload.dict(), paid_at=datetime.utcnow(), recorded_by_id=actor.id)
+    data = payload.dict()
+    method, account_id = data.pop("method", None), data.pop("account_id", None)
+    p = models.Payment(**data, paid_at=datetime.utcnow(), recorded_by_id=actor.id)
     db.add(p)
     db.flush()
     write_audit(db, entity_type="payment", entity_id=p.id, action="create",
                 changed_by_id=actor.id, new_value=payload.dict())
+    # Moliya jurnali + kassa qoldig'i (shu tranzaksiyada)
+    finance_service.on_legacy_payment_created(db, p, actor, method=method, account_id=account_id)
     # "Sales" tugmasi bosilgan bo'lsa — sales rolidagi xodimga har talaba uchun
     # FAQAT BIR MARTA (referral tizimidagi kabi) paid_count +1 qo'shiladi.
     if payload.via_sales:
@@ -1963,8 +1968,16 @@ def update_payment(payment_id: int, payload: schemas.PaymentUpdate, db: Session 
         raise HTTPException(status_code=404, detail="To'lov topilmadi")
     changes = payload.dict(exclude_unset=True)
     old = {k: str(getattr(p, k)) for k in changes}
+    old_amount = Decimal(str(p.amount))
+    fin_tx = finance_service.guard_legacy_payment(db, p) if (
+        "amount" in changes or "month" in changes or "year" in changes) else None
     for k, v in changes.items():
         setattr(p, k, v)
+    if fin_tx is not None:
+        fin_tx.period_month, fin_tx.period_year = p.month, p.year
+        # Jurnaldagi asl yozuv o'zgarmaydi — farq bog'langan tuzatish sifatida yoziladi
+        finance_service.legacy_correction(db, fin_tx, Decimal(str(p.amount)) - old_amount, actor,
+                                          "To'lovlar sahifasida summa o'zgartirildi")
     write_audit(db, entity_type="payment", entity_id=p.id, action="update",
                 changed_by_id=actor.id, old_value=old,
                 new_value={k: str(v) for k, v in changes.items()})
@@ -1990,6 +2003,9 @@ def delete_payment(payment_id: int, db: Session = Depends(get_db), actor: models
                            "amount": str(p.amount), "month": p.month, "year": p.year})
     was_sales = bool(p.via_sales)
     student_id = p.student_id
+    fin_tx = finance_service.guard_legacy_payment(db, p)
+    finance_service.legacy_correction(db, fin_tx, -Decimal(str(p.amount)), actor,
+                                      "To'lovlar sahifasida to'lov o'chirildi", detach=True)
     db.delete(p)
     db.flush()
     if was_sales:
@@ -2488,6 +2504,7 @@ def create_expense(payload: schemas.ExpenseCreate, db: Session = Depends(get_db)
     db.flush()
     write_audit(db, entity_type="expense", entity_id=exp.id, action="create",
                 changed_by_id=actor.id, new_value=data)
+    finance_service.on_legacy_expense_created(db, exp, actor)
     db.commit()
     db.refresh(exp)
     return exp
@@ -2508,8 +2525,13 @@ def update_expense(expense_id: int, payload: schemas.ExpenseUpdate, db: Session 
     if new_category != 'salary':
         changes['staff_id'] = None
     old = {k: str(getattr(exp, k)) for k in changes}
+    old_amount = Decimal(str(exp.amount))
+    fin_tx = finance_service.guard_legacy_expense(db, exp) if "amount" in changes else None
     for k, v in changes.items():
         setattr(exp, k, v)
+    if fin_tx is not None:
+        finance_service.legacy_correction(db, fin_tx, Decimal(str(exp.amount)) - old_amount, actor,
+                                          "Xarajatlar sahifasida summa o'zgartirildi")
     write_audit(db, entity_type="expense", entity_id=exp.id, action="update",
                 changed_by_id=actor.id, old_value=old, new_value={k: str(v) for k, v in changes.items()})
     db.commit()
@@ -2525,6 +2547,9 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db), actor: models
     write_audit(db, entity_type="expense", entity_id=exp.id, action="delete",
                 changed_by_id=actor.id,
                 old_value={"name": exp.name, "amount": str(exp.amount), "month": exp.month, "year": exp.year})
+    fin_tx = finance_service.guard_legacy_expense(db, exp)
+    finance_service.legacy_correction(db, fin_tx, -Decimal(str(exp.amount)), actor,
+                                      "Xarajatlar sahifasida xarajat o'chirildi", detach=True)
     db.delete(exp)
     db.commit()
 
@@ -9666,3 +9691,9 @@ def list_computer_rentals(
 # /space/... (o'quvchi ilovasi), /space/admin/... (xodimlar). Batafsil: backend/minar/__init__.py
 from .minar import setup as _minar_setup
 _minar_setup(app)
+
+
+# ── Moliya bo'limi (Finans roli) ─────────────────────────────────────────────
+# Fayl oxirida ulanadi: router `require_auth`/`require_admin`ni shu moduldan oladi.
+from .finance.router import router as finance_router  # noqa: E402
+app.include_router(finance_router)

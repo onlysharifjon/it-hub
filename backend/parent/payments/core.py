@@ -158,6 +158,9 @@ def perform(db: Session, inv: models.ParentInvoice, txn: models.PaymentTransacti
         ))
     inv.status = "paid"
     inv.paid_at = paid_at
+    # Moliya jurnali: provayder tasdiqlagan kirim ("Onlayn to'lovlar" hisobiga)
+    from ...finance import service as finance_service
+    finance_service.on_online_payment_performed(db, inv, txn)
     amount_txt = f"{invoice_amount(inv):,}".replace(",", " ")
     notify_parents_of_student(
         db, student_id=inv.student_id, ntype="payment",
@@ -177,6 +180,8 @@ def cancel(db: Session, inv: models.ParentInvoice, txn: models.PaymentTransactio
     txn.cancel_reason = reason
     inv.cancelled_at = datetime.utcnow()
     if was_performed:
+        from ...finance import service as finance_service
+        finance_service.on_online_payment_reversed(db, inv, txn)
         db.query(models.Payment).filter(models.Payment.parent_invoice_id == inv.id).delete(
             synchronize_session=False)
         inv.status = "refunded"
