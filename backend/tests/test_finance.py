@@ -331,3 +331,21 @@ def test_overdue_vs_not_due(client, setup):
     assert any(i["status"] == "upcoming" for i in st["installments"])            # keyingi oy bosqichi
     od = client.get("/finance/reports/overdue", headers=H["appr"]).json()
     assert Decimal(str(od["totals"]["UZS"]["remaining"])) == expected_overdue
+
+
+def test_expense_without_account(client, setup, db):
+    """Kassa ixtiyoriy: xarajat yoziladi, hech qaysi hisob qoldig'i o'zgarmaydi."""
+    H = setup["H"]
+    other = _cat(client, setup, "other")
+    e = client.post("/finance/expenses", json={"category_id": other["id"], "amount": 45000,
+                                               "counterparty": "Do'kon"}, headers=H["fin"])
+    assert e.status_code == 201, e.text
+    assert e.json()["account"] is None
+    assert client.post(f"/finance/transactions/{e.json()['id']}/confirm", headers=H["appr"]).status_code == 200
+    assert db.query(Expense).count() == 1 and _balance(client, setup) == 0
+    dash = client.get("/finance/dashboard", headers=H["appr"]).json()["period"]["UZS"]
+    assert Decimal(str(dash["expense"])) == 45000
+    a = client.post(f"/finance/transactions/{e.json()['id']}/adjust",
+                    json={"amount": -5000, "reason": "chegirma berildi"}, headers=H["appr"])
+    assert a.status_code == 201, a.text
+    _reconciled(client, setup)

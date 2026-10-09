@@ -357,17 +357,18 @@ def create_expense(db: Session, actor: models.User, data: dict, *, confirm: bool
         raise HTTPException(400, "\"Ish haqi\" xarajati uchun xodimni tanlang")
     if data.get("staff_id") and not db.query(models.User.id).filter(models.User.id == data["staff_id"]).first():
         raise HTTPException(404, "Xodim topilmadi")
-    acc = _account(db, data.get("account_id"))
-    currency = data.get("currency") or acc.currency
-    if currency != acc.currency:
+    # Kassa ixtiyoriy: tanlanmasa xarajat yoziladi, lekin hech qaysi hisob qoldig'idan yechilmaydi
+    acc = _account(db, data.get("account_id"), required=False)
+    currency = data.get("currency") or (acc.currency if acc else "UZS")
+    if acc and currency != acc.currency:
         raise HTTPException(400, f"Hisob valyutasi {acc.currency}, xarajat valyutasi {currency} — mos emas")
     amount = q2(data["amount"])
     tx = _new_tx(
         db, actor, kind="expense", amount=amount, currency=currency,
         fx_rate=data.get("fx_rate") if currency != "UZS" else None,
         amount_uzs=to_uzs(amount, currency, data.get("fx_rate")),
-        op_date=data.get("op_date") or tz.today(), method=data.get("method") or "cash", account_id=acc.id,
-        category_id=cat.id, counterparty=data.get("counterparty"),
+        op_date=data.get("op_date") or tz.today(), method=data.get("method") or "cash",
+        account_id=acc.id if acc else None, category_id=cat.id, counterparty=data.get("counterparty"),
         responsible_id=data.get("responsible_id"), staff_id=data.get("staff_id") if cat.code == "salary" else None,
         notes=data.get("notes"), document_path=data.get("document_path"),
         idempotency_key=data.get("idempotency_key"),
@@ -487,13 +488,14 @@ def create_adjustment(db: Session, actor: models.User, origin_id: int, data: dic
     before = net_amount(db, origin)
     if before + delta < 0:
         raise HTTPException(400, f"Tuzatishdan keyin summa manfiy bo'lib qoladi (hozirgi sof summa: {before:,.2f})".replace(",", " "))
-    acc = _account(db, data.get("account_id") or origin.account_id)
-    if acc.currency != origin.currency:
+    # Kassasiz xarajatga tuzatish ham kassasiz bo'lishi mumkin
+    acc = _account(db, data.get("account_id") or origin.account_id, required=origin.kind != "expense")
+    if acc and acc.currency != origin.currency:
         raise HTTPException(400, f"Hisob valyutasi {acc.currency}, asl operatsiya valyutasi {origin.currency}")
     tx = _new_tx(
         db, actor, origin=origin, kind="adjustment", amount=delta, currency=origin.currency,
         fx_rate=origin.fx_rate, amount_uzs=to_uzs(delta, origin.currency, origin.fx_rate),
-        op_date=data.get("op_date") or tz.today(), method=origin.method, account_id=acc.id,
+        op_date=data.get("op_date") or tz.today(), method=origin.method, account_id=acc.id if acc else None,
         student_id=origin.student_id, group_id=origin.group_id,
         period_month=origin.period_month, period_year=origin.period_year,
         category_id=origin.category_id, counterparty=origin.counterparty, staff_id=origin.staff_id,

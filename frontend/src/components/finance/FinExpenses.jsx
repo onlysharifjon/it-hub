@@ -41,7 +41,6 @@ function ExpenseForm({ open, onClose, onSaved, currentUser, refs }) {
     if (!form.amount) e.amount = 'Summani kiriting'
     else if (Number.isNaN(a) || a <= 0) e.amount = "Summa 0 dan katta bo'lishi kerak"
     else if (!/^\d+(\.\d{1,2})?$/.test(String(form.amount))) e.amount = "Ko'pi bilan 2 xona kasr"
-    if (!form.account_id) e.account_id = 'Pul yechiladigan kassa/hisobni tanlang'
     if (currency !== 'UZS' && !(Number(form.fx_rate) > 0)) e.fx_rate = `1 ${currency} necha so'm ekanini kiriting`
     if (isSalary && !form.staff_id) e.staff_id = 'Ish haqi kimga berilganini tanlang'
     if (!form.op_date) e.op_date = 'Sanani kiriting'
@@ -56,7 +55,7 @@ function ExpenseForm({ open, onClose, onSaved, currentUser, refs }) {
     try {
       const res = await finance.createExpense({
         category_id: Number(form.category_id), amount: form.amount, currency, fx_rate: currency !== 'UZS' ? form.fx_rate : null,
-        op_date: form.op_date, method: form.method, account_id: Number(form.account_id), counterparty: form.counterparty,
+        op_date: form.op_date, method: form.method, account_id: form.account_id ? Number(form.account_id) : null, counterparty: form.counterparty,
         responsible_id: form.responsible_id ? Number(form.responsible_id) : null, staff_id: isSalary ? Number(form.staff_id) : null,
         notes: form.notes, document_path: form.document?.path || null, idempotency_key: key, confirm,
       })
@@ -77,8 +76,9 @@ function ExpenseForm({ open, onClose, onSaved, currentUser, refs }) {
           <option value="">— Tanlang —</option>
           {categories.filter(c => c.is_active).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
-        <Select label="Pul yechilgan kassa / hisob" required value={form.account_id} onChange={e => set({ account_id: e.target.value })} error={errors.account_id}>
-          <option value="">— Tanlang —</option>
+        <Select label="Pul yechilgan kassa / hisob" value={form.account_id} onChange={e => set({ account_id: e.target.value })} error={errors.account_id}
+          hint={form.account_id ? undefined : "Tanlanmasa — xarajat yoziladi, lekin kassa qoldig'idan yechilmaydi"}>
+          <option value="">— Belgilanmagan —</option>
           {active.map(a => <option key={a.id} value={a.id}>{a.name} ({a.currency}) · {money(a.balance, a.currency)}</option>)}
         </Select>
         <Input label={`Summa (${currency})`} required type="number" inputMode="decimal" min="0" step="0.01" value={form.amount}

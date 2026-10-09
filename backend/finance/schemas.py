@@ -44,7 +44,7 @@ class ExpenseCreate(BaseModel):
     fx_rate: Optional[Decimal] = Field(None, gt=0, le=Decimal("10000000"))
     op_date: Optional[date] = None
     method: str = Field("cash", regex=METHOD_RE)
-    account_id: int
+    account_id: Optional[int] = None   # ixtiyoriy — tanlanmasa hisob qoldig'iga ta'sir qilmaydi
     counterparty: Optional[str] = Field(None, max_length=200)
     responsible_id: Optional[int] = None
     staff_id: Optional[int] = None
