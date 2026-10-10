@@ -7,6 +7,7 @@ import './design.css'
 import './workspace.css'
 import './studio.css'
 import './auth.css'
+import './tailwind.css'
 
 // Mavzu React'dan OLDIN o'rnatiladi (index.html dagi skript allaqachon
 // atributni qo'ygan; bu yerda OS/boshqa-tab kuzatuvchilari ulanadi).

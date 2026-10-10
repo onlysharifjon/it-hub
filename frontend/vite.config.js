@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath, URL } from 'node:url'
 
 // Dev rejimida brauzer API'ga to'g'ridan-to'g'ri bormaydi: so'rovlar vite'ning
 // o'zi orqali (/api -> DEV_API_TARGET) proxy qilinadi. Sabab — backend CORS
@@ -12,7 +14,11 @@ const DEV_API_TARGET = process.env.DEV_API_TARGET || 'https://crm.minaracademy.u
 const isLocalTarget = /localhost|127\.0\.0\.1/.test(DEV_API_TARGET)
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    // shadcn uslubidagi importlar: '@/components/ui/...' -> src/components/ui/...
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
   server: {
     port: 5173,
     proxy: {

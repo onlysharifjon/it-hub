@@ -1,0 +1,30 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   TAILWIND — faqat shadcn uslubidagi komponentlar uchun (src/components/ui).
+   ───────────────────────────────────────────────────────────────────────────
+   - Preflight (global reset) ATAYLAB ulanmagan: mavjud styles.css/design.css
+     ilovaning qolgan qismini boshqaradi va reset ularni buzardi.
+   - Klasslar faqat components/ui dan yig'iladi (source(none) + @source),
+     shuning uchun mavjud .jsx dagi "grid", "hidden" kabi nomlar Tailwind
+     utility'siga aylanib qolmaydi.
+   - Ranglar tizimning semantik tokenlariga bog'langan, shuning uchun
+     [data-theme="dark"] ga avtomatik ergashadi.
+═══════════════════════════════════════════════════════════════════════════ */
+
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+
+@source "./components/ui";
+@source "./components/demos";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-muted-foreground: var(--muted);
+  --color-border: var(--border);
+  --color-ring: var(--border-focus);
+}
