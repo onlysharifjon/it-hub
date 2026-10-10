@@ -57,6 +57,9 @@ jobs:
           PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \
           poetry install --no-interaction
 
+      - name: Install runtime upload parser (matches Dockerfile)
+        run: poetry run python -m pip install python-multipart==0.0.9
+
       - name: Prepare Alembic version table in disposable CI database
         run: |
           poetry run alembic -c backend/alembic.ini ensure_version
