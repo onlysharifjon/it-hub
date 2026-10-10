@@ -5,7 +5,7 @@ import pytest
 
 from backend.models import (
     Student, Group, GroupStudent, Payment, UserRole,
-    Grade, Homework, HomeworkSubmission, TeacherFeedback, Event, Certificate,
+    Attendance, Grade, Homework, HomeworkSubmission, TeacherFeedback, Event, Certificate,
     Parent, ParentChild, ParentRefreshToken, ParentNotification, ParentInvoice,
 )
 from .conftest import _create_user
@@ -424,3 +424,89 @@ def test_unimplemented_checkout_returns_503_without_creating_invoice(client, db,
         assert result.status_code == 503
         assert result.json()["detail"]["error"]["code"] == "payment_unavailable"
     assert db.query(ParentInvoice).count() == 0
+
+
+# ── Swift/CRM wire contract and public App Store privacy URL ──────────────────
+
+def test_public_parent_privacy_html_needs_no_login(client):
+    res = client.get("/parent/privacy.html")
+    assert res.status_code == 200
+    assert "text/html" in res.headers["content-type"]
+    assert "Minar Parents" in res.text
+    assert 'lang="uz"' in res.text
+    assert 'lang="ru"' in res.text
+    assert 'lang="en"' in res.text
+    assert "minaracademy.uz" in res.text
+
+
+def test_parent_app_capabilities_fail_closed_until_payments_ready(client, db, hunter_user):
+    assert client.get("/parent/app-config").status_code == 401
+    student = _mk_student(db, "Config student", "+998900000071")
+    h = _parent_headers(client, db, hunter_user, student)
+    res = client.get("/parent/app-config", headers=h)
+    assert res.status_code == 200, res.text
+    flags = res.json()
+    assert flags == {
+        "payments_enabled": False,
+        "payment_providers": [],
+        "account_deletion_enabled": True,
+        "privacy_policy_url": "https://crm.minaracademy.uz/api/parent/privacy.html",
+    }
+
+
+def test_unmarked_attendance_not_counted_as_absence(client, db, hunter_user):
+    student = _mk_student(db, "Attend student", "+998900000072")
+    group = _mk_group(db, "Attendance G-17")
+    _enroll(db, group, student)
+    db.add(Attendance(group_id=group.id, student_id=student.id,
+                      lesson_date=date(2026, 10, 1), is_present=None))
+    db.add(Attendance(group_id=group.id, student_id=student.id,
+                      lesson_date=date(2026, 10, 2), is_present=True))
+    db.commit()
+    h = _parent_headers(client, db, hunter_user, student)
+    result = client.get(
+        f"/parent/children/{student.id}/attendance?month=10&year=2026",
+        headers=h,
+    )
+    assert result.status_code == 200, result.text
+    payload = result.json()
+    assert payload["percent"] == 100
+    assert len(payload["records"]) == 1
+    assert payload["records"][0]["is_present"] is True
+
+
+def test_nullable_homework_teacher_and_certificate_fields_match_swift(client, db, hunter_user):
+    teacher = _create_user(db, "teacher_optional", "password123", UserRole.teacher)
+    teacher.full_name = "Test Instructor"
+    student = _mk_student(db, "Contracts student", "+998900000073")
+    group = _mk_group(db, "Contracts G-1")
+    group.teacher_id = teacher.id
+    _enroll(db, group, student)
+    db.add(Homework(
+        group_id=group.id, lesson_title="Optional deadline",
+        text="Without deadline", lesson_date=date(2026, 10, 1),
+        due_date=None,
+    ))
+    db.add(Certificate(
+        student_id=student.id, title="Optional issue date",
+        file_url="https://minaracademy.uz/certificates/sample.pdf", issued_at=None,
+    ))
+    db.commit()
+    h = _parent_headers(client, db, hunter_user, student)
+
+    homework = client.get(f"/parent/children/{student.id}/homework", headers=h)
+    assert homework.status_code == 200
+    first = homework.json()[0]
+    assert first["due_date"] is None
+    assert first["assigned_date"] == "2026-10-01"
+
+    certs = client.get(f"/parent/children/{student.id}/certificates", headers=h)
+    assert certs.status_code == 200
+    first_cert = certs.json()[0]
+    assert first_cert["issued_at"] is None
+    assert first_cert["file_url"] == "https://minaracademy.uz/certificates/sample.pdf"
+
+    contact = client.get(f"/parent/children/{student.id}/teacher", headers=h)
+    assert contact.status_code == 200
+    assert contact.json()["phone"] is None
+    assert contact.json()["telegram"] is None
