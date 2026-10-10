@@ -39,7 +39,7 @@ jobs:
       DATABASE_URL: postgresql://ithub_user:IthubSecure2026@localhost:5432/ithub_test_db
       SECRET_KEY: ci-test-secret-key
       CORS_ORIGINS: http://localhost
-      UPLOAD_DIR: ${{ runner.temp }}/minar-ci-uploads
+      UPLOAD_DIR: ./minar-ci-uploads
 
     steps:
       - uses: actions/checkout@v4
