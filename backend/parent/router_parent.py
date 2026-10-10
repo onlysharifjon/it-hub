@@ -321,16 +321,12 @@ def pay(
     if payload.amount <= 0 or payload.amount > int(max_amount):
         raise _err("invalid_amount", "Summa noto'g'ri (juda katta yoki 0)", 422)
 
-    invoice = models.ParentInvoice(
-        parent_id=parent.id, student_id=child.id, group_id=group.id,
-        amount=payload.amount, provider=payload.provider, status="pending",
-        created_at=datetime.utcnow(),
-    )
-    db.add(invoice)
-    db.flush()
-    invoice.checkout_ref = f"STUB-{payload.provider}-{invoice.id}"
-    db.commit()
-    # STUB: haqiqiy Payme/Click/Uzum integratsiyasi alohida vazifa
-    return schemas.CheckoutResponse(
-        checkout_url=f"https://checkout.minaracademy.uz/stub/{invoice.checkout_ref}",
+    # Payme / Click / Uzum gateway integration is not implemented.
+    # Do not persist a fake invoice or send parents to a non-functional checkout.
+    # Once the provider's verified signed callback and idempotency flow exist,
+    # replace this 503 with the actual provider checkout URL.
+    raise _err(
+        "payment_unavailable",
+        "Onlayn to'lov vaqtincha mavjud emas. O'quv markazi bilan bog'laning.",
+        503,
     )
