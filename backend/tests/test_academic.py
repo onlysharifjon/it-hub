@@ -309,9 +309,12 @@ def test_coin_budget_resets_next_month(client, db, teacher_user):
     s1 = _mk_student(db, "Bola", "+998900000043")
     _enroll(db, group, s1)
 
-    # O'tgan oyda budjet to'liq sarflangan deb yozamiz
-    now = datetime.utcnow()
-    prev = now.replace(day=1) - timedelta(days=1)
+    # The CRM uses Asia/Tashkent calendar boundaries, not UTC month boundaries.
+    # UTC September 30 at 22:00 is already October 1 in Tashkent.
+    from backend import tz
+    local_now = tz.now()
+    current_month_start_utc, _ = tz.month_bounds(local_now.year, local_now.month)
+    prev = current_month_start_utc - timedelta(days=1)
     db.add(CoinTransaction(student_id=s1.id, teacher_id=teacher_user.id,
                            group_id=group.id, amount=50, created_at=prev))
     db.commit()
