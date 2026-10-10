@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
+from fastapi.responses import FileResponse
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -18,6 +20,22 @@ router = APIRouter(prefix="/parent", tags=["parent"])
 
 def _err(code: str, message: str, status_code: int = 400) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"error": {"code": code, "message": message}})
+
+
+# ── Public privacy policy (no parent login required) ────────────────────────
+
+@router.get("/privacy.html", include_in_schema=False)
+def privacy_policy():
+    """Public, static privacy notice. The same URL works for App Store Review."""
+    file_path = Path(__file__).resolve().parent.parent / "static" / "privacy.html"
+    return FileResponse(
+        file_path,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -80,6 +98,19 @@ def _issue_tokens(db: Session, parent: models.Parent) -> schemas.TokenPair:
     return schemas.TokenPair(
         access_token=security.create_parent_access_token(parent.id),
         refresh_token=raw_refresh,
+    )
+
+
+# ── Parent mobile app feature availability ────────────────────────────────
+
+@router.get("/app-config", response_model=schemas.ParentAppCapabilities)
+def parent_app_config(parent: models.Parent = Depends(get_current_parent)):
+    """Fail closed: no payment methods until real merchant callbacks are implemented."""
+    return schemas.ParentAppCapabilities(
+        payments_enabled=False,
+        payment_providers=[],
+        account_deletion_enabled=True,
+        privacy_policy_url="https://crm.minaracademy.uz/api/parent/privacy.html",
     )
 
 

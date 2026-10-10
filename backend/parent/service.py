@@ -153,6 +153,8 @@ def build_attendance(db: Session, student: models.Student, month: int, year: int
         db.query(models.Attendance)
         .filter(
             models.Attendance.student_id == student.id,
+            # Scheduled lessons with no recorded attendance must not be counted absent.
+            models.Attendance.is_present.isnot(None),
             extract("month", models.Attendance.lesson_date) == month,
             extract("year", models.Attendance.lesson_date) == year,
         )
