@@ -6,6 +6,7 @@ import pytest
 from backend.models import (
     Student, Group, GroupStudent, Payment, UserRole,
     Grade, Homework, HomeworkSubmission, TeacherFeedback, Event, Certificate,
+    Parent, ParentChild, ParentRefreshToken, ParentNotification, ParentInvoice,
 )
 from .conftest import _create_user
 
@@ -324,3 +325,102 @@ def test_payment_creates_parent_notification(client, db, admin_user, hunter_user
                        headers={"Authorization": f"Bearer {ptoken}"}).status_code == 204
     notifs = client.get("/parent/notifications", headers={"Authorization": f"Bearer {ptoken}"}).json()
     assert notifs[0]["is_read"] is True
+
+
+# ── Parent account deletion / App Store privacy ──────────────────────────────
+
+def test_parent_delete_account_requires_authentication(client):
+    res = client.delete("/parent/account")
+    assert res.status_code == 401
+
+
+def test_parent_deletion_erases_account_and_tokens_but_not_student(client, db, hunter_user):
+    student = _mk_student(db, "Alibek Mominov", "+998900000041")
+    account = _create_parent(client, _hunter_token(client), [student.id], phone="+998900000042")
+    login = client.post("/parent/auth/login", json={
+        "username": account["username"], "password": account["generated_password"],
+    }).json()
+    auth = {"Authorization": f"Bearer {login['access_token']}"}
+    parent = db.query(Parent).filter(Parent.username == account["username"]).one()
+    parent_id = parent.id
+    db.add(ParentNotification(
+        parent_id=parent_id, student_id=student.id,
+        type="attendance", title="Sensitive attendance",
+        body="Example child details", created_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+    deleted = client.delete("/parent/account", headers=auth)
+    assert deleted.status_code == 204, deleted.text
+
+    db.expire_all()
+    assert db.query(Parent).filter(Parent.id == parent_id).first() is None
+    assert db.query(ParentChild).filter(ParentChild.parent_id == parent_id).count() == 0
+    assert db.query(ParentRefreshToken).filter(ParentRefreshToken.parent_id == parent_id).count() == 0
+    assert db.query(ParentNotification).filter(ParentNotification.parent_id == parent_id).count() == 0
+    assert db.query(Student).filter(Student.id == student.id).count() == 1
+    assert client.get("/parent/profile", headers=auth).status_code == 401
+    assert client.post("/parent/auth/refresh",
+                       json={"refresh_token": login["refresh_token"]}).status_code == 401
+    assert client.post("/parent/auth/login", json={
+        "username": account["username"], "password": account["generated_password"],
+    }).status_code == 401
+    assert client.delete("/parent/account", headers=auth).status_code == 401
+
+
+def test_parent_deletion_anonymizes_when_invoice_must_be_retained(client, db, hunter_user):
+    student = _mk_student(db, "Malika Mominova", "+998900000051")
+    group = _mk_group(db, "Frontend G-501")
+    _enroll(db, group, student)
+    account = _create_parent(client, _hunter_token(client), [student.id], phone="+998900000052")
+    old_login = client.post("/parent/auth/login", json={
+        "username": account["username"], "password": account["generated_password"],
+    }).json()
+    parent = db.query(Parent).filter(Parent.username == account["username"]).one()
+    parent_id, old_phone, old_password = parent.id, parent.phone, parent.hashed_password
+    db.add(ParentInvoice(
+        parent_id=parent_id, student_id=student.id, group_id=group.id,
+        amount=450000, provider="click", status="paid",
+        checkout_ref="record-kept-for-audit", created_at=datetime.utcnow(),
+    ))
+    db.commit()
+    res = client.delete("/parent/account", headers={"Authorization": f"Bearer {old_login['access_token']}"})
+    assert res.status_code == 204, res.text
+    db.expire_all()
+
+    tombstone = db.query(Parent).filter(Parent.id == parent_id).one()
+    assert tombstone.is_active is False
+    assert tombstone.username == f"deleted-parent-{parent_id}"
+    assert tombstone.phone == f"deleted-parent-{parent_id}"
+    assert tombstone.full_name == "Deleted parent"
+    assert tombstone.display_name is None
+    assert tombstone.avatar is None
+    assert tombstone.created_by_id is None
+    assert tombstone.phone != old_phone
+    assert tombstone.hashed_password != old_password
+    assert db.query(ParentInvoice).filter(ParentInvoice.parent_id == parent_id).count() == 1
+    assert db.query(ParentChild).filter(ParentChild.parent_id == parent_id).count() == 0
+    assert db.query(ParentRefreshToken).filter(ParentRefreshToken.parent_id == parent_id).count() == 0
+    assert db.query(Student).filter(Student.id == student.id).count() == 1
+    assert client.get("/parent/profile", headers={
+        "Authorization": f"Bearer {old_login['access_token']}"
+    }).status_code == 401
+    assert client.post("/parent/auth/refresh",
+                       json={"refresh_token": old_login["refresh_token"]}).status_code == 401
+
+
+def test_unimplemented_checkout_returns_503_without_creating_invoice(client, db, hunter_user):
+    student = _mk_student(db, "Test child", "+998900000061")
+    group = _mk_group(db, "Frontend G-601")
+    _enroll(db, group, student)
+    auth = _parent_headers(client, db, hunter_user, student)
+
+    for provider in ("payme", "click", "uzum"):
+        result = client.post(
+            f"/parent/children/{student.id}/pay",
+            headers=auth,
+            json={"amount": 1000, "group_id": group.id, "provider": provider},
+        )
+        assert result.status_code == 503
+        assert result.json()["detail"]["error"]["code"] == "payment_unavailable"
+    assert db.query(ParentInvoice).count() == 0

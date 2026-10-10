@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
@@ -110,6 +111,70 @@ def update_profile(
         full_name=parent.full_name, display_name=parent.display_name,
         phone=parent.phone, avatar=parent.avatar,
     )
+
+
+@router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+def delete_parent_account(
+    parent: models.Parent = Depends(get_current_parent),
+    db: Session = Depends(get_db),
+):
+    """Permanently close a parent login and erase personally identifying account data.
+
+    The parent owns only the *portal account*, not the academy's student, attendance,
+    grade or payment records. Student records must never be cascade-deleted here.
+
+    A financial invoice may need to remain for lawful accounting. Since invoices
+    have a non-null FK to parents, keep only an anonymized, inactive tombstone
+    when one exists. Otherwise delete the parent row entirely.
+    """
+    # Serialize concurrent account deletion and token issuing for this parent.
+    target = (
+        db.query(models.Parent)
+        .filter(models.Parent.id == parent.id)
+        .with_for_update()
+        .first()
+    )
+    if target is None or not target.is_active:
+        raise _err("unauthorized", "Token yaroqsiz", 401)
+
+    parent_id = target.id
+    try:
+        # Prevent previously issued refresh tokens from ever being used again.
+        db.query(models.ParentRefreshToken).filter(
+            models.ParentRefreshToken.parent_id == parent_id
+        ).delete(synchronize_session=False)
+
+        # Clear all parent-only information while retaining shared student records.
+        db.query(models.ParentNotification).filter(
+            models.ParentNotification.parent_id == parent_id
+        ).delete(synchronize_session=False)
+        db.query(models.ParentChild).filter(
+            models.ParentChild.parent_id == parent_id
+        ).delete(synchronize_session=False)
+
+        has_invoices = db.query(models.ParentInvoice.id).filter(
+            models.ParentInvoice.parent_id == parent_id
+        ).first() is not None
+        if has_invoices:
+            # Invoice rows are retained for a separately reviewed accounting policy.
+            # Do not retain a usable login or any parent name, phone, avatar, etc.
+            pseudonym = f"deleted-parent-{parent_id}"
+            target.is_active = False
+            target.full_name = "Deleted parent"
+            target.display_name = None
+            target.phone = pseudonym
+            target.username = pseudonym
+            target.avatar = None
+            target.hashed_password = security.hash_password(secrets.token_urlsafe(32))
+            target.created_by_id = None
+        else:
+            db.delete(target)
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return None
 
 
 @router.get("/children", response_model=list[schemas.ChildRead])
@@ -256,16 +321,12 @@ def pay(
     if payload.amount <= 0 or payload.amount > int(max_amount):
         raise _err("invalid_amount", "Summa noto'g'ri (juda katta yoki 0)", 422)
 
-    invoice = models.ParentInvoice(
-        parent_id=parent.id, student_id=child.id, group_id=group.id,
-        amount=payload.amount, provider=payload.provider, status="pending",
-        created_at=datetime.utcnow(),
-    )
-    db.add(invoice)
-    db.flush()
-    invoice.checkout_ref = f"STUB-{payload.provider}-{invoice.id}"
-    db.commit()
-    # STUB: haqiqiy Payme/Click/Uzum integratsiyasi alohida vazifa
-    return schemas.CheckoutResponse(
-        checkout_url=f"https://checkout.minaracademy.uz/stub/{invoice.checkout_ref}",
+    # Payme / Click / Uzum gateway integration is not implemented.
+    # Do not persist a fake invoice or send parents to a non-functional checkout.
+    # Once the provider's verified signed callback and idempotency flow exist,
+    # replace this 503 with the actual provider checkout URL.
+    raise _err(
+        "payment_unavailable",
+        "Onlayn to'lov vaqtincha mavjud emas. O'quv markazi bilan bog'laning.",
+        503,
     )
