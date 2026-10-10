@@ -53,7 +53,7 @@ Changing the DB password/SECRET_KEY blindly could disconnect the CRM or invalida
 
 1. Map running code location: server screenshot shows `/var/www/it-hub`, owned by `ubuntu:ubuntu`; repository contains Docker Compose and `.venv`. **Do not assume the code runs from this checkout** without inspecting `docker compose ps`, systemd, Docker labels, and Nginx.
 2. SSH access: user created `minar-deploy` without sudo, and `/home/minar-deploy/.ssh/authorized_keys` is empty. Provision a **new, separate deployment public key** via a trusted client. Do not share private keys or passwords in chat.
-3. GitHub Actions is configured to auto-deploy on pushes to `main` using `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`. It expects `/opt/it-hub`, while screenshot shows `/var/www/it-hub` — mismatch must be resolved BEFORE merging.
+3. This PR changes GitHub Actions production image build/deployment to **manual `workflow_dispatch` only**, so a push/merge to `main` runs checks but will not automatically touch the server. Deployment job now points at `/var/www/it-hub`; verify actual running service and workflow before any manual dispatch. If the server uses PM2, do not assume a Docker job deploys its process.
 4. Avoid putting `minar-deploy` in `docker` group or unrestricted `sudo`. Prefer a tightly constrained deployment wrapper with explicit services, one authenticated job, and environment approval.
 5. Safely deploy on staging first. Preserve a Git SHA rollback plan.
 
@@ -76,3 +76,24 @@ Never paste `.env`, database passwords, private keys, full credential-bearing gi
 - iOS draft PR: https://github.com/onlysharifjon/minar-parents-swift/pull/1
 - Apple guidelines: https://developer.apple.com/app-store/review/guidelines/
 - Parent API source: `backend/parent/router_parent.py`
+
+## Server operator: safely fetch after the PR is merged to main
+
+Run under the existing `ubuntu` repository owner, not `root` or `minar-deploy`:
+
+```bash
+cd /var/www/it-hub
+whoami
+git status --short
+git branch --show-current
+git remote -v  # check that fetch origin is onlysharifjon/it-hub; redact any embedded credentials
+# Stop here if there are uncommitted changes or a branch other than main.
+git fetch origin main
+git log --oneline --max-count=5 origin/main
+git diff --stat HEAD..origin/main
+git merge --ff-only origin/main
+# On staging, or only once approved for production:
+python -m pytest backend/tests/test_parent.py -q
+```
+
+Do **not** run `docker compose down -v`, destructive migrations, a seed script, or delete tests against the real DB. Do not restart services until a recovery plan is ready. If `git status` shows local edits, back them up and reconcile them instead of forcing a reset.
