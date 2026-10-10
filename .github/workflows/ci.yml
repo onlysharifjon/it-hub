@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -38,6 +39,7 @@ jobs:
       DATABASE_URL: postgresql://ithub_user:IthubSecure2026@localhost:5432/ithub_test_db
       SECRET_KEY: ci-test-secret-key
       CORS_ORIGINS: http://localhost
+      UPLOAD_DIR: ${{ runner.temp }}/minar-ci-uploads
 
     steps:
       - uses: actions/checkout@v4
@@ -95,12 +97,12 @@ jobs:
         env:
           VITE_API_BASE: http://localhost:8000
 
-  # ── 3. Build & push Docker images (main branch only) ─────────────────────────
+  # ── 3. Build & push Docker images (manual workflow_dispatch only) ─────────────────────────
   docker-build-push:
     name: Build & push images
     needs: [test-backend, test-frontend]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
 
     permissions:
       contents: read
@@ -162,7 +164,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── 4. Deploy (customize for your server) ────────────────────────────────────
+  # ── 4. Deploy (manual only; approval required; verify server path before enabling) ────────────────────────────────────
   deploy:
     name: Deploy to server
     needs: docker-build-push
@@ -178,7 +180,7 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
-            cd /opt/it-hub
+            cd /var/www/it-hub
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull
             docker compose up -d --remove-orphans
