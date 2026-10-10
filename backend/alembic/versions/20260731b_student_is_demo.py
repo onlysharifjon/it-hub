@@ -16,7 +16,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column('students', sa.Column('is_demo', sa.Boolean(), nullable=False, server_default=sa.text('0')))
+    op.add_column('students', sa.Column('is_demo', sa.Boolean(), nullable=False, server_default=sa.false()))
     op.create_index('ix_students_is_demo', 'students', ['is_demo'])
 
 
