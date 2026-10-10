@@ -55,6 +55,16 @@ jobs:
           PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \
           poetry install --no-interaction
 
+      - name: Prepare Alembic version table in disposable CI database
+        run: |
+          poetry run alembic -c backend/alembic.ini ensure_version
+          poetry run python - <<'PY'
+          from sqlalchemy import text
+          from backend.database import engine
+          with engine.begin() as connection:
+              connection.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
+          PY
+
       - name: Run migrations
         run: poetry run alembic -c backend/alembic.ini upgrade head
 
