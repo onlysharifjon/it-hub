@@ -8459,7 +8459,25 @@ def create_parent_account(
     """Ota-ona akkaunti yaratish (hunter/admin). Parol bir marta qaytariladi."""
     phone = payload.phone.strip()
     username = (payload.username or phone).strip()
-    if db.query(models.Parent).filter(models.Parent.phone == phone).first():
+    existing = db.query(models.Parent).filter(models.Parent.phone == phone).first()
+    if existing is not None and existing.deleted_at is not None:
+        # Ilovadan o'chirilgan akkaunt — qayta yaratish o'rniga tiklanadi (ma'lumot saqlangan)
+        raw_password = payload.password or _gen_password()
+        existing.full_name = payload.full_name.strip()
+        if payload.display_name is not None:
+            existing.display_name = payload.display_name
+        existing.hashed_password = hash_password(raw_password)
+        existing.is_active, existing.deleted_at = True, None
+        linked = {c.student_id for c in existing.children}
+        for sid in dict.fromkeys(payload.student_ids):
+            if sid not in linked and db.query(models.Student).filter(models.Student.id == sid).first():
+                db.add(models.ParentChild(parent_id=existing.id, student_id=sid, created_at=datetime.utcnow()))
+        db.commit()
+        db.refresh(existing)
+        out = schemas.ParentAccountCreated(**_parent_account_read(existing).dict())
+        out.generated_password = raw_password
+        return out
+    if existing is not None:
         raise HTTPException(409, "Bu telefon bilan ota-ona allaqachon mavjud")
     if db.query(models.Parent).filter(models.Parent.username == username).first():
         raise HTTPException(409, "Bu login band")
@@ -8528,6 +8546,8 @@ def update_parent_account(
             raise HTTPException(409, "Bu telefon band")
     for k, v in data.items():
         setattr(p, k, v)
+    if data.get("is_active") is True:
+        p.deleted_at = None              # ilovadan o'chirilgan akkauntni tiklash
     db.commit()
     db.refresh(p)
     return _parent_account_read(p)

@@ -23,30 +23,26 @@
   ishlaydi (ilovaning eski build'lari va qo'lda so'rovlar uchun); flag faqat ilovadagi tugmani boshqaradi.
 - Ikkala flag ham prod'da real sinov va release egasi tasdig'idan keyingina yoqiladi.
 
-## Akkauntni o'chirish jarayoni
+## Akkauntni o'chirish jarayoni (2026-10-12 dan: kirish yopiladi, ma'lumot saqlanadi)
 
-Bitta tranzaksiyada (`SELECT ... FOR UPDATE` bilan parallel login/refresh'dan himoyalangan):
+Egasi qarori: ilovadan o'chirilganda ma'lumot o'chirilmaydi, faqat kirish yopiladi.
 
-1. Barcha refresh tokenlar o'chiriladi; access token ota-ona yo'q/nofaol bo'lgani uchun keyingi so'rovda 401.
-2. Ota-ona bildirishnomalari, ota-ona↔bola bog'lanishlari, telefon tasdiqlash (OTP) yozuvlari (telefon, IP) o'chiriladi.
-3. `parent_invoices` bo'lmasa — `parents` qatori butunlay o'chiriladi (`erased`).
-   Bo'lsa — buxgalteriya uchun shaxssiz "tombstone" qoladi (`anonymized`): `deleted-parent-<id>` login/telefon,
-   ism/rasm yo'q, tasodifiy yaroqsiz parol, `is_active=false`. Invoys (summa, provayder, `student_id`) saqlanadi.
-4. **Saqlanadigan yozuvlar** (ota-onaga emas, akademiyaga tegishli): o'quvchi kartasi, davomat, baholar, uy
-   vazifalari, to'lovlar (`payments`), o'qituvchi izohlari, sertifikatlar.
-5. Commit'dan keyin 204. Xatoda rollback va 5xx; ilova sessiyani faqat 204 da tozalashi kerak (404/5xx — muvaffaqiyat emas).
-6. **Audit**: konteyner logida `AUDIT parent_account_deleted parent_id=<id> mode=erased|anonymized request_id=<id>`
-   (shaxsiy ma'lumotsiz). `audit_logs` jadvali `users`ga majburiy FK talab qiladi, shuning uchun DB'ga yozilmaydi;
-   docker log retention'i alohida belgilanishi kerak (ochiq masala).
-7. **Backup**: `minar-stack` backup servisi `BACKUP_KEEP_DAYS` (compose default — 14 kun) dan eski dump'larni
-   o'chiradi. O'chirilgan ma'lumot shu muddatgacha zaxirada qoladi; zaxiradan tiklansa, o'chirilgan akkauntlar
-   audit logi bo'yicha qayta o'chirilishi kerak. Prod'dagi haqiqiy qiymatni operator tasdiqlasin.
-8. Jarayon to'liq avtomatik — qo'lda davom etadigan bosqich yo'q, shuning uchun alohida muddat/yakun xabari kerak emas;
-   204 javobining o'zi yakun tasdig'i.
+1. `DELETE /parent/account` (Bearer) — bitta tranzaksiyada (`FOR UPDATE`): barcha refresh tokenlar o'chiriladi,
+   `parents.is_active=false`, `parents.deleted_at=now()`. Commit'dan keyin **204**. Access token keyingi so'rovda 401
+   (ota-ona nofaol). Xatoda rollback + 5xx; token yo'q/eskirgan/allaqachon o'chirilgan — 401.
+2. Keyin shu raqam bilan kirish (parol `POST /parent/auth/login` yoki OTP `verify-code`) →
+   **401 `account_not_found`** "Bunday raqam bizda mavjud emas. Akkauntni administrator orqali yarating."
+   (admin bloklagan, `deleted_at` bo'sh akkaunt — oldingidek `invalid_credentials` / `account_disabled`).
+3. Saqlanadi: ota-ona yozuvi, farzand bog'lanishlari, bildirishnomalar, OTP yozuvlari, invoyslar, o'quvchining barcha yozuvlari.
+4. Tiklash: CRM'da `POST /parents` shu telefon bilan → o'sha akkaunt tiklanadi (yangi parol, `deleted_at=null`);
+   yoki `PATCH /parents/{id} {"is_active": true}`.
+5. Audit: `parents.deleted_at` + konteyner logida `AUDIT parent_account_deleted parent_id=<id> mode=deactivated request_id=<id>`.
+6. To'liq o'chirish faqat so'rov bo'yicha (privacy'dagi aloqa) — hozircha qo'lda, alohida jarayon belgilanmagan.
+7. Review akkaunti (`PARENT_REVIEW_PHONE`): kirishda faqat xayoliy "TEST — App Review" o'quvchi qoldiriladi
+   (haqiqiy o'quvchilar bog'lanishi uziladi); o'chirilsa — boshqa akkauntlar kabi kirish yopiladi, admin tiklaydi.
 
-**Ochiq (huquqiy/release egasi):** tombstone + invoysdagi `student_id` saqlanishi qonuniy asosi va muddati;
-Apple 5.1.1(v) talabiga mosligi; privacy siyosatidagi operator (yuridik shaxs nomi, manzil, email/telefon) —
-hozir faqat "minaracademy.uz orqali" deyilgan. Siyosat matni privacy egasi/yurist tasdig'idan o'tmagan.
+**Ochiq (huquqiy/release egasi):** Apple 5.1.1(v) akkaunt o'chirish ma'lumotni ham o'chirishini kutadi — faqat
+kirishni yopish review'da rad etilishi mumkin. Privacy matni shu amaliyotga moslangan, lekin yurist tasdig'idan o'tmagan.
 
 ## Onlayn to'lov
 

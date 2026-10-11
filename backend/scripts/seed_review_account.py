@@ -64,9 +64,16 @@ def _create_student(db: Session, phone: str) -> models.Student:
 
 
 def ensure_review_children(db: Session, parent: models.Parent) -> bool:
-    """Farzandsiz review ota-onasiga xayoliy o'quvchini biriktiradi (commit chaqiruvchida). True — biriktirildi."""
-    if db.query(models.ParentChild).filter_by(parent_id=parent.id).first():
-        return False
+    """Review ota-onasida faqat xayoliy o'quvchi bo'lishini ta'minlaydi (commit chaqiruvchida).
+    Haqiqiy o'quvchilar bilan bog'lanish uziladi (o'quvchi yozuvlariga tegilmaydi). True — o'zgarish bo'ldi."""
+    links = db.query(models.ParentChild).filter_by(parent_id=parent.id).all()
+    real = [l for l in links if not (l.student and l.student.full_name == STUDENT_NAME)]
+    for l in real:
+        db.delete(l)
+    if len(real) < len(links):
+        if real:
+            db.flush()
+        return bool(real)
     s = (db.query(models.Student).filter(models.Student.full_name == STUDENT_NAME)
          .order_by(models.Student.id).first()) or _create_student(db, parent.phone)
     if not (parent.full_name or "").startswith(PREFIX):

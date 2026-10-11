@@ -411,26 +411,31 @@ def test_review_disabled_without_env(client, db, gw):
     assert gw.sent and gw.sent[0][0] == REVIEW     # oddiy Gateway oqimi
 
 
-def test_review_account_delete_is_real_and_relogin_reprovisions(client, db, gw, review_env):
+def test_review_account_only_fictional_child_and_delete_blocks_login(client, db, gw, review_env):
     from backend.models import ParentRefreshToken
+    # Admin review akkauntiga haqiqiy o'quvchini biriktirgan holat
+    real = Student(full_name="Haqiqiy O'quvchi", phone1="+998900000790", is_active=True, created_at=datetime.utcnow())
+    db.add(real); db.flush()
+    p = Parent(full_name="x", phone=REVIEW, username=REVIEW, is_active=True,
+               hashed_password=security.hash_password("y" * 12))
+    db.add(p); db.flush()
+    db.add(ParentChild(parent_id=p.id, student_id=real.id)); db.commit()
+
     vid = _request(client, REVIEW).json()["verificationId"]
     tokens = _verify(client, vid, code="4321", phone=REVIEW).json()
     h = {"Authorization": f"Bearer {tokens['access_token']}"}
     kids = client.get("/parent/children", headers=h).json()
-    assert len(kids) == 1 and kids[0]["full_name"].startswith("TEST — App Review")   # avtomatik xayoliy farzand
-    pid = db.query(Parent).filter_by(phone=REVIEW).one().id
+    assert len(kids) == 1 and kids[0]["full_name"].startswith("TEST — App Review")   # faqat xayoliy
+    assert db.query(Student).filter_by(id=real.id).count() == 1                      # haqiqiy yozuv o'zgarmagan
 
     assert client.delete("/parent/account", headers=h).status_code == 204
     db.expire_all()
-    assert db.query(Parent).filter_by(id=pid).count() == 0                      # haqiqiy o'chirish
-    assert db.query(ParentChild).filter_by(parent_id=pid).count() == 0
-    assert db.query(ParentRefreshToken).filter_by(parent_id=pid).count() == 0
-    assert db.query(Student).filter_by(id=kids[0]["id"]).count() == 1          # akademik yozuv qoladi
+    assert db.query(Parent).filter_by(id=p.id, is_active=False).count() == 1           # o'chib ketmaydi
+    assert db.query(ParentRefreshToken).filter_by(parent_id=p.id).count() == 0
     assert client.get("/parent/profile", headers=h).status_code == 401
-    assert client.post("/parent/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code == 401
-
     r = client.post("/parent/auth/login", json={"username": REVIEW, "password": "4321"})
-    h2 = {"Authorization": f"Bearer {r.json()['access_token']}"}
-    again = client.get("/parent/children", headers=h2).json()
-    assert [c["id"] for c in again] == [kids[0]["id"]]                           # o'sha xayoliy o'quvchi, dublikatsiz
-    assert db.query(Student).filter(Student.full_name.like("TEST — App Review%")).count() == 1
+    assert r.status_code == 401 and r.json()["code"] == "account_not_found"
+    db.query(PhoneVerification).update({"last_sent_at": datetime.utcnow() - timedelta(seconds=61)}); db.commit()
+    vid = _request(client, REVIEW).json()["verificationId"]
+    r = _verify(client, vid, code="4321", phone=REVIEW)
+    assert r.status_code == 401 and r.json()["code"] == "account_not_found"

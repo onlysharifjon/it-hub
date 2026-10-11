@@ -9,7 +9,6 @@ import base64
 import binascii
 import logging
 import os
-import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -25,7 +24,7 @@ from . import schemas, service
 from .deps import get_current_parent, get_owned_child
 from .errors import api_error, request_id
 from .payments import config as pay_config
-from .phone_auth.service import review_password_login
+from .phone_auth.service import account_deleted_error, review_password_login
 from .payments.checkout import create_checkout
 
 router = APIRouter(prefix="/parent", tags=["parent"])
@@ -107,6 +106,8 @@ def login(payload: schemas.ParentLoginRequest, request: Request, db: Session = D
             raise _invalid_credentials()
         return _issue_tokens(db, review)
     parent = _find_parent(db, payload.username)
+    if parent is not None and parent.deleted_at is not None:
+        raise account_deleted_error()
     # Parol o'zgartirilmaydi (trim yo'q). Topilmasa ham bcrypt ishlaydi — vaqtdan bilib bo'lmasin.
     ok = security.verify_password(payload.password, parent.hashed_password if parent else security.DUMMY_HASH)
     if not parent or not ok or not parent.is_active:
@@ -253,16 +254,14 @@ def delete_parent_account(
     parent: models.Parent = Depends(get_current_parent),
     db: Session = Depends(get_db),
 ):
-    """Permanently close a parent login and erase personally identifying account data.
+    """Ilovadan akkauntni o'chirish: kirish yopiladi, ma'lumot o'chirilmaydi.
 
-    The parent owns only the *portal account*, not the academy's student, attendance,
-    grade or payment records. Student records must never be cascade-deleted here.
-
-    A financial invoice may need to remain for lawful accounting. Since invoices
-    have a non-null FK to parents, keep only an anonymized, inactive tombstone
-    when one exists. Otherwise delete the parent row entirely.
+    Barcha refresh tokenlar bekor qilinadi, akkaunt `is_active=false` + `deleted_at`. Keyin shu raqam bilan
+    kirishda (parol yoki OTP) "Bunday raqam bizda mavjud emas" xabari chiqadi. Ota-ona ma'lumoti, farzand
+    bog'lanishi, invoyslar va o'quvchining akademik yozuvlari saqlanadi — administrator CRM'da shu raqam bilan
+    akkaunt yaratsa, o'sha akkaunt tiklanadi. 204 faqat commit'dan keyin.
     """
-    # Serialize concurrent account deletion and token issuing for this parent.
+    # Bir vaqtdagi login/refresh bilan poyga bo'lmasin
     target = (
         db.query(models.Parent)
         .filter(models.Parent.id == parent.id)
@@ -274,52 +273,20 @@ def delete_parent_account(
 
     parent_id = target.id
     try:
-        # Prevent previously issued refresh tokens from ever being used again.
         db.query(models.ParentRefreshToken).filter(
             models.ParentRefreshToken.parent_id == parent_id
         ).delete(synchronize_session=False)
-
-        # Clear all parent-only information while retaining shared student records.
-        db.query(models.ParentNotification).filter(
-            models.ParentNotification.parent_id == parent_id
-        ).delete(synchronize_session=False)
-        db.query(models.ParentChild).filter(
-            models.ParentChild.parent_id == parent_id
-        ).delete(synchronize_session=False)
-        # OTP yozuvlari telefon va IP saqlaydi.
-        phones = {p for p in (target.phone, service.phone_e164(target.phone)) if p}
-        db.query(models.PhoneVerification).filter(
-            (models.PhoneVerification.parent_id == parent_id)
-            | (models.PhoneVerification.phone.in_(phones))
-        ).delete(synchronize_session=False)
-
-        has_invoices = db.query(models.ParentInvoice.id).filter(
-            models.ParentInvoice.parent_id == parent_id
-        ).first() is not None
-        if has_invoices:
-            # Invoice rows are retained for a separately reviewed accounting policy.
-            # Do not retain a usable login or any parent name, phone, avatar, etc.
-            pseudonym = f"deleted-parent-{parent_id}"
-            target.is_active = False
-            target.full_name = "Deleted parent"
-            target.display_name = None
-            target.phone = pseudonym
-            target.username = pseudonym
-            target.avatar = None
-            target.hashed_password = security.hash_password(secrets.token_urlsafe(32))
-            target.created_by_id = None
-        else:
-            db.delete(target)
-
+        target.is_active = False
+        target.deleted_at = datetime.utcnow()
         db.commit()
     except Exception:
         db.rollback()
         log.exception("parent account deletion failed parent_id=%s request_id=%s",
                       parent_id, request_id(request))
         raise
-    # Audit: shaxsiy ma'lumotsiz (faqat id) — konteyner logi; DB'dagi audit_logs xodim (users) talab qiladi.
-    log.warning("AUDIT parent_account_deleted parent_id=%s mode=%s request_id=%s",
-                parent_id, "anonymized" if has_invoices else "erased", request_id(request))
+    # Audit: shaxsiy ma'lumotsiz (faqat id) — konteyner logi; DB'da parents.deleted_at.
+    log.warning("AUDIT parent_account_deleted parent_id=%s mode=deactivated request_id=%s",
+                parent_id, request_id(request))
     return Response(status_code=204)
 
 

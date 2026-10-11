@@ -72,12 +72,11 @@
   <p>Ota-ona akkaunti ma’lumotlari akkaunt faol bo‘lgan davrda saqlanadi. O‘quvchining o‘quv va to‘lov yozuvlari o‘quv markazining hisobi bo‘lib, ta’lim xizmati va amaldagi buxgalteriya talablari uchun zarur muddat davomida saqlanadi. Ma’lumotlar bazasining zaxira nusxalari avtomatik ravishda yangilanib boradi va saqlash muddati tugagach o‘chiriladi. Aniq muddatlar bo‘yicha yuqoridagi aloqa orqali murojaat qiling.</p>
 
   <h2>7. Akkauntni o‘chirish</h2>
-  <p>Ilova sozlamalaridagi akkauntni o‘chirish funksiyasi orqali yoki yuqoridagi aloqa orqali so‘rov yuborib o‘chirish mumkin. Ilovadagi o‘chirish darhol bajariladi:</p>
+  <p>Akkauntni ilova sozlamalaridagi akkauntni o‘chirish funksiyasi orqali o‘chirish mumkin. O‘chirish darhol bajariladi:</p>
   <ul>
-    <li><strong>O‘chiriladi:</strong> login va parol, barcha sessiyalar (boshqa qurilmalardagi ham), ism, telefon, profil rasmi, ota-ona bildirishnomalari, telefonni tasdiqlash yozuvlari, farzand bilan bog‘lanish.</li>
-    <li><strong>Qonuniy sabab bilan saqlanadi:</strong> onlayn to‘lov hisob-fakturasi bo‘lsa — u buxgalteriya uchun saqlanadi, lekin ota-ona yozuvi shaxssizlantiriladi (ism, telefon, rasm o‘chiriladi, kirish imkoni yo‘q).</li>
-    <li><strong>O‘zgarmaydi:</strong> o‘quvchining davomati, baholari, to‘lovlari va boshqa o‘quv yozuvlari — ular o‘quv markaziga tegishli va ota-ona akkauntidan mustaqil.</li>
-    <li>Zaxira nusxalardagi ma’lumotlar zaxira saqlash muddati tugagach avtomatik o‘chadi.</li>
+    <li>akkauntga kirish yopiladi va barcha sessiyalar (boshqa qurilmalardagi ham) bekor qilinadi; shu raqam bilan qayta kirishda “Bunday raqam bizda mavjud emas” xabari chiqadi;</li>
+    <li>ota-ona va farzand ma’lumotlari, to‘lov tarixi o‘quv markazi tizimida saqlanib qoladi — administrator akkauntni qayta yaratsa, u tiklanadi;</li>
+    <li>ota-ona ma’lumotlarini (ism, telefon, profil rasmi, bildirishnomalar) butunlay o‘chirishni yuqoridagi aloqa orqali so‘rash mumkin. Qonun bo‘yicha saqlanishi shart bo‘lgan to‘lov hujjatlari va o‘quvchining o‘quv yozuvlari bundan mustasno.</li>
   </ul>
 
   <h2>8. Sizning huquqlaringiz</h2>
@@ -98,7 +97,7 @@
   <p><strong>Третьи стороны:</strong> Payme — при включенной онлайн-оплате; оплата проходит на странице Payme, данные карты нам не передаются; мы передаем номер счета и сумму, Payme сообщает идентификатор, время и статус транзакции; долг закрывается только после подтверждения сервером Payme. Telegram Gateway (Telegram) получает номер телефона для отправки кода подтверждения. Данные не продаются и не передаются для рекламы.</p>
   <p><strong>Безопасность:</strong> HTTPS, хеширование паролей, срочные и ротируемые токены, ограничение попыток входа, серверная проверка связи родителя с ребенком.</p>
   <p><strong>Хранение:</strong> данные аккаунта — пока аккаунт активен; учебные и платежные записи ученика — в течение срока, необходимого для обучения и применимого бухгалтерского учета; резервные копии обновляются автоматически и удаляются по истечении срока их хранения. О конкретных сроках — по контактам выше.</p>
-  <p><strong>Удаление аккаунта:</strong> в настройках приложения — выполняется сразу, либо по запросу через контакты выше. Удаляются логин и пароль, все сессии, имя, телефон, фото, уведомления, записи подтверждения телефона и связь с ребенком. Счета онлайн-оплаты, если есть, сохраняются для учета с обезличенной записью родителя. Учебные и платежные записи ученика не удаляются — они принадлежат учебному центру. Данные в резервных копиях удаляются по истечении срока хранения копий.</p>
+  <p><strong>Удаление аккаунта:</strong> в настройках приложения, выполняется сразу: вход закрывается, все сеансы (на всех устройствах) отменяются, при повторном входе с этим номером отображается сообщение «Такой номер у нас не зарегистрирован». Данные родителя и ученика и история платежей остаются в системе учебного центра; администратор может восстановить аккаунт. Полное удаление данных родителя (имя, телефон, фото, уведомления) — по запросу через контакты выше, за исключением платежных документов, обязательных к хранению по закону, и учебных записей ученика.</p>
   <p><strong>Ваши права:</strong> просмотр данных, редактирование профиля и удаление аккаунта в приложении; исправление данных и вопросы — по контактам выше. Приложение предназначено для родителей; ученики им не пользуются. При изменении политики меняется дата на этой странице.</p>
 </article>
 
@@ -110,7 +109,7 @@
   <p><strong>Third parties:</strong> Payme, when online payment is enabled — payment happens on Payme’s page and we never receive card details; we send Payme the invoice number and amount, and Payme sends us the transaction ID, time and status; a balance is cleared only after Payme’s server confirms the payment. Telegram Gateway (Telegram) receives the phone number to deliver verification codes. We do not sell data or share it for advertising.</p>
   <p><strong>Security:</strong> HTTPS everywhere, hashed passwords, short-lived rotating session tokens, sign-in rate limits, and a server-side check that the student is linked to the requesting parent.</p>
   <p><strong>Retention:</strong> account data is kept while the account is active; student academic and billing records are kept as long as needed for education services and applicable accounting obligations; database backups rotate automatically and are deleted when their retention period ends. Contact us for specific periods.</p>
-  <p><strong>Account deletion:</strong> in the app settings, processed immediately, or by request using the contacts above. We delete the login and password, all sessions, name, phone number, photo, notifications, phone-verification records and the link to the student. Online-payment invoices, if any, are kept for accounting with the parent record de-identified. The student’s academic and billing records are not deleted because they belong to the academy. Copies in backups are removed when the backup retention period ends.</p>
+  <p><strong>Account deletion:</strong> in the app settings, processed immediately: sign-in is closed, all sessions on every device are revoked, and signing in again with that number shows “This number is not registered with us”. Parent and student data and payment history remain in the academy’s system, and an administrator can restore the account. Complete erasure of the parent’s data (name, phone number, photo, notifications) is available on request using the contacts above, except payment records that must be kept by law and the student’s academic records.</p>
   <p><strong>Your rights:</strong> view your data, edit your profile and delete your account in the app; request corrections or ask questions using the contacts above. The app is for parents; students do not use it. When this policy changes, the date on this page is updated.</p>
 </article>
 </main>

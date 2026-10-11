@@ -565,6 +565,7 @@ class Parent(Base):
     avatar = Column(Text, nullable=True)                            # base64 rasm (mobil ilova yuklaydi)
     is_active = Column(Boolean, nullable=False, default=True)
     phone_verified_at = Column(DateTime, nullable=True)             # Telegram OTP bilan tasdiqlangan payt
+    deleted_at = Column(DateTime, nullable=True)                    # ilovadan o'chirilgan: kirish yopiq, ma'lumot saqlanadi
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # qaysi xodim yaratgan
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 

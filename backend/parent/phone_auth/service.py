@@ -60,6 +60,12 @@ def is_review_phone(phone: str) -> bool:
     return bool(rp) and secrets.compare_digest(rp, phone)
 
 
+def account_deleted_error():
+    """Ilovadan o'chirilgan akkaunt (parents.deleted_at) bilan kirishga urinish."""
+    return api_error("account_not_found",
+                     "Bunday raqam bizda mavjud emas. Akkauntni administrator orqali yarating.", 401)
+
+
 def _ensure_review_data(db: Session, parent: models.Parent) -> None:
     """Review akkauntida xayoliy farzand bo'lmasa (yangi yoki o'chirilib qayta kirilgan) — biriktiriladi."""
     from ...scripts.seed_review_account import ensure_review_children
@@ -83,6 +89,8 @@ def review_password_login(db: Session, raw_username: str, password: str) -> Opti
     key = normalize_phone(phone)
     parent = next((p for p in db.query(models.Parent).filter(models.Parent.phone.like(f"%{key[-2:]}")).all()
                    if normalize_phone(p.phone) == key or normalize_phone(p.username) == key), None)
+    if parent is not None and parent.deleted_at is not None:
+        raise account_deleted_error()
     if parent is None:
         parent = models.Parent(full_name=phone, phone=phone, username=phone,
                                hashed_password=security.hash_password(secrets.token_urlsafe(32)),
@@ -368,6 +376,9 @@ class PhoneVerificationService:
             self.db.add(parent)
             self.db.flush()
             log.info("phone auth: new parent registered phone=%s parent=%s", mask_phone(row.phone), parent.id)
+        elif parent.deleted_at is not None:
+            self.db.rollback()
+            raise account_deleted_error()
         elif not parent.is_active:
             self.db.rollback()
             raise api_error("account_disabled", "Akkaunt bloklangan. Administratorga murojaat qiling.", 403)
