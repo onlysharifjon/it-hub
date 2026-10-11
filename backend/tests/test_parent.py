@@ -17,7 +17,7 @@ from backend import security, tz
 from backend.models import (
     Attendance, Certificate, Event, Grade, Group, GroupStudent, Homework, HomeworkSubmission,
     Parent, ParentChild, ParentInvoice, ParentNotification, ParentRefreshToken, Payment,
-    PaymentTransaction, ScheduleSlot, SpecialDiscount, Student, TeacherFeedback, UserRole,
+    PaymentTransaction, PhoneVerification, ScheduleSlot, SpecialDiscount, Student, TeacherFeedback, UserRole,
 )
 from .conftest import _create_user
 
@@ -527,7 +527,8 @@ def providers(monkeypatch):
     for k, v in {"PAYME_MERCHANT_ID": "merchant123", "PAYME_KEY": PAYME_KEY,
                  "CLICK_SERVICE_ID": "111", "CLICK_MERCHANT_ID": "222", "CLICK_SECRET_KEY": CLICK_SECRET,
                  "UZUM_SERVICE_ID": "333", "UZUM_LOGIN": "uzum", "UZUM_PASSWORD": "uzum-pass",
-                 "PAYMENT_RETURN_URL": "https://crm.minaracademy.uz/pay/return"}.items():
+                 "PAYMENT_RETURN_URL": "https://crm.minaracademy.uz/pay/return",
+                 "PARENT_PAYMENTS_ENABLED": "true"}.items():
         monkeypatch.setenv(k, v)
 
 
@@ -800,8 +801,14 @@ def test_parent_deletion_erases_account_and_tokens_but_not_student(client, db, h
     ))
     db.commit()
 
+    db.add(PhoneVerification(public_id="pv-del-1", phone="+998900000042", status="verified",
+                             ip="10.0.0.1", created_at=datetime.utcnow(),
+                             expires_at=datetime.utcnow(), parent_id=parent_id))
+    db.commit()
+
     deleted = client.delete("/parent/account", headers=auth)
     assert deleted.status_code == 204, deleted.text
+    assert db.query(PhoneVerification).filter(PhoneVerification.phone == "+998900000042").count() == 0
 
     db.expire_all()
     assert db.query(Parent).filter(Parent.id == parent_id).first() is None
@@ -881,7 +888,7 @@ def test_parent_app_capabilities_fail_closed_until_payments_ready(client, db, mo
     assert res.json() == {
         "payments_enabled": False,
         "payment_providers": [],
-        "account_deletion_enabled": True,
+        "account_deletion_enabled": False,
         "privacy_policy_url": "https://crm.minaracademy.uz/api/parent/privacy.html",
     }
 
@@ -892,6 +899,28 @@ def test_parent_app_capabilities_list_configured_providers(client, db, providers
     flags = client.get("/parent/app-config", headers=_h(client)).json()
     assert flags["payments_enabled"] is True
     assert flags["payment_providers"] == ["payme", "click", "uzum"]
+
+
+def test_payments_master_switch_off_closes_checkout(client, db, providers, monkeypatch):
+    monkeypatch.setenv("PARENT_PAYMENTS_ENABLED", "false")
+    s = _mk_student(db, "Switch student", "+998900000074")
+    g = _mk_group(db, "Switch G-1")
+    _enroll(db, g, s)
+    _mk_parent(db, [s])
+    h = _h(client)
+    flags = client.get("/parent/app-config", headers=h).json()
+    assert flags["payments_enabled"] is False and flags["payment_providers"] == []
+    r = _pay(client, h, s.id, g.id)
+    assert r.status_code == 503 and r.json()["code"] == "payment_provider_unavailable"
+    assert db.query(ParentInvoice).count() == 0
+
+
+def test_account_deletion_flag_follows_env(client, db, monkeypatch):
+    from backend.parent import router_parent
+    monkeypatch.setattr(router_parent, "ACCOUNT_DELETION_ENABLED", True)
+    s = _mk_student(db, "Flag student", "+998900000075")
+    _mk_parent(db, [s])
+    assert client.get("/parent/app-config", headers=_h(client)).json()["account_deletion_enabled"] is True
 
 
 def test_unmarked_attendance_not_counted_as_absence(client, db, hunter_user):

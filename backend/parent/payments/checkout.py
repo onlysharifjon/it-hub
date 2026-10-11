@@ -42,7 +42,7 @@ def create_checkout(db: Session, parent: models.Parent, child: models.Student,
         raise api_error("invalid_amount", f"Summa {cap} so'mdan oshmasligi kerak", 422,
                         errors={"amount": [f"Eng ko'pi {cap} so'm."]})
 
-    if provider not in config.PROVIDERS or not config.is_configured(provider):
+    if provider not in config.active_providers():
         raise api_error("payment_provider_unavailable",
                         "Bu to'lov usuli hozircha ishlamayapti. Boshqa usulni tanlang.", 503)
 

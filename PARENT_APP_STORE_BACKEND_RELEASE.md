@@ -1,40 +1,61 @@
 # Minar Parents — CRM backend App Store release gate
 
-> Draft backend work only. **Production server has not been accessed, deployed, or restarted.**
-> Audit date: 2026-10-11. Do not merge without staging/production validation and privacy-owner approval.
+> Holat 2026-10-11 dan yangilangan. Prod `/var/www/minar-stack` (Docker) dan ishlaydi; deploy —
+> `sudo scripts/deploy.sh ithub --ref <commit>`. Aniq commit, deploy vaqti va smoke-test natijalari
+> pastdagi "Production tekshiruvi" bo'limida. **Kod merge qilingani prod ishlayapti degani emas** —
+> har deploy'dan keyin shu bo'limni yangilang.
 
-## Implemented in this PR
+## Endpointlar (nginx orqali `https://crm.minaracademy.uz/api/...`)
 
-1. `DELETE /parent/account` (public via `/api/parent/account` through Nginx), authenticated by an existing parent JWT:
-   - Locks and rechecks the account row.
-   - Deletes all related refresh tokens, parent-specific notifications and parent↔student links.
-   - If no parent invoice exists, permanently deletes the account row.
-   - If invoices exist, retains a non-login, **anonymized** invoice owner (`deleted-parent-<id>`, no phone/name/avatar/profile, random unusable password and `is_active=false`) to preserve ledger referential integrity. The student, attendance, grades, salary and payment history remain untouched.
-   - Returns 204 only after database commit. On error rolls back; the iOS client must only clear session on success.
-   - Old access tokens are rejected because parent is inactive/deleted, old refresh tokens no longer exist.
-2. `POST /parent/children/{id}/pay` returns **503** after normal authorization and input checks instead of writing a fake invoice and returning a nonexistent `/stub/` checkout URL. **Payme, Click, Uzum are NOT integrated.**
-3. Pytest covers parent account deletion success/authorization, existing refresh invalidation, invoice retention/anonymization and failure-closed checkout.
+| Endpoint | Auth | Javob |
+|---|---|---|
+| `GET /parent/privacy.html` | yo'q | 200 `text/html`, redirectsiz (uz/ru/en) |
+| `GET /parent/app-config` | Bearer (ota-ona) | 200 `{payments_enabled, payment_providers, account_deletion_enabled, privacy_policy_url}`; authsiz 401 |
+| `DELETE /parent/account` | Bearer (ota-ona) | 204 faqat commit'dan keyin; authsiz/eskirgan/o'chirilgan token 401; xatoda 5xx (rollback) |
 
-## Conditions before enabling the iOS Delete Account button
+### app-config flag'lari (fail closed, env orqali qo'lda yoqiladi)
 
-- Review the data-retention requirements for payments and minor students. An invoice still includes `student_id`; retention must be justified and disclosed in the public privacy policy.
-- Decide whether the invoice owner tombstone approach meets current legal/compliance rules; alternatively migrate invoice references to a separate anonymized ledger with a retention schedule.
-- Ensure the CRM website can explain parent data deletion and has a reliable privacy-contact channel.
-- Run `pytest backend/tests/test_parent.py -q` and all backend tests in a staging environment; smoke-test the real endpoint with a **throwaway** parent+test student. Never test destructive deletion on a live customer's account.
-- Confirm privacy policy coverage of minor student data, educational history, payment processors, retention and backups.
-- Only after production backend deployment and verification set `ACCOUNT_DELETION_ENABLED=YES` in the Swift `Minar-Production` build. Apple's review team must have working test account access.
-- No DB migration is required for this implementation; it uses existing schema.
+- `payments_enabled` / `payment_providers` — faqat `PARENT_PAYMENTS_ENABLED=true` **va** provayderning barcha
+  merchant o'zgaruvchilari berilganda. Kalit o'chiq bo'lsa `false` / `[]`, `POST /parent/children/{id}/pay` esa
+  invoys yaratmasdan 503 `payment_provider_unavailable` qaytaradi. Callback endpointlari kalitga bog'liq emas
+  (mavjud invoyslar yakunlanishi uchun).
+- `account_deletion_enabled` — `PARENT_ACCOUNT_DELETION_ENABLED=true` bo'lganda. Endpoint flag'dan qat'i nazar
+  ishlaydi (ilovaning eski build'lari va qo'lda so'rovlar uchun); flag faqat ilovadagi tugmani boshqaradi.
+- Ikkala flag ham prod'da real sinov va release egasi tasdig'idan keyingina yoqiladi.
 
-## Real payment integration remains BLOCKED
+## Akkauntni o'chirish jarayoni
 
-The old implementation created `STUB-` invoices and invented a placeholder checkout URL. This is **disabled**; parents will see a temporary-unavailable message. A real provider integration needs:
-- Merchant accounts and sandbox credentials managed in server secrets **not in Git**.
-- Provider-issued checkout URLs, signature/transaction verification, callback authentication, amount/currency correctness, idempotency, expiry and replay protection.
-- Atomic updates to invoice, receipt, `Payment` records and student debt after verified server-to-server callback.
-- Tests for cancel, failure, duplicate callbacks, race with account deletion, payment return from external browser, and gateway outages.
-- Separate legal review of App Store 3.1.3(e) (tuition for in-person teaching versus digital services).
+Bitta tranzaksiyada (`SELECT ... FOR UPDATE` bilan parallel login/refresh'dan himoyalangan):
 
-Do not claim checkout is complete until all items are implemented and provider-certified.
+1. Barcha refresh tokenlar o'chiriladi; access token ota-ona yo'q/nofaol bo'lgani uchun keyingi so'rovda 401.
+2. Ota-ona bildirishnomalari, ota-ona↔bola bog'lanishlari, telefon tasdiqlash (OTP) yozuvlari (telefon, IP) o'chiriladi.
+3. `parent_invoices` bo'lmasa — `parents` qatori butunlay o'chiriladi (`erased`).
+   Bo'lsa — buxgalteriya uchun shaxssiz "tombstone" qoladi (`anonymized`): `deleted-parent-<id>` login/telefon,
+   ism/rasm yo'q, tasodifiy yaroqsiz parol, `is_active=false`. Invoys (summa, provayder, `student_id`) saqlanadi.
+4. **Saqlanadigan yozuvlar** (ota-onaga emas, akademiyaga tegishli): o'quvchi kartasi, davomat, baholar, uy
+   vazifalari, to'lovlar (`payments`), o'qituvchi izohlari, sertifikatlar.
+5. Commit'dan keyin 204. Xatoda rollback va 5xx; ilova sessiyani faqat 204 da tozalashi kerak (404/5xx — muvaffaqiyat emas).
+6. **Audit**: konteyner logida `AUDIT parent_account_deleted parent_id=<id> mode=erased|anonymized request_id=<id>`
+   (shaxsiy ma'lumotsiz). `audit_logs` jadvali `users`ga majburiy FK talab qiladi, shuning uchun DB'ga yozilmaydi;
+   docker log retention'i alohida belgilanishi kerak (ochiq masala).
+7. **Backup**: `minar-stack` backup servisi `BACKUP_KEEP_DAYS` (compose default — 14 kun) dan eski dump'larni
+   o'chiradi. O'chirilgan ma'lumot shu muddatgacha zaxirada qoladi; zaxiradan tiklansa, o'chirilgan akkauntlar
+   audit logi bo'yicha qayta o'chirilishi kerak. Prod'dagi haqiqiy qiymatni operator tasdiqlasin.
+8. Jarayon to'liq avtomatik — qo'lda davom etadigan bosqich yo'q, shuning uchun alohida muddat/yakun xabari kerak emas;
+   204 javobining o'zi yakun tasdig'i.
+
+**Ochiq (huquqiy/release egasi):** tombstone + invoysdagi `student_id` saqlanishi qonuniy asosi va muddati;
+Apple 5.1.1(v) talabiga mosligi; privacy siyosatidagi operator (yuridik shaxs nomi, manzil, email/telefon) —
+hozir faqat "minaracademy.uz orqali" deyilgan. Siyosat matni privacy egasi/yurist tasdig'idan o'tmagan.
+
+## Onlayn to'lov
+
+Payme/Click/Uzum checkout va imzolangan callback'lar kodda bor (`backend/parent/payments/`, testlar:
+idempotency, dublikat, noto'g'ri summa/guruh, imzo, cancel/refund, muddati o'tgan). Lekin merchant sertifikatsiyasi
+va prod'da real to'lov sinovi o'tkazilmagan — shuning uchun `PARENT_PAYMENTS_ENABLED` o'rnatilmagan va ilovada
+to'lov o'chiq. Yoqishdan oldin: har provayder sandbox + real kichik summa, cancel/refund, kechikkan callback,
+ilovaga qaytish to'lov tasdig'i emasligi (holat faqat callback'dan). App Store 3.1.3(e) — akademiya kurslari
+ilovadan tashqarida iste'mol qilinadigan xizmat ekanini release egasi tasdiqlasin.
 
 ## High-priority public-repository security findings (not automatically remediated on live server)
 
@@ -77,23 +98,16 @@ Never paste `.env`, database passwords, private keys, full credential-bearing gi
 - Apple guidelines: https://developer.apple.com/app-store/review/guidelines/
 - Parent API source: `backend/parent/router_parent.py`
 
-## Server operator: safely fetch after the PR is merged to main
+## Production deploy (server operator)
 
-Run under the existing `ubuntu` repository owner, not `root` or `minar-deploy`:
+Prod `/var/www/it-hub` checkout'idan emas, `/var/www/minar-stack` Docker stekidan ishlaydi.
 
 ```bash
-cd /var/www/it-hub
-whoami
-git status --short
-git branch --show-current
-git remote -v  # check that fetch origin is onlysharifjon/it-hub; redact any embedded credentials
-# Stop here if there are uncommitted changes or a branch other than main.
-git fetch origin main
-git log --oneline --max-count=5 origin/main
-git diff --stat HEAD..origin/main
-git merge --ff-only origin/main
-# On staging, or only once approved for production:
-python -m pytest backend/tests/test_parent.py -q
+cd /var/www/minar-stack
+sudo scripts/deploy.sh status          # joriy ITHUB_TAG; deploy qilinadigan ref shu commit'ni o'z ichiga olsin
+sudo scripts/deploy.sh ithub --ref <commit>     # crm-api, space-api, worker + alembic migratsiya
+sudo scripts/deploy.sh crm-web --ref <commit>   # CRM frontend
 ```
 
-Do **not** run `docker compose down -v`, destructive migrations, a seed script, or delete tests against the real DB. Do not restart services until a recovery plan is ready. If `git status` shows local edits, back them up and reconcile them instead of forcing a reset.
+Rollback — oldingi ishlagan tag bilan (`--ref <oldingi tag>`). `docker compose down -v`, seed skriptlari va
+o'chirish testlarini haqiqiy ota-ona akkauntlarida ishlatmang.

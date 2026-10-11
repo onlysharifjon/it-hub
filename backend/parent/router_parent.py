@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta
@@ -22,7 +23,7 @@ from ..database import get_db
 from ..phone_utils import normalize_phone
 from . import schemas, service
 from .deps import get_current_parent, get_owned_child
-from .errors import api_error
+from .errors import api_error, request_id
 from .payments import config as pay_config
 from .payments.checkout import create_checkout
 
@@ -32,6 +33,9 @@ _RATE_HEADERS = {"Retry-After": "60"}
 REFRESH_REUSE_GRACE_SEC = int(os.getenv("PARENT_REFRESH_REUSE_GRACE_SEC", "10"))
 AVATAR_MAX_BYTES = 2 * 1024 * 1024
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/app/uploads")
+# Ilovadagi "Akkauntni o'chirish" tugmasi uchun flag. Endpoint flag'dan qat'i nazar ishlaydi.
+ACCOUNT_DELETION_ENABLED = os.getenv("PARENT_ACCOUNT_DELETION_ENABLED", "false").strip().lower() == "true"
+log = logging.getLogger("ithub.parent")
 
 
 def _client_ip(request: Request) -> str:
@@ -167,12 +171,13 @@ def _issue_tokens(db: Session, parent: models.Parent) -> schemas.TokenPair:
 
 @router.get("/app-config", response_model=schemas.ParentAppCapabilities)
 def parent_app_config(parent: models.Parent = Depends(get_current_parent)):
-    """To'lov faqat env'da to'liq sozlangan provayderlar bilan yoqiladi (fail closed)."""
-    providers = [p for p in pay_config.PROVIDERS if pay_config.is_configured(p)]
+    """Fail closed: flag'lar faqat real sinovdan keyin env orqali qo'lda yoqiladi
+    (PARENT_PAYMENTS_ENABLED + provayder sozlamalari, PARENT_ACCOUNT_DELETION_ENABLED)."""
+    providers = pay_config.active_providers()
     return schemas.ParentAppCapabilities(
         payments_enabled=bool(providers),
         payment_providers=providers,
-        account_deletion_enabled=True,
+        account_deletion_enabled=ACCOUNT_DELETION_ENABLED,
         privacy_policy_url="https://crm.minaracademy.uz/api/parent/privacy.html",
     )
 
@@ -238,6 +243,7 @@ def update_profile(
 
 @router.delete("/account", status_code=204, response_class=Response)
 def delete_parent_account(
+    request: Request,
     parent: models.Parent = Depends(get_current_parent),
     db: Session = Depends(get_db),
 ):
@@ -274,6 +280,12 @@ def delete_parent_account(
         db.query(models.ParentChild).filter(
             models.ParentChild.parent_id == parent_id
         ).delete(synchronize_session=False)
+        # OTP yozuvlari telefon va IP saqlaydi.
+        phones = {p for p in (target.phone, service.phone_e164(target.phone)) if p}
+        db.query(models.PhoneVerification).filter(
+            (models.PhoneVerification.parent_id == parent_id)
+            | (models.PhoneVerification.phone.in_(phones))
+        ).delete(synchronize_session=False)
 
         has_invoices = db.query(models.ParentInvoice.id).filter(
             models.ParentInvoice.parent_id == parent_id
@@ -296,7 +308,12 @@ def delete_parent_account(
         db.commit()
     except Exception:
         db.rollback()
+        log.exception("parent account deletion failed parent_id=%s request_id=%s",
+                      parent_id, request_id(request))
         raise
+    # Audit: shaxsiy ma'lumotsiz (faqat id) — konteyner logi; DB'dagi audit_logs xodim (users) talab qiladi.
+    log.warning("AUDIT parent_account_deleted parent_id=%s mode=%s request_id=%s",
+                parent_id, "anonymized" if has_invoices else "erased", request_id(request))
     return Response(status_code=204)
 
 

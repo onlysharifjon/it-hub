@@ -1,7 +1,8 @@
 """Onlayn to'lov sozlamalari — faqat environment'dan (kodda hech qanday secret yo'q).
 
 Provayder "sozlangan" hisoblanadi, agar uning barcha majburiy o'zgaruvchilari
-berilgan bo'lsa. Aks holda /parent/children/{id}/pay → 503 payment_provider_unavailable.
+berilgan bo'lsa. Checkout faqat PARENT_PAYMENTS_ENABLED=true bo'lganda ochiladi;
+aks holda /parent/children/{id}/pay → 503 payment_provider_unavailable.
 """
 from __future__ import annotations
 
@@ -86,6 +87,19 @@ def is_configured(provider: str) -> bool:
     if provider == "uzum":
         return bool(uzum_service_id() and uzum_login() and uzum_password())
     return False
+
+
+def payments_enabled() -> bool:
+    """Qo'lda yoqiladigan umumiy kalit: merchant sertifikatsiyasi va real sinovdan keyin
+    PARENT_PAYMENTS_ENABLED=true. Default — o'chiq (checkout 503, app-config false)."""
+    return _env("PARENT_PAYMENTS_ENABLED").lower() == "true"
+
+
+def active_providers() -> list[str]:
+    """Ilovaga ko'rsatiladigan va checkout ochiladigan provayderlar."""
+    if not payments_enabled():
+        return []
+    return [p for p in PROVIDERS if is_configured(p)]
 
 
 def checkout_url_allowed(provider: str, url: str) -> bool:
