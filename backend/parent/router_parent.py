@@ -25,7 +25,7 @@ from . import schemas, service
 from .deps import get_current_parent, get_owned_child
 from .errors import api_error, request_id
 from .payments import config as pay_config
-from .phone_auth.service import is_review_phone, review_password_login
+from .phone_auth.service import review_password_login
 from .payments.checkout import create_checkout
 
 router = APIRouter(prefix="/parent", tags=["parent"])
@@ -179,7 +179,7 @@ def _issue_tokens(db: Session, parent: models.Parent) -> schemas.TokenPair:
 def parent_app_config(parent: models.Parent = Depends(get_current_parent)):
     """Fail closed: flag'lar faqat real sinovdan keyin env orqali qo'lda yoqiladi
     (PARENT_PAYMENTS_ENABLED + provayder sozlamalari, PARENT_ACCOUNT_DELETION_ENABLED)."""
-    providers = pay_config.active_providers()
+    providers = pay_config.active_providers(parent)
     return schemas.ParentAppCapabilities(
         payments_enabled=bool(providers),
         payment_providers=providers,
@@ -273,15 +273,6 @@ def delete_parent_account(
         raise api_error("unauthorized", "Token yaroqsiz", 401)
 
     parent_id = target.id
-    if is_review_phone(service.phone_e164(target.phone)):
-        # App Store review akkaunti: reviewer o'chirishni sinab ko'rsa ham keyingi review'lar uchun
-        # akkaunt va xayoliy farzand saqlanadi — faqat sessiyalar bekor qilinadi.
-        db.query(models.ParentRefreshToken).filter(
-            models.ParentRefreshToken.parent_id == parent_id).delete(synchronize_session=False)
-        db.commit()
-        log.warning("AUDIT parent_account_deleted parent_id=%s mode=review_reset request_id=%s",
-                    parent_id, request_id(request))
-        return Response(status_code=204)
     try:
         # Prevent previously issued refresh tokens from ever being used again.
         db.query(models.ParentRefreshToken).filter(

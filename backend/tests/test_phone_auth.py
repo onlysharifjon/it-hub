@@ -411,18 +411,26 @@ def test_review_disabled_without_env(client, db, gw):
     assert gw.sent and gw.sent[0][0] == REVIEW     # oddiy Gateway oqimi
 
 
-def test_review_account_delete_keeps_account_and_children(client, db, gw, review_env):
-    s = Student(full_name="TEST — Review", phone1="+998900000778", is_active=True, created_at=datetime.utcnow())
-    db.add(s); db.flush()
-    p = Parent(full_name="TEST — Review Parent", phone=REVIEW, username=REVIEW,
-               hashed_password=security.hash_password("x" * 12), is_active=True)
-    db.add(p); db.flush()
-    db.add(ParentChild(parent_id=p.id, student_id=s.id)); db.commit()
+def test_review_account_delete_is_real_and_relogin_reprovisions(client, db, gw, review_env):
+    from backend.models import ParentRefreshToken
     vid = _request(client, REVIEW).json()["verificationId"]
     tokens = _verify(client, vid, code="4321", phone=REVIEW).json()
     h = {"Authorization": f"Bearer {tokens['access_token']}"}
+    kids = client.get("/parent/children", headers=h).json()
+    assert len(kids) == 1 and kids[0]["full_name"].startswith("TEST — App Review")   # avtomatik xayoliy farzand
+    pid = db.query(Parent).filter_by(phone=REVIEW).one().id
+
     assert client.delete("/parent/account", headers=h).status_code == 204
     db.expire_all()
-    assert db.query(Parent).filter_by(id=p.id, is_active=True).count() == 1
-    assert db.query(ParentChild).filter_by(parent_id=p.id).count() == 1
+    assert db.query(Parent).filter_by(id=pid).count() == 0                      # haqiqiy o'chirish
+    assert db.query(ParentChild).filter_by(parent_id=pid).count() == 0
+    assert db.query(ParentRefreshToken).filter_by(parent_id=pid).count() == 0
+    assert db.query(Student).filter_by(id=kids[0]["id"]).count() == 1          # akademik yozuv qoladi
+    assert client.get("/parent/profile", headers=h).status_code == 401
     assert client.post("/parent/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code == 401
+
+    r = client.post("/parent/auth/login", json={"username": REVIEW, "password": "4321"})
+    h2 = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    again = client.get("/parent/children", headers=h2).json()
+    assert [c["id"] for c in again] == [kids[0]["id"]]                           # o'sha xayoliy o'quvchi, dublikatsiz
+    assert db.query(Student).filter(Student.full_name.like("TEST — App Review%")).count() == 1

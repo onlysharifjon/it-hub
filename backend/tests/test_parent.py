@@ -944,3 +944,50 @@ def test_unmarked_attendance_not_counted_as_absence(client, db, hunter_user):
     assert len(payload["records"]) == 1
     assert payload["records"][0]["is_present"] is True
 
+
+# ── App Store review akkaunti: seed → 700 000 qarz → Payme → yangilangan balans ──
+
+def test_review_account_seed_and_payme_flow(client, db, providers, monkeypatch):
+    from backend.scripts.seed_review_account import seed
+    for k, v in {"PARENT_REVIEW_PHONE": "+998900000777", "PARENT_REVIEW_OTP": "4321",
+                 "PARENT_REVIEW_PAYMENT_PROVIDERS": "payme", "PARENT_PAYMENTS_ENABLED": "false"}.items():
+        monkeypatch.setenv(k, v)
+    assert seed(db, "+998900000777").startswith("CREATED")
+    assert seed(db, "+998900000777").startswith("EXISTS")          # idempotent
+
+    r = client.post("/parent/auth/login", json={"username": "900000777", "password": "4321"})
+    assert r.status_code == 200, r.text
+    h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    cfg = client.get("/parent/app-config", headers=h).json()
+    assert cfg["payments_enabled"] is True and cfg["payment_providers"] == ["payme"]
+
+    kids = client.get("/parent/children", headers=h).json()
+    assert len(kids) == 1 and kids[0]["full_name"].startswith("TEST — App Review")
+    sid = kids[0]["id"]
+    m, y = _now()
+    for part in ("attendance", "schedule", "grades", "homework", "feedback", "certificates", "teacher"):
+        q = f"?month={m}&year={y}" if part == "attendance" else ""
+        assert client.get(f"/parent/children/{sid}/{part}{q}", headers=h).status_code == 200, part
+    summ = _summary(client, h, sid).json()
+    assert summ["debt"] == 700000 and summ["payment_status"] == "debtor", summ
+    gid = summ["groups"][0]["group_id"]
+
+    assert _pay(client, h, sid, gid, amount=700000, provider="click").status_code == 503
+    res = _pay(client, h, sid, gid, amount=700000)
+    assert res.status_code == 200, res.text
+    inv = db.query(ParentInvoice).filter_by(student_id=sid).one()
+    acc = {"invoice_id": str(inv.id)}
+    assert _payme(client, "CheckPerformTransaction", {"amount": 70000000, "account": acc}).json()["result"] == {"allow": True}
+    created = _payme(client, "CreateTransaction", {"id": "rv-1", "time": 1, "amount": 70000000, "account": acc}).json()
+    assert created["result"]["state"] == 1
+    assert _summary(client, h, sid).json()["debt"] == 700000      # callback'siz qarz o'zgarmaydi
+    assert _payme(client, "PerformTransaction", {"id": "rv-1"}).json()["result"]["state"] == 2
+    summ = _summary(client, h, sid).json()
+    assert summ["debt"] == 0 and summ["payment_status"] == "paid"
+    assert summ["recent_payments"][0]["amount"] == 700000
+
+    # Oddiy ota-onalar uchun to'lov hali ham o'chiq
+    other = _mk_student(db, "Oddiy", "+998900000779")
+    _mk_parent(db, [other])
+    assert client.get("/parent/app-config", headers=_h(client)).json()["payment_providers"] == []
+

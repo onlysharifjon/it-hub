@@ -95,8 +95,20 @@ def payments_enabled() -> bool:
     return _env("PARENT_PAYMENTS_ENABLED").lower() == "true"
 
 
-def active_providers() -> list[str]:
-    """Ilovaga ko'rsatiladigan va checkout ochiladigan provayderlar."""
+def review_providers() -> list[str]:
+    """App Store review akkaunti uchun alohida yoqilgan provayderlar (PARENT_REVIEW_PAYMENT_PROVIDERS=payme)."""
+    raw = _env("PARENT_REVIEW_PAYMENT_PROVIDERS").lower()
+    return [p for p in PROVIDERS if p in {x.strip() for x in raw.split(",")}]
+
+
+def active_providers(parent=None) -> list[str]:
+    """Ilovaga ko'rsatiladigan va checkout ochiladigan provayderlar. Review akkaunti uchun —
+    umumiy kalitdan qat'i nazar faqat review_providers() (sozlangan bo'lsa)."""
+    if parent is not None:
+        from ..phone_auth.service import is_review_phone
+        from ..service import phone_e164
+        if is_review_phone(phone_e164(parent.phone)):
+            return [p for p in review_providers() if is_configured(p)]
     if not payments_enabled():
         return []
     return [p for p in PROVIDERS if is_configured(p)]

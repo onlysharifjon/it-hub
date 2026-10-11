@@ -60,6 +60,13 @@ def is_review_phone(phone: str) -> bool:
     return bool(rp) and secrets.compare_digest(rp, phone)
 
 
+def _ensure_review_data(db: Session, parent: models.Parent) -> None:
+    """Review akkauntida xayoliy farzand bo'lmasa (yangi yoki o'chirilib qayta kirilgan) — biriktiriladi."""
+    from ...scripts.seed_review_account import ensure_review_children
+    if ensure_review_children(db, parent):
+        log.info("review account provisioned with fictional child parent=%s", parent.id)
+
+
 def review_password_login(db: Session, raw_username: str, password: str) -> Optional[models.Parent]:
     """Parol ekrani orqali review kirishi: raqam + qat'iy kod mos bo'lsa ota-ona (yo'q bo'lsa yaratiladi).
     Mos kelmasa None — oddiy parol tekshiruvi davom etadi."""
@@ -82,6 +89,7 @@ def review_password_login(db: Session, raw_username: str, password: str) -> Opti
                                is_active=True, created_at=datetime.utcnow())
         db.add(parent)
         db.flush()
+    _ensure_review_data(db, parent)
     log.info("review account password login parent=%s", parent.id)
     return parent
 
@@ -364,6 +372,8 @@ class PhoneVerificationService:
             self.db.rollback()
             raise api_error("account_disabled", "Akkaunt bloklangan. Administratorga murojaat qiling.", 403)
         parent.phone_verified_at = now
+        if is_review_phone(row.phone):
+            _ensure_review_data(self.db, parent)
         self.db.query(models.PhoneVerification).filter(models.PhoneVerification.id == row.id).update(
             {"parent_id": parent.id}, synchronize_session=False)
         return parent
