@@ -394,7 +394,19 @@ def test_review_code_not_accepted_for_other_phones(client, db, gw, review_env):
     assert gw.checks == []
 
 
+def test_review_password_login(client, db, gw, review_env):
+    login = lambda u, p: client.post("/parent/auth/login", json={"username": u, "password": p})
+    assert login("900000777", "0000").status_code == 401
+    assert login("+998901234567", "4321").status_code == 401        # boshqa raqamga kod ishlamaydi
+    r = login("90 000 07 77", "4321")
+    assert r.status_code == 200, r.text and r.json()["access_token"]
+    assert db.query(Parent).filter_by(phone=REVIEW).count() == 1
+    assert login("+998900000777", "4321").status_code == 200      # takror — yangi akkaunt yaratilmaydi
+    assert db.query(Parent).filter_by(phone=REVIEW).count() == 1
+
+
 def test_review_disabled_without_env(client, db, gw):
+    assert client.post("/parent/auth/login", json={"username": "900000777", "password": "4321"}).status_code == 401
     _request(client, REVIEW)
     assert gw.sent and gw.sent[0][0] == REVIEW     # oddiy Gateway oqimi
 

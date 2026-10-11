@@ -116,3 +116,5 @@ Telegram'ga kod yuborilmaydi, `verify-code` faqat shu qat'iy kodni qabul qiladi 
 `DELETE /parent/account` bu akkauntda faqat sessiyalarni bekor qiladi — akkaunt va xayoliy farzand keyingi
 review'lar uchun saqlanadi (log: `mode=review_reset`). Qiymatlar faqat server env'ida
 (`/var/www/minar-stack/env/ithub.env`); repoga va loglarga yozilmaydi. Biri bo'sh bo'lsa funksiya o'chiq.
+
+Parol ekrani (`POST /parent/auth/login`) ham qo'llab-quvvatlanadi: shu raqam + qat'iy kod parol sifatida — akkaunt bo'lmasa yaratiladi.

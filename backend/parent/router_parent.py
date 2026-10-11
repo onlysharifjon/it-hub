@@ -25,7 +25,7 @@ from . import schemas, service
 from .deps import get_current_parent, get_owned_child
 from .errors import api_error, request_id
 from .payments import config as pay_config
-from .phone_auth.service import is_review_phone
+from .phone_auth.service import is_review_phone, review_password_login
 from .payments.checkout import create_checkout
 
 router = APIRouter(prefix="/parent", tags=["parent"])
@@ -101,6 +101,11 @@ def login(payload: schemas.ParentLoginRequest, request: Request, db: Session = D
             not security.rate_limit_ok(f"plogin-user:{uname}", limit=30, window=60):
         raise _rate_limited()
 
+    review = review_password_login(db, payload.username, payload.password)
+    if review is not None:
+        if not review.is_active:
+            raise _invalid_credentials()
+        return _issue_tokens(db, review)
     parent = _find_parent(db, payload.username)
     # Parol o'zgartirilmaydi (trim yo'q). Topilmasa ham bcrypt ishlaydi — vaqtdan bilib bo'lmasin.
     ok = security.verify_password(payload.password, parent.hashed_password if parent else security.DUMMY_HASH)

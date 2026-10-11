@@ -60,6 +60,32 @@ def is_review_phone(phone: str) -> bool:
     return bool(rp) and secrets.compare_digest(rp, phone)
 
 
+def review_password_login(db: Session, raw_username: str, password: str) -> Optional[models.Parent]:
+    """Parol ekrani orqali review kirishi: raqam + qat'iy kod mos bo'lsa ota-ona (yo'q bo'lsa yaratiladi).
+    Mos kelmasa None — oddiy parol tekshiruvi davom etadi."""
+    rp = review_phone()
+    code = os.getenv("PARENT_REVIEW_OTP", "").strip()
+    if not rp or not secrets.compare_digest(password.encode(), code.encode()):
+        return None
+    try:
+        phone = normalize_e164(raw_username)
+    except Exception:
+        return None
+    if not secrets.compare_digest(rp, phone):
+        return None
+    key = normalize_phone(phone)
+    parent = next((p for p in db.query(models.Parent).filter(models.Parent.phone.like(f"%{key[-2:]}")).all()
+                   if normalize_phone(p.phone) == key or normalize_phone(p.username) == key), None)
+    if parent is None:
+        parent = models.Parent(full_name=phone, phone=phone, username=phone,
+                               hashed_password=security.hash_password(secrets.token_urlsafe(32)),
+                               is_active=True, created_at=datetime.utcnow())
+        db.add(parent)
+        db.flush()
+    log.info("review account password login parent=%s", parent.id)
+    return parent
+
+
 def allowed_prefixes() -> List[str]:
     raw = os.getenv("PHONE_OTP_ALLOWED_PREFIXES", "+998")
     return [p.strip() for p in raw.split(",") if p.strip()]
