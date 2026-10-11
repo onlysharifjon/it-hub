@@ -15,7 +15,7 @@ from jose import jwt
 
 from backend import security, tz
 from backend.models import (
-    Attendance, Certificate, Grade, Group, GroupStudent, Homework, HomeworkSubmission,
+    Attendance, Certificate, Event, Grade, Group, GroupStudent, Homework, HomeworkSubmission,
     Parent, ParentChild, ParentInvoice, ParentNotification, ParentRefreshToken, Payment,
     PaymentTransaction, ScheduleSlot, SpecialDiscount, Student, TeacherFeedback, UserRole,
 )
@@ -778,3 +778,140 @@ def test_db_outage_is_503_not_401(client, db, monkeypatch):
     monkeypatch.setattr(router_parent, "_find_parent", boom)
     r = _login(client)
     assert r.status_code == 503 and r.json()["code"] == "service_unavailable"
+
+
+# ── Parent account deletion / App Store privacy ──────────────────────────────
+
+def test_parent_delete_account_requires_authentication(client):
+    res = client.delete("/parent/account")
+    assert res.status_code == 401
+
+
+def test_parent_deletion_erases_account_and_tokens_but_not_student(client, db, hunter_user):
+    student = _mk_student(db, "Alibek Mominov", "+998900000041")
+    parent = _mk_parent(db, [student], phone="+998900000042")
+    login = _login(client, "+998900000042").json()
+    auth = {"Authorization": f"Bearer {login['access_token']}"}
+    parent_id = parent.id
+    db.add(ParentNotification(
+        parent_id=parent_id, student_id=student.id,
+        type="attendance", title="Sensitive attendance",
+        body="Example child details", created_at=datetime.utcnow(),
+    ))
+    db.commit()
+
+    deleted = client.delete("/parent/account", headers=auth)
+    assert deleted.status_code == 204, deleted.text
+
+    db.expire_all()
+    assert db.query(Parent).filter(Parent.id == parent_id).first() is None
+    assert db.query(ParentChild).filter(ParentChild.parent_id == parent_id).count() == 0
+    assert db.query(ParentRefreshToken).filter(ParentRefreshToken.parent_id == parent_id).count() == 0
+    assert db.query(ParentNotification).filter(ParentNotification.parent_id == parent_id).count() == 0
+    assert db.query(Student).filter(Student.id == student.id).count() == 1
+    assert client.get("/parent/profile", headers=auth).status_code == 401
+    assert client.post("/parent/auth/refresh",
+                       json={"refresh_token": login["refresh_token"]}).status_code == 401
+    assert _login(client, "+998900000042").status_code == 401
+    assert client.delete("/parent/account", headers=auth).status_code == 401
+
+
+def test_parent_deletion_anonymizes_when_invoice_must_be_retained(client, db, hunter_user):
+    student = _mk_student(db, "Malika Mominova", "+998900000051")
+    group = _mk_group(db, "Frontend G-501")
+    _enroll(db, group, student)
+    parent = _mk_parent(db, [student], phone="+998900000052")
+    old_login = _login(client, "+998900000052").json()
+    parent_id, old_phone, old_password = parent.id, parent.phone, parent.hashed_password
+    db.add(ParentInvoice(
+        parent_id=parent_id, student_id=student.id, group_id=group.id,
+        amount=450000, provider="click", status="paid",
+        checkout_ref="record-kept-for-audit", created_at=datetime.utcnow(),
+    ))
+    db.commit()
+    res = client.delete("/parent/account", headers={"Authorization": f"Bearer {old_login['access_token']}"})
+    assert res.status_code == 204, res.text
+    db.expire_all()
+
+    tombstone = db.query(Parent).filter(Parent.id == parent_id).one()
+    assert tombstone.is_active is False
+    assert tombstone.username == f"deleted-parent-{parent_id}"
+    assert tombstone.phone == f"deleted-parent-{parent_id}"
+    assert tombstone.full_name == "Deleted parent"
+    assert tombstone.display_name is None
+    assert tombstone.avatar is None
+    assert tombstone.created_by_id is None
+    assert tombstone.phone != old_phone
+    assert tombstone.hashed_password != old_password
+    assert db.query(ParentInvoice).filter(ParentInvoice.parent_id == parent_id).count() == 1
+    assert db.query(ParentChild).filter(ParentChild.parent_id == parent_id).count() == 0
+    assert db.query(ParentRefreshToken).filter(ParentRefreshToken.parent_id == parent_id).count() == 0
+    assert db.query(Student).filter(Student.id == student.id).count() == 1
+    assert client.get("/parent/profile", headers={
+        "Authorization": f"Bearer {old_login['access_token']}"
+    }).status_code == 401
+    assert client.post("/parent/auth/refresh",
+                       json={"refresh_token": old_login["refresh_token"]}).status_code == 401
+
+
+
+# ── Swift/CRM wire contract and public App Store privacy URL ──────────────────
+
+def test_public_parent_privacy_html_needs_no_login(client):
+    res = client.get("/parent/privacy.html")
+    assert res.status_code == 200
+    assert "text/html" in res.headers["content-type"]
+    assert "Minar Parents" in res.text
+    assert 'lang="uz"' in res.text
+    assert 'lang="ru"' in res.text
+    assert 'lang="en"' in res.text
+    assert "minaracademy.uz" in res.text
+
+
+def test_parent_app_capabilities_fail_closed_until_payments_ready(client, db, monkeypatch):
+    for k in ("PAYME_MERCHANT_ID", "PAYME_KEY", "CLICK_SERVICE_ID", "CLICK_MERCHANT_ID",
+              "CLICK_SECRET_KEY", "UZUM_SERVICE_ID", "UZUM_LOGIN", "UZUM_PASSWORD"):
+        monkeypatch.delenv(k, raising=False)
+    assert client.get("/parent/app-config").status_code == 401
+    student = _mk_student(db, "Config student", "+998900000071")
+    _mk_parent(db, [student])
+    h = _h(client)
+    res = client.get("/parent/app-config", headers=h)
+    assert res.status_code == 200, res.text
+    assert res.json() == {
+        "payments_enabled": False,
+        "payment_providers": [],
+        "account_deletion_enabled": True,
+        "privacy_policy_url": "https://crm.minaracademy.uz/api/parent/privacy.html",
+    }
+
+
+def test_parent_app_capabilities_list_configured_providers(client, db, providers):
+    student = _mk_student(db, "Config student", "+998900000071")
+    _mk_parent(db, [student])
+    flags = client.get("/parent/app-config", headers=_h(client)).json()
+    assert flags["payments_enabled"] is True
+    assert flags["payment_providers"] == ["payme", "click", "uzum"]
+
+
+def test_unmarked_attendance_not_counted_as_absence(client, db, hunter_user):
+    student = _mk_student(db, "Attend student", "+998900000072")
+    group = _mk_group(db, "Attendance G-17")
+    _enroll(db, group, student)
+    db.add(Attendance(group_id=group.id, student_id=student.id,
+                      lesson_date=date(2026, 10, 1), is_present=None))
+    db.add(Attendance(group_id=group.id, student_id=student.id,
+                      lesson_date=date(2026, 10, 2), is_present=True))
+    db.commit()
+    _mk_parent(db, [student], phone="+998901112233")
+    h = _h(client)
+    result = client.get(
+        f"/parent/children/{student.id}/attendance?month=10&year=2026",
+        headers=h,
+    )
+    assert result.status_code == 200, result.text
+    payload = result.json()
+    assert payload["percent"] == 100
+    assert len(payload["records"]) == 1
+    assert payload["records"][0]["is_present"] is True
+

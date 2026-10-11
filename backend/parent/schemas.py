@@ -33,6 +33,15 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(..., min_length=1, max_length=200)
 
 
+# ── App configuration ──────────────────────────────────────────────────────
+
+class ParentAppCapabilities(BaseModel):
+    payments_enabled: bool = False
+    payment_providers: List[str] = []
+    account_deletion_enabled: bool = True
+    privacy_policy_url: str
+
+
 # ── Profil / bolalar ─────────────────────────────────────────────────────────
 
 class ParentProfile(BaseModel):

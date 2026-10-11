@@ -8,7 +8,9 @@ from __future__ import annotations
 import base64
 import binascii
 import os
+import secrets
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -21,6 +23,7 @@ from ..phone_utils import normalize_phone
 from . import schemas, service
 from .deps import get_current_parent, get_owned_child
 from .errors import api_error
+from .payments import config as pay_config
 from .payments.checkout import create_checkout
 
 router = APIRouter(prefix="/parent", tags=["parent"])
@@ -62,6 +65,22 @@ def _find_parent(db: Session, username: str) -> Optional[models.Parent]:
     matches = {p.id: p for p in candidates
                if normalize_phone(p.phone) == key or normalize_phone(p.username) == key}
     return next(iter(matches.values())) if len(matches) == 1 else None
+
+
+# ── Public privacy policy (no parent login required) ────────────────────────
+
+@router.get("/privacy.html", include_in_schema=False)
+def privacy_policy():
+    """Public, static privacy notice. The same URL works for App Store Review."""
+    file_path = Path(__file__).resolve().parent.parent / "static" / "privacy.html"
+    return FileResponse(
+        file_path,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -144,7 +163,21 @@ def _issue_tokens(db: Session, parent: models.Parent) -> schemas.TokenPair:
     )
 
 
-# ── Profil ───────────────────────────────────────────────────────────────────
+# ── Parent mobile app feature availability ────────────────────────────────
+
+@router.get("/app-config", response_model=schemas.ParentAppCapabilities)
+def parent_app_config(parent: models.Parent = Depends(get_current_parent)):
+    """To'lov faqat env'da to'liq sozlangan provayderlar bilan yoqiladi (fail closed)."""
+    providers = [p for p in pay_config.PROVIDERS if pay_config.is_configured(p)]
+    return schemas.ParentAppCapabilities(
+        payments_enabled=bool(providers),
+        payment_providers=providers,
+        account_deletion_enabled=True,
+        privacy_policy_url="https://crm.minaracademy.uz/api/parent/privacy.html",
+    )
+
+
+# ── Profil ───────────────────────────────────────────────────────────────
 
 def _profile(parent: models.Parent) -> schemas.ParentProfile:
     full = (parent.full_name or "").strip()
@@ -200,6 +233,70 @@ def update_profile(
                             errors={"avatar_base64": ["null emas, bo'sh satr yuboring (o'chirish uchun)."]})
         parent.avatar = _validated_avatar(payload.avatar_base64)
     db.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/account", status_code=204, response_class=Response)
+def delete_parent_account(
+    parent: models.Parent = Depends(get_current_parent),
+    db: Session = Depends(get_db),
+):
+    """Permanently close a parent login and erase personally identifying account data.
+
+    The parent owns only the *portal account*, not the academy's student, attendance,
+    grade or payment records. Student records must never be cascade-deleted here.
+
+    A financial invoice may need to remain for lawful accounting. Since invoices
+    have a non-null FK to parents, keep only an anonymized, inactive tombstone
+    when one exists. Otherwise delete the parent row entirely.
+    """
+    # Serialize concurrent account deletion and token issuing for this parent.
+    target = (
+        db.query(models.Parent)
+        .filter(models.Parent.id == parent.id)
+        .with_for_update()
+        .first()
+    )
+    if target is None or not target.is_active:
+        raise api_error("unauthorized", "Token yaroqsiz", 401)
+
+    parent_id = target.id
+    try:
+        # Prevent previously issued refresh tokens from ever being used again.
+        db.query(models.ParentRefreshToken).filter(
+            models.ParentRefreshToken.parent_id == parent_id
+        ).delete(synchronize_session=False)
+
+        # Clear all parent-only information while retaining shared student records.
+        db.query(models.ParentNotification).filter(
+            models.ParentNotification.parent_id == parent_id
+        ).delete(synchronize_session=False)
+        db.query(models.ParentChild).filter(
+            models.ParentChild.parent_id == parent_id
+        ).delete(synchronize_session=False)
+
+        has_invoices = db.query(models.ParentInvoice.id).filter(
+            models.ParentInvoice.parent_id == parent_id
+        ).first() is not None
+        if has_invoices:
+            # Invoice rows are retained for a separately reviewed accounting policy.
+            # Do not retain a usable login or any parent name, phone, avatar, etc.
+            pseudonym = f"deleted-parent-{parent_id}"
+            target.is_active = False
+            target.full_name = "Deleted parent"
+            target.display_name = None
+            target.phone = pseudonym
+            target.username = pseudonym
+            target.avatar = None
+            target.hashed_password = security.hash_password(secrets.token_urlsafe(32))
+            target.created_by_id = None
+        else:
+            db.delete(target)
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return Response(status_code=204)
 
 

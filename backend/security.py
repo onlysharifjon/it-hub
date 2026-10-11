@@ -92,7 +92,7 @@ def refresh_expiry() -> datetime:
 # so'rovlar bloklanmaydi.
 # `.env`: RATE_LIMIT_ENABLED=false — butunlay o'chirish (masalan yuklama testlari uchun).
 
-RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() != "false"
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() not in ("false", "0", "no", "off")
 _MAX_WINDOW = 3600          # eng uzun ishlatiladigan oyna (soniya)
 _PRUNE_EVERY = 1000         # har shuncha chaqiruvda eskirgan kalitlar tozalanadi
 
