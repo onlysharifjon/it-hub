@@ -107,3 +107,12 @@ curl -s -X POST $B/auth/phone/verify-code -H 'Content-Type: application/json' \
 * Gateway `callback_url` (yetkazish hisobotlari) ishlatilmaydi.
 * Gateway xato satrlari hujjatda ro'yxatlanmagan — kalit so'zlar bo'yicha guruhlanadi (`gateway.py:_classify`);
   haqiqiy xatolar loglarda (`ithub.telegram_gateway`) kuzatilib, kerak bo'lsa aniqlashtiriladi.
+
+## App Store review akkaunti
+
+`PARENT_REVIEW_PHONE` va `PARENT_REVIEW_OTP` (4–6 raqam) env'da berilganda shu raqam uchun:
+Telegram'ga kod yuborilmaydi, `verify-code` faqat shu qat'iy kodni qabul qiladi (boshqa raqamlar uchun
+4–5 xonali kod `validation_error`), raqam bo'yicha soatlik limit qo'llanmaydi (IP limitlari qoladi).
+`DELETE /parent/account` bu akkauntda faqat sessiyalarni bekor qiladi — akkaunt va xayoliy farzand keyingi
+review'lar uchun saqlanadi (log: `mode=review_reset`). Qiymatlar faqat server env'ida
+(`/var/www/minar-stack/env/ithub.env`); repoga va loglarga yozilmaydi. Biri bo'sh bo'lsa funksiya o'chiq.

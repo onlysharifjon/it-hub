@@ -358,3 +358,59 @@ def test_single_active_verification_per_phone(client, db, gw):
     with pytest.raises(IntegrityError):
         db.commit()
     db.rollback()
+
+
+# ── App Store review akkaunti (qat'iy kod, Gateway'siz) ──────────────────────
+
+REVIEW = "+998900000777"
+
+
+@pytest.fixture
+def review_env(monkeypatch):
+    monkeypatch.setenv("PARENT_REVIEW_PHONE", "900000777")
+    monkeypatch.setenv("PARENT_REVIEW_OTP", "4321")
+
+
+def test_review_phone_static_code_skips_gateway(client, db, gw, review_env):
+    gw.configured = False                      # Gateway ishlamasa ham review kirishi kerak
+    vid = _request(client, REVIEW).json()["verificationId"]
+    assert gw.sent == []
+    assert _verify(client, vid, code="0000", phone=REVIEW).status_code == 401
+    r = _verify(client, vid, code="4321", phone=REVIEW)
+    assert r.status_code == 200, r.text
+    assert r.json()["access_token"] and gw.checks == []
+    # Qayta-qayta kirish mumkin (per-phone limit review raqamiga qo'llanmaydi)
+    for _ in range(6):
+        db.query(PhoneVerification).update({"last_sent_at": datetime.utcnow() - timedelta(seconds=61)})
+        db.commit()
+        vid = _request(client, REVIEW).json()["verificationId"]
+        assert _verify(client, vid, code="4321", phone=REVIEW).status_code == 200
+
+
+def test_review_code_not_accepted_for_other_phones(client, db, gw, review_env):
+    vid = _request(client).json()["verificationId"]
+    r = _verify(client, vid, code="4321")
+    assert r.status_code == 400 and r.json()["code"] == "validation_error"
+    assert gw.checks == []
+
+
+def test_review_disabled_without_env(client, db, gw):
+    _request(client, REVIEW)
+    assert gw.sent and gw.sent[0][0] == REVIEW     # oddiy Gateway oqimi
+
+
+def test_review_account_delete_keeps_account_and_children(client, db, gw, review_env):
+    s = Student(full_name="TEST — Review", phone1="+998900000778", is_active=True, created_at=datetime.utcnow())
+    db.add(s); db.flush()
+    p = Parent(full_name="TEST — Review Parent", phone=REVIEW, username=REVIEW,
+               hashed_password=security.hash_password("x" * 12), is_active=True)
+    db.add(p); db.flush()
+    db.add(ParentChild(parent_id=p.id, student_id=s.id)); db.commit()
+    vid = _request(client, REVIEW).json()["verificationId"]
+    tokens = _verify(client, vid, code="4321", phone=REVIEW).json()
+    h = {"Authorization": f"Bearer {tokens['access_token']}"}
+    assert client.delete("/parent/account", headers=h).status_code == 204
+    db.expire_all()
+    assert db.query(Parent).filter_by(id=p.id, is_active=True).count() == 1
+    assert db.query(ParentChild).filter_by(parent_id=p.id).count() == 1
+    assert client.post("/parent/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code == 401

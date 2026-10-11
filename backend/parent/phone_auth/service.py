@@ -39,6 +39,27 @@ MAX_RESENDS = 3
 _E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
+# App Store review akkaunti: shu raqamga Telegram'ga kod yuborilmaydi, qat'iy kod qabul qilinadi.
+# Ikkalasi ham faqat env'da (repo public) — biri berilmasa funksiya o'chiq.
+REVIEW_GATEWAY_ID = "app-review-static"
+
+
+def review_phone() -> Optional[str]:
+    raw = os.getenv("PARENT_REVIEW_PHONE", "").strip()
+    code = os.getenv("PARENT_REVIEW_OTP", "").strip()
+    if not raw or not re.fullmatch(r"\d{4,6}", code):
+        return None
+    try:
+        return normalize_e164(raw)
+    except Exception:
+        return None
+
+
+def is_review_phone(phone: str) -> bool:
+    rp = review_phone()
+    return bool(rp) and secrets.compare_digest(rp, phone)
+
+
 def allowed_prefixes() -> List[str]:
     raw = os.getenv("PHONE_OTP_ALLOWED_PREFIXES", "+998")
     return [p.strip() for p in raw.split(",") if p.strip()]
@@ -98,7 +119,7 @@ class PhoneVerificationService:
     def _limit_send(phone: str, ip: str) -> None:
         if not security.rate_limit_ok(f"otp-send-ip:{ip}", limit=10, window=600):
             raise _too_many("Juda ko'p so'rov. 10 daqiqadan so'ng qayta urinib ko'ring.", 600)
-        if not security.rate_limit_ok(f"otp-send-phone:{phone}", limit=5, window=3600):
+        if not is_review_phone(phone) and not security.rate_limit_ok(f"otp-send-phone:{phone}", limit=5, window=3600):
             raise _too_many("Bu raqamga juda ko'p kod so'raldi. Keyinroq urinib ko'ring.", 3600)
 
     # ── Kod yuborish ────────────────────────────────────────────────────────
@@ -128,6 +149,13 @@ class PhoneVerificationService:
         for rid in old_request_ids:   # eski kodlar Telegram'da ham bekor (best-effort)
             self.gateway.revoke_verification_message(rid)
 
+        if is_review_phone(phone):
+            row.gateway_request_id = REVIEW_GATEWAY_ID
+            row.last_sent_at = now
+            self.db.commit()
+            log.info("otp review account verification=%s (gateway skipped)", row.id)
+            return row
+
         try:
             request_id = self.gateway.send_verification_message(phone, CODE_LENGTH, OTP_TTL_SEC)
         except GatewayError as e:
@@ -155,7 +183,7 @@ class PhoneVerificationService:
                 raise _too_many(f"Qayta so'rashdan oldin {int(wait) + 1} soniya kuting.", wait + 1,
                                 code="resend_cooldown")
         self._limit_send(phone, ip)
-        if not self.gateway.configured:
+        if not self.gateway.configured and not is_review_phone(phone):
             raise _gateway_error(GatewayError("config"))
         return self._send_new(phone, ip, resend_count=0)
 
@@ -185,7 +213,7 @@ class PhoneVerificationService:
         if wait > 0:
             raise _too_many(f"Qayta yuborishdan oldin {int(wait) + 1} soniya kuting.", wait + 1, code="resend_cooldown")
         self._limit_send(row.phone, ip)
-        if not self.gateway.configured:
+        if not self.gateway.configured and not is_review_phone(row.phone):
             raise _gateway_error(GatewayError("config"))
         # Atomik: parallel resend'lardan faqat bittasi o'tadi
         count, phone = row.resend_count, row.phone
@@ -239,10 +267,18 @@ class PhoneVerificationService:
                             code="code_max_attempts_exceeded")
         self.db.refresh(row)
 
-        try:
-            status = self.gateway.check_verification_status(row.gateway_request_id, code)
-        except GatewayError as e:
-            raise _gateway_error(e)
+        if row.gateway_request_id == REVIEW_GATEWAY_ID:
+            ok = is_review_phone(row.phone) and secrets.compare_digest(
+                code.encode(), os.getenv("PARENT_REVIEW_OTP", "").strip().encode())
+            status = "code_valid" if ok else "code_invalid"
+        else:
+            if len(code) != CODE_LENGTH:
+                raise api_error("validation_error", "Kod 6 ta raqamdan iborat bo'lishi kerak", 400,
+                                errors={"code": ["6 ta raqam kiriting."]})
+            try:
+                status = self.gateway.check_verification_status(row.gateway_request_id, code)
+            except GatewayError as e:
+                raise _gateway_error(e)
 
         if status == "code_valid":
             return self._complete(row)

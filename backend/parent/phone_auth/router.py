@@ -38,7 +38,7 @@ class ResendCodeIn(_Strict):
 class VerifyCodeIn(_Strict):
     verificationId: str = Field(..., min_length=16, max_length=64)
     phoneNumber: str = Field(..., min_length=7, max_length=32)
-    code: str = Field(..., regex=r"^\d{6}$")
+    code: str = Field(..., regex=r"^\d{4,6}$")   # 6 — Gateway; 4–6 — faqat App Store review raqami
 
 
 class CodeSentOut(BaseModel):
