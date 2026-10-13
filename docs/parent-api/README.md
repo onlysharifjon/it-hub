@@ -66,9 +66,12 @@ shartnoma bo'yicha begona — **403**, mavjud emas — **404**.
     (tarmoq qayta urinishi); keyin kelsa — o'g'irlik deb, ota-onaning **barcha** refresh tokenlari bekor (`token_reuse`).
   * Eskirgan/bekor/noma'lum token, nofaol akkaunt — 401. Baza ishlamasa — 503 (401 emas).
 * **TTL**: access `PARENT_ACCESS_TTL_MIN` (30 daqiqa), refresh `PARENT_REFRESH_TTL_DAYS` (30 kun). JWT kaliti — `SECRET_KEY` env.
-* **Revoke**: admin parolni tiklasa (`POST /parents/{id}/reset-password`) barcha refresh tokenlar bekor bo'ladi;
-  ota-ona nofaol qilinsa keyingi so'rovdayoq 401. Allaqachon berilgan access token muddati (≤30 daq.) tugaguncha
-  amal qiladi — buni kamaytirish uchun TTL'ni qisqartiring.
+* **Parolni almashtirish** `POST /parent/auth/change-password` `{current_password, new_password}` → yangi
+  `{access_token, refresh_token}`. Joriy parol xato — `400 invalid_current_password` (logout emas); yangi parol
+  ≥15 belgi, ≤72 bayt — aks holda `422`; limit 5 urinish / 15 daq. Batafsil: [password-login.md](password-login.md).
+* **Revoke**: admin parolni tiklasa (`POST /parents/{id}/reset-password`) yoki ota-ona o'zi almashtirsa — barcha
+  refresh tokenlar o'chiriladi va avval berilgan access tokenlar ham darhol 401 (`pwv` claim parol hash'iga bog'langan).
+  Ota-ona nofaol qilinsa keyingi so'rovdayoq 401.
 
 ## 3. Endpointlar bo'yicha qarorlar
 
@@ -160,11 +163,14 @@ o'zi beradi (`/uploads/certificates/<uuid>.pdf`) yoki tashqi HTTPS manzilga 302 
 ## 7. Administrator yo'riqnomasi: ota-ona akkaunti
 
 1. CRM → Ota-onalar (hunter yoki admin): `POST /parents` `{full_name, phone, student_ids[]}`. Login avtomatik = telefon.
-   Parol berilmasa 8 belgili tasodifiy parol **bir marta** javobda ko'rsatiladi — ota-onaga xavfsiz kanal orqali bering.
+   Telefon `+998XXXXXXXXX` ko'rinishida saqlanadi. Parol berilmasa 20 belgili tasodifiy parol **bir marta** javobda
+   ko'rsatiladi — ota-onaga xavfsiz kanal orqali bering. Qo'lda berilgan parol ≥15 belgi. Shu raqam bilan (OTP orqali)
+   akkaunt allaqachon bo'lsa — `409`, unga «Parolni yangilash» orqali parol beriladi.
 2. Bola qo'shish/olib tashlash: `POST /parents/{id}/children {student_id}`, `DELETE /parents/{id}/children/{student_id}`.
-3. Parol tiklash: `POST /parents/{id}/reset-password` (barcha sessiyalar bekor bo'ladi).
+3. Parol tiklash (unutgan yoki OTP orqali yaratilgan ota-ona): `POST /parents/{id}/reset-password` — barcha sessiyalar
+   darhol bekor, auditga yoziladi (parolsiz). Tartib: [password-login.md](password-login.md#2-administrator-yoriqnomasi).
 4. Bloklash: `PATCH /parents/{id} {is_active:false}`.
-Mobil ilovada ro'yxatdan o'tish, OTP yoki parolni tiklash yo'q.
+Mobil ilovada ro'yxatdan o'tish va «parolni unutdim» yo'q — tiklash faqat administrator orqali.
 
 ## 8. Test fixture (production'dan ajratilgan)
 

@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, StrictBool, conint, root_validator, validator
 
+from ..security import parent_password_problem
+
 
 class _Strict(BaseModel):
     class Config:
@@ -33,6 +35,21 @@ class TokenPair(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(..., min_length=1, max_length=200)
+
+
+class ParentChangePasswordRequest(_Strict):
+    """Ota-ona joriy parolini bilgan holda o'zi almashtiradi. Parollar trim qilinmaydi."""
+    current_password: str = Field(..., min_length=1, max_length=200)
+    new_password: str = Field(..., min_length=1, max_length=200)
+
+    @validator("new_password")
+    def _policy(cls, v, values):
+        problem = parent_password_problem(v)
+        if problem:
+            raise ValueError(problem)
+        if values.get("current_password") == v:
+            raise ValueError("Yangi parol joriy paroldan farq qilsin.")
+        return v
 
 
 # ── App configuration ──────────────────────────────────────────────────────

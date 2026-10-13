@@ -69,6 +69,13 @@ components:
       type: object
       required: [refresh_token]
       properties: {refresh_token: {type: string}}
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password]
+      properties:
+        current_password: {type: string, description: Trim qilinmaydi}
+        new_password: {type: string, minLength: 15, description: "≥15 belgi, ≤72 bayt UTF-8, chetida bo'shliq yo'q, joriydan farqli"}
     TokenPair:
       type: object
       required: [access_token, refresh_token]
@@ -245,6 +252,18 @@ paths:
         '422': {$ref: '#/components/responses/Validation'}
         '429': {$ref: '#/components/responses/RateLimited'}
         '426': {$ref: '#/components/responses/UpgradeRequired'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /parent/auth/change-password:
+    post:
+      summary: Parolni almashtirish (joriy parol bilan)
+      description: Muvaffaqiyatda boshqa barcha sessiyalar bekor qilinadi; qaytgan yangi juftlik saqlanadi.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ChangePasswordRequest'}}}}
+      responses:
+        '200': {description: OK, headers: {Cache-Control: {schema: {type: string, example: no-store}}}, content: {application/json: {schema: {$ref: '#/components/schemas/TokenPair'}}}}
+        '400': {description: "invalid_current_password (sessiya saqlanadi)", content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: invalid_current_password, message: Joriy parol noto'g'ri, errors: {current_password: [Joriy parol noto'g'ri.]}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/Validation'}
+        '429': {$ref: '#/components/responses/RateLimited'}
         '503': {$ref: '#/components/responses/Unavailable'}
   /parent/auth/refresh:
     post:

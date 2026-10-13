@@ -8608,9 +8608,38 @@ import secrets as _secrets
 import string as _string
 
 
-def _gen_password(n: int = 8) -> str:
-    alphabet = _string.ascii_letters + _string.digits
-    return "".join(_secrets.choice(alphabet) for _ in range(n))
+def _gen_password(n: int = _security.PARENT_GENERATED_PASSWORD_LEN) -> str:
+    # Kamida 15 belgili kriptografik tasodifiy parol (security.generate_parent_password)
+    return _security.generate_parent_password(n)
+
+
+def _parent_phone(raw: str) -> str:
+    """O'zbek raqami → E.164 (+998XXXXXXXXX) — iOS ilova aynan shu ko'rinishda yuboradi va OTP ham
+    shunday saqlaydi. Boshqa ko'rinishdagi qiymat o'zgarishsiz (trim) qoladi."""
+    from .parent.service import phone_e164
+    e164 = phone_e164(raw)
+    return e164 if re.fullmatch(r"\+998\d{9}", e164) else raw.strip()
+
+
+def _parents_with_phone(db: Session, phone: str, exclude_id: Optional[int] = None) -> List[models.Parent]:
+    """Telefon (yoki telefon ko'rinishidagi login) formatdan qat'i nazar mos keladigan akkauntlar —
+    OTP orqali yaratilgan ota-ona ham topiladi (aks holda dublikat akkaunt va login 401 bo'lardi)."""
+    key = normalize_phone(phone)
+    if len(key) != 9:
+        rows = db.query(models.Parent).filter(models.Parent.phone == phone).all()
+    else:
+        rows = [p for p in db.query(models.Parent).filter(
+                    models.Parent.phone.like(f"%{key[-2:]}") | models.Parent.username.like(f"%{key[-2:]}")).all()
+                if normalize_phone(p.phone) == key or normalize_phone(p.username) == key]
+    return [p for p in rows if p.id != exclude_id]
+
+
+def _revoke_parent_sessions(db: Session, parent_id: int) -> None:
+    """Barcha refresh tokenlar o'chiriladi (revoked_at emas — aks holda boshqa qurilmadagi eski token
+    refresh'i "token_reuse" deb yangi sessiyani ham bekor qilardi). Access tokenlar `pwv` orqali bekor."""
+    db.query(models.ParentRefreshToken).filter(
+        models.ParentRefreshToken.parent_id == parent_id
+    ).delete(synchronize_session=False)
 
 
 def _parent_account_read(p: models.Parent) -> schemas.ParentAccountRead:
@@ -8627,15 +8656,22 @@ def _parent_account_read(p: models.Parent) -> schemas.ParentAccountRead:
 @app.post("/parents", response_model=schemas.ParentAccountCreated, status_code=201)
 def create_parent_account(
     payload: schemas.ParentAccountCreate,
+    response: Response,
     actor: models.User = Depends(require_hunter),
     db: Session = Depends(get_db),
 ):
-    """Ota-ona akkaunti yaratish (hunter/admin). Parol bir marta qaytariladi."""
-    phone = payload.phone.strip()
+    """Ota-ona akkaunti yaratish (hunter/admin). Parol bir marta qaytariladi (bazada faqat bcrypt hash)."""
+    response.headers["Cache-Control"] = "no-store"
+    phone = _parent_phone(payload.phone)
     username = (payload.username or phone).strip()
-    existing = db.query(models.Parent).filter(models.Parent.phone == phone).first()
+    same_phone = [p for p in _parents_with_phone(db, phone) if p.deleted_at is None]
+    if len(same_phone) > 1:
+        raise HTTPException(409, "Bu telefon bir nechta ota-ona akkauntiga biriktirilgan — avval dublikatni bartaraf qiling")
+    existing = same_phone[0] if same_phone else None
     if existing is not None:
-        raise HTTPException(409, "Bu telefon bilan ota-ona allaqachon mavjud")
+        # Masalan Telegram OTP orqali o'zi ro'yxatdan o'tgan ota-ona: yangi akkaunt emas — parol berish kerak
+        raise HTTPException(409, f"Bu telefon bilan ota-ona allaqachon mavjud (ID {existing.id}). "
+                                 "Unga parol berish uchun «Parolni yangilash»dan foydalaning.")
     if db.query(models.Parent).filter(models.Parent.username == username).first():
         raise HTTPException(409, "Bu login band")
 
@@ -8650,6 +8686,10 @@ def create_parent_account(
     for sid in dict.fromkeys(payload.student_ids):   # dublikatlarsiz
         if db.query(models.Student).filter(models.Student.id == sid).first():
             db.add(models.ParentChild(parent_id=parent.id, student_id=sid, created_at=datetime.utcnow()))
+    # Parolning o'zi auditga yozilmaydi
+    write_audit(db, entity_type="parent", entity_id=parent.id, action="create", changed_by_id=actor.id,
+                new_value={"student_ids": list(dict.fromkeys(payload.student_ids)),
+                           "generated": payload.password is None})
     db.commit()
     db.refresh(parent)
     out = schemas.ParentAccountCreated(**_parent_account_read(parent).dict())
@@ -8698,11 +8738,18 @@ def update_parent_account(
     if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     data = payload.dict(exclude_unset=True)
+    if data.get("phone") is not None:
+        data["phone"] = _parent_phone(data["phone"])
     if "phone" in data and data["phone"] != p.phone:
-        if db.query(models.Parent).filter(models.Parent.phone == data["phone"]).first():
+        if _parents_with_phone(db, data["phone"], exclude_id=p.id):
             raise HTTPException(409, "Bu telefon band")
+    old = {k: getattr(p, k) for k in data}
     for k, v in data.items():
         setattr(p, k, v)
+    changed = {k: v for k, v in data.items() if old.get(k) != v}
+    if changed:
+        write_audit(db, entity_type="parent", entity_id=p.id, action="update", changed_by_id=actor.id,
+                    old_value={k: old[k] for k in changed}, new_value=changed)
     db.commit()
     db.refresh(p)
     return _parent_account_read(p)
@@ -8712,19 +8759,23 @@ def update_parent_account(
 def reset_parent_password(
     parent_id: int,
     payload: schemas.ResetParentPassword,
+    response: Response,
     actor: models.User = Depends(require_hunter),
     db: Session = Depends(get_db),
 ):
+    """Administrator reset (parolni unutgan yoki OTP orqali yaratilgan ota-onaga parol berish).
+
+    Parol berilmasa — 20 belgili tasodifiy parol. Javobda BIR MARTA qaytadi, bazada faqat bcrypt hash,
+    logga/auditga yozilmaydi. Barcha sessiyalar (refresh + access) darhol bekor bo'ladi."""
+    response.headers["Cache-Control"] = "no-store"
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
     if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     raw = payload.password or _gen_password()
     p.hashed_password = hash_password(raw)
-    # Barcha refresh tokenlarni bekor qilamiz (xavfsizlik)
-    db.query(models.ParentRefreshToken).filter(
-        models.ParentRefreshToken.parent_id == p.id,
-        models.ParentRefreshToken.revoked_at.is_(None),
-    ).update({"revoked_at": datetime.utcnow()})
+    _revoke_parent_sessions(db, p.id)
+    write_audit(db, entity_type="parent", entity_id=p.id, action="reset_password",
+                changed_by_id=actor.id, new_value={"generated": payload.password is None})
     db.commit()
     return {"generated_password": raw}
 
@@ -8747,6 +8798,8 @@ def link_parent_child(
     ).first()
     if not exists:
         db.add(models.ParentChild(parent_id=parent_id, student_id=payload.student_id, created_at=datetime.utcnow()))
+        write_audit(db, entity_type="parent", entity_id=parent_id, action="link_child", changed_by_id=actor.id,
+                    new_value={"student_id": payload.student_id})
         db.commit()
     db.refresh(p)
     return _parent_account_read(p)
@@ -8765,6 +8818,8 @@ def unlink_parent_child(
     ).first()
     if link:
         db.delete(link)
+        write_audit(db, entity_type="parent", entity_id=parent_id, action="unlink_child", changed_by_id=actor.id,
+                    old_value={"student_id": student_id})
         db.commit()
 
 

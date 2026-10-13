@@ -28,7 +28,9 @@ from .deps import get_current_parent, get_owned_child
 from .errors import api_error, request_id
 from .payments import config as pay_config
 from .payments import core as payment_core
-from .phone_auth.service import account_deleted_error, review_password_login
+from .phone_auth.service import (
+    account_deleted_error, ensure_review_data_if_review, review_password_login, review_static_code_matches,
+)
 from .payments.checkout import create_checkout
 
 router = APIRouter(prefix="/parent", tags=["parent"])
@@ -121,13 +123,58 @@ def login(payload: schemas.ParentLoginRequest, request: Request, db: Session = D
             raise _invalid_credentials()
         return _issue_tokens(db, review)
     parent = _find_parent(db, payload.username)
-    if parent is not None and parent.deleted_at is not None:
-        raise account_deleted_error()
     # Parol o'zgartirilmaydi (trim yo'q). Topilmasa ham bcrypt ishlaydi — vaqtdan bilib bo'lmasin.
     ok = security.verify_password(payload.password, parent.hashed_password if parent else security.DUMMY_HASH)
+    # "O'chirilgan" xabari faqat to'g'ri parol bilan — begona odam raqam holatini bila olmasin.
+    if parent is not None and ok and parent.deleted_at is not None:
+        raise account_deleted_error()
     if not parent or not ok or not parent.is_active:
         raise _invalid_credentials()
+    ensure_review_data_if_review(db, parent)
     return _issue_tokens(db, parent)
+
+
+@router.post("/auth/change-password", response_model=schemas.TokenPair)
+def change_password(
+    payload: schemas.ParentChangePasswordRequest,
+    request: Request,
+    response: Response,
+    parent: models.Parent = Depends(get_current_parent),
+    db: Session = Depends(get_db),
+):
+    """Ota-ona joriy parolini bilgan holda yangisiga almashtiradi.
+
+    Muvaffaqiyatda: yangi bcrypt hash, ota-onaning BARCHA refresh tokenlari o'chiriladi, boshqa
+    qurilmalardagi access tokenlar `pwv` orqali darhol yaroqsiz; shu qurilmaga yangi juftlik qaytadi.
+    Joriy parol xato — 400 (401 emas: ilova buni sessiya tugashi deb tushunib chiqarib yubormasin).
+    """
+    ip = _client_ip(request)
+    if not security.rate_limit_ok(f"pchpw-parent:{parent.id}", limit=5, window=900) or \
+            not security.rate_limit_ok(f"pchpw-ip:{ip}", limit=20, window=900):
+        raise api_error("rate_limited", "Juda ko'p urinish. 15 daqiqadan so'ng qayta urinib ko'ring.", 429,
+                        headers={"Retry-After": "900"})
+
+    target = db.query(models.Parent).filter(models.Parent.id == parent.id).with_for_update().first()
+    if target is None or not target.is_active or target.deleted_at is not None:
+        raise api_error("unauthorized", "Token yaroqsiz", 401)
+
+    ok = security.verify_password(payload.current_password, target.hashed_password)
+    # Review akkaunti joriy parol sifatida qat'iy kodni ham bera oladi (PARENT_REVIEW_OTP yoqilgan bo'lsa)
+    if not ok and review_static_code_matches(service.phone_e164(target.phone), payload.current_password):
+        ok = True
+    if not ok:
+        raise api_error("invalid_current_password", "Joriy parol noto'g'ri", 400,
+                        errors={"current_password": ["Joriy parol noto'g'ri."]})
+
+    target.hashed_password = security.hash_password(payload.new_password)
+    db.query(models.ParentRefreshToken).filter(
+        models.ParentRefreshToken.parent_id == target.id
+    ).delete(synchronize_session=False)
+    tokens = _issue_tokens(db, target)          # commit: hash + tokenlar bitta tranzaksiyada
+    # Audit: parol/token yozilmaydi
+    log.warning("AUDIT parent_password_changed parent_id=%s request_id=%s", target.id, request_id(request))
+    response.headers["Cache-Control"] = "no-store"
+    return tokens
 
 
 @router.post("/auth/refresh", response_model=schemas.TokenPair)
@@ -184,7 +231,7 @@ def _issue_tokens(db: Session, parent: models.Parent) -> schemas.TokenPair:
     ))
     db.commit()
     return schemas.TokenPair(
-        access_token=security.create_parent_access_token(parent.id),
+        access_token=security.create_parent_access_token(parent.id, parent.hashed_password),
         refresh_token=raw_refresh,
     )
 

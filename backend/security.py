@@ -6,11 +6,14 @@ Parent tokenlari `role=parent` claim bilan keladi, xodim tokenlaridan ajraladi.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import secrets
 import time
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import Optional
 
 import bcrypt as _bcrypt
 from dotenv import load_dotenv
@@ -44,9 +47,47 @@ def verify_password(plain: str, hashed: str) -> bool:
 DUMMY_HASH = _bcrypt.hashpw(b"timing-equalizer", _bcrypt.gensalt()).decode()
 
 
+# ── Ota-ona parol siyosati ──────────────────────────────────────────────────
+# Faqat YANGI o'rnatiladigan parollarga qo'llanadi (admin create/reset, ota-ona o'zi almashtirishi).
+# Mavjud parollar bilan login avvalgidek ishlaydi — ommaviy almashtirish yo'q.
+PARENT_PASSWORD_MIN_LEN = 15
+# bcrypt 72 baytdan uzunini jimgina kesadi — uzunroq parol "qisman" tekshirilmasin.
+PARENT_PASSWORD_MAX_BYTES = 72
+PARENT_GENERATED_PASSWORD_LEN = 20
+# Ko'rinishi o'xshash belgilar (0/O, 1/l/I) yo'q — ota-onaga diktovka/qo'lda terishda adashmaslik uchun.
+_GEN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+
+
+def generate_parent_password(length: int = PARENT_GENERATED_PASSWORD_LEN) -> str:
+    """Kriptografik tasodifiy parol (20 belgi ≈ 116 bit). Faqat bir marta javobda ko'rsatiladi."""
+    return "".join(secrets.choice(_GEN_ALPHABET) for _ in range(max(length, PARENT_PASSWORD_MIN_LEN)))
+
+
+def parent_password_problem(password: str) -> Optional[str]:
+    """Yangi parol siyosatga mos bo'lmasa — foydalanuvchiga ko'rsatiladigan sabab, aks holda None."""
+    if len(password) < PARENT_PASSWORD_MIN_LEN:
+        return f"Parol kamida {PARENT_PASSWORD_MIN_LEN} belgidan iborat bo'lsin."
+    if len(password.encode()) > PARENT_PASSWORD_MAX_BYTES:
+        return (f"Parol juda uzun: {PARENT_PASSWORD_MAX_BYTES} baytdan oshmasin "
+                f"(lotin harflari bilan {PARENT_PASSWORD_MAX_BYTES} belgigacha).")
+    if password != password.strip():
+        return "Parol bo'shliq bilan boshlanmasin va tugamasin."
+    if any(unicodedata.category(ch).startswith("C") for ch in password):
+        return "Parolda boshqaruv belgilari bo'lmasin."
+    if len(set(password)) < 5:
+        return "Parol juda oddiy: turli belgilardan foydalaning."
+    return None
+
+
+def password_version(hashed_password: str) -> str:
+    """Access token'dagi `pwv` claim: parol hash'idan HMAC (hash'ning o'zi tokenga chiqmaydi).
+    Parol almashtirilsa/tiklansa qiymat o'zgaradi — eski access tokenlar darhol yaroqsiz bo'ladi."""
+    return hmac.new(SECRET_KEY.encode(), (hashed_password or "").encode(), hashlib.sha256).hexdigest()[:22]
+
+
 # ── Parent access JWT ────────────────────────────────────────────────────────
 
-def create_parent_access_token(parent_id: int) -> str:
+def create_parent_access_token(parent_id: int, hashed_password: Optional[str] = None) -> str:
     now = datetime.utcnow()
     payload = {
         "sub": str(parent_id),
@@ -54,11 +95,14 @@ def create_parent_access_token(parent_id: int) -> str:
         "iat": now,
         "exp": now + timedelta(minutes=PARENT_ACCESS_TTL_MIN),
     }
+    if hashed_password:
+        payload["pwv"] = password_version(hashed_password)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def decode_parent_access_token(token: str) -> int | None:
-    """Amal qiluvchi parent tokendan parent_id qaytaradi, aks holda None."""
+def decode_parent_access_claims(token: str) -> Optional[dict]:
+    """Amal qiluvchi parent tokendan {"parent_id", "pwv"} qaytaradi, aks holda None.
+    `pwv` yo'q bo'lishi mumkin — bu o'zgarishdan oldin berilgan tokenlar (≤ PARENT_ACCESS_TTL_MIN)."""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
@@ -66,7 +110,16 @@ def decode_parent_access_token(token: str) -> int | None:
     if payload.get("role") != "parent":
         return None
     sub = payload.get("sub")
-    return int(sub) if sub and str(sub).isdigit() else None
+    if not (sub and str(sub).isdigit()):
+        return None
+    pwv = payload.get("pwv")
+    return {"parent_id": int(sub), "pwv": pwv if isinstance(pwv, str) else None}
+
+
+def decode_parent_access_token(token: str) -> int | None:
+    """Amal qiluvchi parent tokendan parent_id qaytaradi, aks holda None."""
+    claims = decode_parent_access_claims(token)
+    return claims["parent_id"] if claims else None
 
 
 # ── Refresh tokenlar (opaque, hashlangan holda saqlanadi) ────────────────────

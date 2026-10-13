@@ -1,13 +1,15 @@
 """Parent API bog'liqliklari (dependencies)."""
 from __future__ import annotations
 
+import hmac
+
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from .. import models
 from ..database import get_db
-from ..security import decode_parent_access_token
+from ..security import decode_parent_access_claims, password_version
 from .errors import api_error
 
 _bearer = HTTPBearer(auto_error=False)
@@ -22,11 +24,16 @@ def get_current_parent(
 ) -> models.Parent:
     if not creds or creds.scheme.lower() != "bearer":
         raise _UNAUTH
-    parent_id = decode_parent_access_token(creds.credentials)
-    if parent_id is None:
+    claims = decode_parent_access_claims(creds.credentials)
+    if claims is None:
         raise _UNAUTH
-    parent = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
+    parent = db.query(models.Parent).filter(models.Parent.id == claims["parent_id"]).first()
     if not parent or not parent.is_active:
+        raise _UNAUTH
+    # Parol almashtirilgan/tiklangan bo'lsa — undan oldingi access tokenlar ham darhol yaroqsiz.
+    # `pwv`siz (eski) tokenlar TTL tugaguncha qabul qilinadi — deploy paytida hech kim chiqib ketmasin.
+    pwv = claims.get("pwv")
+    if pwv is not None and not hmac.compare_digest(pwv, password_version(parent.hashed_password)):
         raise _UNAUTH
     return parent
 

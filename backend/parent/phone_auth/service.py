@@ -39,15 +39,18 @@ MAX_RESENDS = 3
 _E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
-# App Store review akkaunti: shu raqamga Telegram'ga kod yuborilmaydi, qat'iy kod qabul qilinadi.
-# Ikkalasi ham faqat env'da (repo public) — biri berilmasa funksiya o'chiq.
+# App Store review akkaunti — ikki mustaqil env (repo public, qiymatlar faqat env'da):
+#   PARENT_REVIEW_PHONE — review akkaunt raqami (xayoliy farzand, alohida to'lov provayderlari).
+#   PARENT_REVIEW_OTP   — ixtiyoriy qat'iy 4–6 xonali kod: shu raqamga Telegram'ga kod yuborilmaydi,
+#                         OTP va parol ekranida shu kod qabul qilinadi. Kuchli parolga o'tilgach
+#                         (docs/parent-api/password-login.md) bu env olib tashlanadi — review akkaunti
+#                         raqam + parol bilan kirishda davom etadi.
 REVIEW_GATEWAY_ID = "app-review-static"
 
 
 def review_phone() -> Optional[str]:
     raw = os.getenv("PARENT_REVIEW_PHONE", "").strip()
-    code = os.getenv("PARENT_REVIEW_OTP", "").strip()
-    if not raw or not re.fullmatch(r"\d{4,6}", code):
+    if not raw:
         return None
     try:
         return normalize_e164(raw)
@@ -55,9 +58,25 @@ def review_phone() -> Optional[str]:
         return None
 
 
+def review_static_code() -> Optional[str]:
+    code = os.getenv("PARENT_REVIEW_OTP", "").strip()
+    return code if re.fullmatch(r"\d{4,6}", code) else None
+
+
 def is_review_phone(phone: str) -> bool:
     rp = review_phone()
-    return bool(rp) and secrets.compare_digest(rp, phone)
+    return bool(rp) and bool(phone) and secrets.compare_digest(rp, phone)
+
+
+def is_review_static_phone(phone: str) -> bool:
+    """Review raqami VA qat'iy kod yoqilgan — Gateway chetlab o'tiladi."""
+    return review_static_code() is not None and is_review_phone(phone)
+
+
+def review_static_code_matches(phone: str, code: str) -> bool:
+    static = review_static_code()
+    return static is not None and is_review_phone(phone) and secrets.compare_digest(
+        (code or "").encode(), static.encode())
 
 
 def account_deleted_error():
@@ -73,12 +92,19 @@ def _ensure_review_data(db: Session, parent: models.Parent) -> None:
         log.info("review account provisioned with fictional child parent=%s", parent.id)
 
 
+def ensure_review_data_if_review(db: Session, parent: models.Parent) -> None:
+    """Oddiy (kuchli) parol bilan kirgan review akkaunti ham faqat xayoliy farzandni ko'rsin."""
+    from ..service import phone_e164
+    if is_review_phone(phone_e164(parent.phone)):
+        _ensure_review_data(db, parent)
+
+
 def review_password_login(db: Session, raw_username: str, password: str) -> Optional[models.Parent]:
     """Parol ekrani orqali review kirishi: raqam + qat'iy kod mos bo'lsa ota-ona (yo'q bo'lsa yaratiladi).
     Mos kelmasa None — oddiy parol tekshiruvi davom etadi."""
     rp = review_phone()
-    code = os.getenv("PARENT_REVIEW_OTP", "").strip()
-    if not rp or not secrets.compare_digest(password.encode(), code.encode()):
+    code = review_static_code()
+    if not rp or code is None or not secrets.compare_digest(password.encode(), code.encode()):
         return None
     try:
         phone = normalize_e164(raw_username)
@@ -161,7 +187,7 @@ class PhoneVerificationService:
     def _limit_send(phone: str, ip: str) -> None:
         if not security.rate_limit_ok(f"otp-send-ip:{ip}", limit=10, window=600):
             raise _too_many("Juda ko'p so'rov. 10 daqiqadan so'ng qayta urinib ko'ring.", 600)
-        if not is_review_phone(phone) and not security.rate_limit_ok(f"otp-send-phone:{phone}", limit=5, window=3600):
+        if not is_review_static_phone(phone) and not security.rate_limit_ok(f"otp-send-phone:{phone}", limit=5, window=3600):
             raise _too_many("Bu raqamga juda ko'p kod so'raldi. Keyinroq urinib ko'ring.", 3600)
 
     # ── Kod yuborish ────────────────────────────────────────────────────────
@@ -191,7 +217,7 @@ class PhoneVerificationService:
         for rid in old_request_ids:   # eski kodlar Telegram'da ham bekor (best-effort)
             self.gateway.revoke_verification_message(rid)
 
-        if is_review_phone(phone):
+        if is_review_static_phone(phone):
             row.gateway_request_id = REVIEW_GATEWAY_ID
             row.last_sent_at = now
             self.db.commit()
@@ -225,7 +251,7 @@ class PhoneVerificationService:
                 raise _too_many(f"Qayta so'rashdan oldin {int(wait) + 1} soniya kuting.", wait + 1,
                                 code="resend_cooldown")
         self._limit_send(phone, ip)
-        if not self.gateway.configured and not is_review_phone(phone):
+        if not self.gateway.configured and not is_review_static_phone(phone):
             raise _gateway_error(GatewayError("config"))
         return self._send_new(phone, ip, resend_count=0)
 
@@ -255,7 +281,7 @@ class PhoneVerificationService:
         if wait > 0:
             raise _too_many(f"Qayta yuborishdan oldin {int(wait) + 1} soniya kuting.", wait + 1, code="resend_cooldown")
         self._limit_send(row.phone, ip)
-        if not self.gateway.configured and not is_review_phone(row.phone):
+        if not self.gateway.configured and not is_review_static_phone(row.phone):
             raise _gateway_error(GatewayError("config"))
         # Atomik: parallel resend'lardan faqat bittasi o'tadi
         count, phone = row.resend_count, row.phone
@@ -310,9 +336,7 @@ class PhoneVerificationService:
         self.db.refresh(row)
 
         if row.gateway_request_id == REVIEW_GATEWAY_ID:
-            ok = is_review_phone(row.phone) and secrets.compare_digest(
-                code.encode(), os.getenv("PARENT_REVIEW_OTP", "").strip().encode())
-            status = "code_valid" if ok else "code_invalid"
+            status = "code_valid" if review_static_code_matches(row.phone, code) else "code_invalid"
         else:
             if len(code) != CODE_LENGTH:
                 raise api_error("validation_error", "Kod 6 ta raqamdan iborat bo'lishi kerak", 400,
