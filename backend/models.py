@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Column, Index, text, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, Column, Index, text, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -571,6 +571,28 @@ class Parent(Base):
 
     created_by = relationship("User", foreign_keys=[created_by_id])
     children = relationship("ParentChild", back_populates="parent", cascade="all, delete-orphan", order_by="ParentChild.id")
+
+
+class ParentReleaseConfig(Base):
+    """CRM boshqaradigan yagona parent iOS release holati."""
+    __tablename__ = "parent_release_config"
+
+    id = Column(Integer, primary_key=True, default=1)
+    maintenance_enabled = Column(Boolean, nullable=False, default=False)
+    maintenance_title = Column(String(120), nullable=False)
+    maintenance_message = Column(String(600), nullable=False)
+    min_supported_build = Column(Integer, nullable=False, default=1)
+    latest_build = Column(Integer, nullable=False, default=5)
+    app_store_url = Column(String(500), nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_parent_release_config_singleton"),
+        CheckConstraint("min_supported_build >= 1", name="ck_parent_release_min_build"),
+        CheckConstraint("latest_build >= min_supported_build", name="ck_parent_release_latest_build"),
+    )
 
 
 class PhoneVerification(Base):

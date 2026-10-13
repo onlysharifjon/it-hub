@@ -73,6 +73,12 @@ export async function login(username, password) {
 export async function fetchMe() { return request('/auth/me') }
 export async function fetchServerTime() { return request('/server-time') }
 
+// Parent iOS release controls (CRM admin only)
+export async function fetchParentReleaseConfig() { return request('/admin/parent-release-config') }
+export async function updateParentReleaseConfig(payload) {
+  return request('/admin/parent-release-config', { method: 'PUT', body: JSON.stringify(payload) })
+}
+
 export async function uploadAvatar(file) {
   const form = new FormData()
   form.append('file', file)

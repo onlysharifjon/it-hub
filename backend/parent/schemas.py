@@ -7,9 +7,11 @@ sana — YYYY-MM-DD, vaqt — ISO-8601 +05:00, ro'yxatlar — xom JSON array.
 from __future__ import annotations
 
 from datetime import datetime, date
+import re
 from typing import List, Optional
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, StrictBool, conint, root_validator, validator
 
 
 class _Strict(BaseModel):
@@ -40,6 +42,52 @@ class ParentAppCapabilities(BaseModel):
     payment_providers: List[str] = []
     account_deletion_enabled: bool = True
     privacy_policy_url: str
+
+
+class ParentReleaseConfigPublic(BaseModel):
+    maintenance_enabled: bool
+    maintenance_title: str
+    maintenance_message: str
+    min_supported_build: int
+    latest_build: int
+    app_store_url: str
+
+
+class ParentReleaseConfigAdmin(ParentReleaseConfigPublic):
+    updated_at: Optional[datetime] = None
+    updated_by_id: Optional[int] = None
+
+
+class ParentReleaseConfigUpdate(_Strict):
+    maintenance_enabled: StrictBool
+    maintenance_title: str = Field(..., min_length=1, max_length=120)
+    maintenance_message: str = Field(..., min_length=1, max_length=600)
+    min_supported_build: conint(strict=True, ge=1, le=999999999)
+    latest_build: conint(strict=True, ge=1, le=999999999)
+    app_store_url: str = Field(..., min_length=1, max_length=500)
+
+    @validator("maintenance_title", "maintenance_message")
+    def nonblank_text(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Matn bo'sh bo'lishi mumkin emas")
+        return value
+
+    @validator("app_store_url")
+    def apple_store_link(cls, value):
+        value = value.strip()
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or parsed.netloc != "apps.apple.com"
+                or parsed.query or parsed.fragment
+                or not re.fullmatch(r"/[a-z]{2}/app(?:/[A-Za-z0-9-]+)?/id6820518218", parsed.path)):
+            raise ValueError("Faqat Minar Parents App Store havolasi qabul qilinadi")
+        return value
+
+    @root_validator(skip_on_failure=True)
+    def build_order(cls, values):
+        if values["latest_build"] < values["min_supported_build"]:
+            raise ValueError("latest_build min_supported_build dan kichik bo'lmasin")
+        return values
 
 
 # ── Profil / bolalar ─────────────────────────────────────────────────────────

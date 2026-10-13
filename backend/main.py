@@ -11,7 +11,7 @@ from typing import List, Optional
 import io
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -319,6 +319,8 @@ def serve_upload(rel_path: str, exp: Optional[str] = None, sig: Optional[str] = 
 
 # Ota-ona mobil ilovasi API (/parent/...) — alohida paketda
 from .parent.router_parent import router as parent_router
+from .parent import schemas as parent_schemas
+from .parent import release_config as parent_release
 from .parent.notifications import notify_parents_of_student
 from .parent import errors as parent_errors
 from .parent.payments.router_callbacks import router as payment_callbacks_router
@@ -588,6 +590,47 @@ def write_audit(db, *, entity_type, entity_id, action, changed_by_id, old_value=
         new_value=json.dumps(new_value, ensure_ascii=False, default=str) if new_value is not None else None,
     )
     db.add(log)
+
+
+@app.get("/admin/parent-release-config", response_model=parent_schemas.ParentReleaseConfigAdmin)
+def get_parent_release_config(
+    response: Response,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """CRM administratorigina mobil ilova release holatini ko'radi."""
+    response.headers["Cache-Control"] = "no-store"
+    return parent_release.admin_config(db)
+
+
+@app.put("/admin/parent-release-config", response_model=parent_schemas.ParentReleaseConfigAdmin)
+def update_parent_release_config(
+    payload: parent_schemas.ParentReleaseConfigUpdate,
+    response: Response,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_admin),
+):
+    """Yagona qatorni va audit jurnalini bitta tranzaksiyada saqlaydi."""
+    response.headers["Cache-Control"] = "no-store"
+    row = db.query(models.ParentReleaseConfig).filter(models.ParentReleaseConfig.id == 1).with_for_update().first()
+    old_value = parent_release.admin_config(db)
+    new_value = payload.dict()
+    if {key: old_value[key] for key in new_value} == new_value:
+        return old_value
+    if row is None:
+        row = models.ParentReleaseConfig(id=1)
+        db.add(row)
+    for key, value in new_value.items():
+        setattr(row, key, value)
+    row.updated_at = datetime.utcnow()
+    row.updated_by_id = actor.id
+    write_audit(
+        db, entity_type="parent_release_config", entity_id=1, action="update",
+        changed_by_id=actor.id,
+        old_value={key: old_value[key] for key in new_value}, new_value=new_value,
+    )
+    db.commit()
+    return parent_release.admin_config(db)
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────

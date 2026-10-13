@@ -37,6 +37,7 @@ const Employees = lazy(() => import('./components/Employees'))
 const AuditWarnings = lazy(() => import('./components/AuditWarnings'))
 const MyWarnings = lazy(() => import('./components/MyWarnings'))
 const BotAdmin = lazy(() => import('./components/BotAdmin'))
+const ParentReleaseControl = lazy(() => import('./components/ParentReleaseControl'))
 const FinOverview = lazy(() => import('./components/finance/FinOverview'))
 const FinIncome = lazy(() => import('./components/finance/FinIncome'))
 const FinExpenses = lazy(() => import('./components/finance/FinExpenses'))
@@ -78,6 +79,7 @@ const PAGE_ACCESS = {
   special:          ['admin'],
   users:            ['admin'],
   bot_admin:        ['admin'],
+  parent_release:   ['admin'],
   teacher_dashboard: ['teacher'],
   today_attendance: ['admin', 'support_teacher', 'teacher', 'hunter', 'sales', 'call_center'],
   leads:            ['admin', 'hunter', 'sales', 'call_center'],
@@ -384,6 +386,7 @@ function App() {
           {activePage === 'audit_warnings' && <AuditWarnings currentUser={currentUser} />}
           {activePage === 'my_warnings' && <MyWarnings />}
           {activePage === 'bot_admin' && <BotAdmin />}
+          {activePage === 'parent_release' && <ParentReleaseControl />}
           {activePage === 'fin_overview' && <FinOverview currentUser={currentUser} onNavigate={handleNavigate} />}
           {activePage === 'fin_income' && <FinIncome currentUser={currentUser} />}
           {activePage === 'fin_expenses' && <FinExpenses currentUser={currentUser} />}

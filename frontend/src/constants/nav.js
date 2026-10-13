@@ -6,7 +6,7 @@ import {
   faTriangleExclamation, faRobot, faComments, faMoneyBillWave,
   faSitemap, faListCheck, faUsersGear, faCashRegister, faDesktop,
   faRocket, faChartPie, faArrowDownLong, faFileInvoiceDollar, faBuildingColumns,
-  faFileLines, faClockRotateLeft, faHandHoldingDollar,
+  faFileLines, faClockRotateLeft, faHandHoldingDollar, faMobileScreen,
 } from '@fortawesome/free-solid-svg-icons'
 
 /**
@@ -130,6 +130,7 @@ export const NAV_GROUPS = [
     label: 'Tizim',
     items: [
       { key: 'bot_admin', label: 'Bot boshqaruvi', icon: faRobot, tone: TONE.settings, roles: ['admin'] },
+      { key: 'parent_release', label: 'Mobil ilova', icon: faMobileScreen, tone: TONE.settings, roles: ['admin'] },
     ],
   },
 ]

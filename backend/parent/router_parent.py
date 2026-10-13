@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from .. import models, security, tz, uploads_sign
 from ..database import get_db
 from ..phone_utils import normalize_phone
-from . import schemas, service
+from . import release_config, schemas, service
 from .deps import get_current_parent, get_owned_child
 from .errors import api_error, request_id
 from .payments import config as pay_config
@@ -72,6 +72,13 @@ def _find_parent(db: Session, username: str) -> Optional[models.Parent]:
 
 
 # ── Public privacy policy (no parent login required) ────────────────────────
+
+@router.get("/release-config", response_model=schemas.ParentReleaseConfigPublic)
+def parent_release_config(response: Response, db: Session = Depends(get_db)):
+    """Login oldidan ham olinadi; iOS har start/foreground'da qayta tekshiradi."""
+    response.headers["Cache-Control"] = "no-store"
+    return release_config.public_config(db)
+
 
 @router.get("/privacy.html", include_in_schema=False)
 def privacy_policy():
