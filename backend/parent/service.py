@@ -38,7 +38,8 @@ _DAY_WORDS = {
     'yak': 7, 'yakshanba': 7,
 }
 _HHMM = re.compile(r"^(\d{1,2}):(\d{2})$")
-NOTIFICATION_TYPES = {"payment", "attendance", "announcement"}
+NOTIFICATION_TYPES = {"payment", "attendance", "announcement", "schedule", "homework",
+                      "teacher_message", "weekly_summary"}
 HOMEWORK_STATUSES = {"pending", "submitted", "graded"}
 
 # Matnli jadvaldan (ScheduleSlot kiritilmagan guruh) slot yasashda dars davomiyligi.
@@ -200,7 +201,8 @@ def build_child(db: Session, student: models.Student) -> schemas.ChildRead:
 
 # ── To'lovlar ────────────────────────────────────────────────────────────────
 
-def build_payment_summary(db: Session, student: models.Student, month: int, year: int) -> schemas.ChildPaymentSummary:
+def build_payment_summary(db: Session, student: models.Student, month: int, year: int,
+                          parent_id: Optional[int] = None) -> schemas.ChildPaymentSummary:
     """CRM `GET /students/{id}/payments/summary` bilan bir xil hisob (core_calc):
     groups/total_* — shu oy; debt/advance/status — shu oygacha jamlangan (kumulyativ)."""
     groups: List[schemas.ChildGroupFee] = []
@@ -240,14 +242,27 @@ def build_payment_summary(db: Session, student: models.Student, month: int, year
         .order_by(models.Payment.paid_at.desc(), models.Payment.id.desc())
         .all()
     )
-    recent = [
-        schemas.ChildPaymentItem(
+    invoice_ids = {p.parent_invoice_id for p in payments if p.parent_invoice_id}
+    verified = {}
+    if invoice_ids and parent_id is not None:
+        for inv in db.query(models.ParentInvoice).filter(
+            models.ParentInvoice.id.in_(invoice_ids),
+            models.ParentInvoice.parent_id == parent_id,
+            models.ParentInvoice.status == "paid",
+        ).all():
+            if any(t.state == "performed" for t in inv.transactions):
+                verified[inv.id] = inv
+    recent = []
+    for p in payments:
+        can_receipt = p.parent_invoice_id in verified
+        receipt_url = (f"{uploads_sign.PUBLIC_BASE_URL}{uploads_sign.PUBLIC_API_PREFIX}"
+                       f"/parent/children/{student.id}/payments/{p.id}/receipt") if can_receipt else None
+        recent.append(schemas.ChildPaymentItem(
+            payment_id=p.id if can_receipt else None,
             amount=_to_int(p.amount), month=p.month, year=p.year, paid_at=p.paid_at,
             recorded_by_name=_user_name(p.recorded_by), notes=p.notes or None,
-            group_name=p.group.name if p.group else None,
-        )
-        for p in payments
-    ]
+            group_name=p.group.name if p.group else None, receipt_url=receipt_url,
+        ))
     return schemas.ChildPaymentSummary(
         month=month, year=year,
         total_owed=_to_int(total_owed), total_paid=_to_int(total_paid),

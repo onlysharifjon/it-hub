@@ -2,6 +2,7 @@
 
 Flutter ilovasi bilan shartnoma. Kod: `backend/parent/`. Testlar: `backend/tests/test_parent.py`.
 OpenAPI: [`openapi.yaml`](openapi.yaml). So'rovlar to'plami: [`parent-api.http`](parent-api.http).
+Mobil ilova versiyasi va texnik ko'rik: [`release-control.md`](release-control.md).
 
 Base URL: `https://crm.minaracademy.uz/api` (nginx `/api` prefiksini olib, `crm-api`ga uzatadi).
 
@@ -38,8 +39,9 @@ Base URL: `https://crm.minaracademy.uz/api` (nginx `/api` prefiksini olib, `crm-
 | 404 | Bola bog'lanmagan/yo'q, guruh begona, o'qituvchi biriktirilmagan | `child_not_found`, `group_not_found`, `not_found`, `teacher_not_assigned` |
 | 422 | Maydon validatsiyasi | `validation_error`, `invalid_amount`, `nothing_to_pay` |
 | 429 | Rate limit (`Retry-After: 60`) | `rate_limited` |
+| 426 | Ilova buildi minimal builddan eski | `upgrade_required` |
 | 500 | Kutilmagan xato (stack trace faqat server logida) | `internal_error` |
-| 503 | Baza vaqtincha ishlamaydi (`Retry-After: 30`); to'lov provayderi sozlanmagan | `service_unavailable`, `payment_provider_unavailable` |
+| 503 | Baza vaqtincha ishlamaydi (`Retry-After: 30`); texnik ko'rik (`Retry-After: 120`); to'lov provayderi sozlanmagan | `service_unavailable`, `maintenance`, `payment_provider_unavailable` |
 
 **Bola bo'yicha ruxsat**: har bir `/children/{childId}/…` endpointida token → parent → `parent_children` bog'lami
 qayta tekshiriladi (`deps.get_owned_child`). Begona yoki mavjud bo'lmagan bola — bir xil **404**

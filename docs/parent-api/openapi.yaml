@@ -34,6 +34,9 @@ components:
     Unavailable:
       description: Baza yoki provayder vaqtincha ishlamaydi
       content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: payment_provider_unavailable, message: "Bu to'lov usuli hozircha ishlamayapti. Boshqa usulni tanlang.", errors: {}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}
+    UpgradeRequired:
+      description: Ilova buildi minimal qo'llab-quvvatlanadigan builddan eski
+      content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: upgrade_required, message: Ilovadan foydalanish uchun uni yangilang., errors: {}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}
     Internal: {description: Kutilmagan xato, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
   schemas:
     Error:
@@ -46,6 +49,16 @@ components:
           type: object
           additionalProperties: {type: array, items: {type: string}}
         request_id: {type: string}
+    ParentReleaseConfig:
+      type: object
+      required: [maintenance_enabled, maintenance_title, maintenance_message, min_supported_build, latest_build, app_store_url]
+      properties:
+        maintenance_enabled: {type: boolean}
+        maintenance_title: {type: string, maxLength: 120}
+        maintenance_message: {type: string, maxLength: 600}
+        min_supported_build: {type: integer, minimum: 1}
+        latest_build: {type: integer, minimum: 1}
+        app_store_url: {type: string, format: uri}
     LoginRequest:
       type: object
       required: [username, password]
@@ -211,6 +224,15 @@ components:
         telegram: {type: string, description: '"@username" yoki ""'}
 
 paths:
+  /parent/release-config:
+    get:
+      security: []
+      summary: Mobil ilova versiyasi va texnik ko'rik holati (login oldidan)
+      responses:
+        '200':
+          description: OK; Cache-Control no-store
+          content: {application/json: {schema: {$ref: '#/components/schemas/ParentReleaseConfig'}}}
+        '503': {$ref: '#/components/responses/Unavailable'}
   /parent/auth/login:
     post:
       security: []
@@ -222,6 +244,7 @@ paths:
         '401': {description: Telefon/parol xato yoki akkaunt nofaol (bir xil javob), content: {application/json: {schema: {$ref: '#/components/schemas/Error'}, example: {code: invalid_credentials, message: Telefon raqam yoki parol xato, errors: {}, request_id: 5b1f0c2e9a7d4c1e8f3a2b6d7c9e0f12}}}}
         '422': {$ref: '#/components/responses/Validation'}
         '429': {$ref: '#/components/responses/RateLimited'}
+        '426': {$ref: '#/components/responses/UpgradeRequired'}
         '503': {$ref: '#/components/responses/Unavailable'}
   /parent/auth/refresh:
     post:

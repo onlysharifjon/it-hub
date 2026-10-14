@@ -7,9 +7,11 @@ sana — YYYY-MM-DD, vaqt — ISO-8601 +05:00, ro'yxatlar — xom JSON array.
 from __future__ import annotations
 
 from datetime import datetime, date
+import re
 from typing import List, Optional
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, StrictBool, conint, root_validator, validator
 
 
 class _Strict(BaseModel):
@@ -40,6 +42,57 @@ class ParentAppCapabilities(BaseModel):
     payment_providers: List[str] = []
     account_deletion_enabled: bool = True
     privacy_policy_url: str
+    push_enabled: bool = False
+    absence_explanations_enabled: bool = False
+    weekly_summary_enabled: bool = False
+    teacher_questions_enabled: bool = False
+    receipts_enabled: bool = False
+
+
+class ParentReleaseConfigPublic(BaseModel):
+    maintenance_enabled: bool
+    maintenance_title: str
+    maintenance_message: str
+    min_supported_build: int
+    latest_build: int
+    app_store_url: str
+
+
+class ParentReleaseConfigAdmin(ParentReleaseConfigPublic):
+    updated_at: Optional[datetime] = None
+    updated_by_id: Optional[int] = None
+
+
+class ParentReleaseConfigUpdate(_Strict):
+    maintenance_enabled: StrictBool
+    maintenance_title: str = Field(..., min_length=1, max_length=120)
+    maintenance_message: str = Field(..., min_length=1, max_length=600)
+    min_supported_build: conint(strict=True, ge=1, le=999999999)
+    latest_build: conint(strict=True, ge=1, le=999999999)
+    app_store_url: str = Field(..., min_length=1, max_length=500)
+
+    @validator("maintenance_title", "maintenance_message")
+    def nonblank_text(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Matn bo'sh bo'lishi mumkin emas")
+        return value
+
+    @validator("app_store_url")
+    def apple_store_link(cls, value):
+        value = value.strip()
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or parsed.netloc != "apps.apple.com"
+                or parsed.query or parsed.fragment
+                or not re.fullmatch(r"/[a-z]{2}/app(?:/[A-Za-z0-9-]+)?/id6820518218", parsed.path)):
+            raise ValueError("Faqat Minar Parents App Store havolasi qabul qilinadi")
+        return value
+
+    @root_validator(skip_on_failure=True)
+    def build_order(cls, values):
+        if values["latest_build"] < values["min_supported_build"]:
+            raise ValueError("latest_build min_supported_build dan kichik bo'lmasin")
+        return values
 
 
 # ── Profil / bolalar ─────────────────────────────────────────────────────────
@@ -88,6 +141,7 @@ class ChildGroupFee(BaseModel):
 
 
 class ChildPaymentItem(BaseModel):
+    payment_id: Optional[int] = None
     amount: int
     month: int
     year: int
@@ -95,6 +149,7 @@ class ChildPaymentItem(BaseModel):
     recorded_by_name: str = ""
     notes: Optional[str] = None             # nullable
     group_name: Optional[str] = None        # nullable
+    receipt_url: Optional[str] = None
 
 
 class ChildPaymentSummary(BaseModel):
@@ -161,6 +216,121 @@ class ParentNotificationRead(BaseModel):
     body: str = ""
     created_at: datetime
     is_read: bool
+
+
+class PushDeviceCreate(_Strict):
+    token: str = Field(..., regex=r"^[a-fA-F0-9]{64}$")
+    platform: str = Field(..., regex="^ios$")
+    environment: str = Field(..., regex="^(sandbox|production)$")
+
+
+class NotificationPreferences(BaseModel):
+    attendance: bool = True
+    schedule: bool = True
+    payments: bool = True
+    homework: bool = True
+    announcements: bool = True
+    weekly_summary: bool = True
+    teacher_messages: bool = True
+
+
+class NotificationPreferencesUpdate(_Strict):
+    attendance: Optional[StrictBool] = None
+    schedule: Optional[StrictBool] = None
+    payments: Optional[StrictBool] = None
+    homework: Optional[StrictBool] = None
+    announcements: Optional[StrictBool] = None
+    weekly_summary: Optional[StrictBool] = None
+    teacher_messages: Optional[StrictBool] = None
+
+
+class AbsenceExplanationCreate(_Strict):
+    lesson_date: date
+    group_name: Optional[str] = Field(None, max_length=200)
+    reason: str = Field(..., regex="^(sick|travel|family|other)$")
+    note: str = Field("", max_length=1000)
+
+
+class AbsenceExplanationRead(BaseModel):
+    id: int
+    child_id: int
+    lesson_date: date
+    group_name: str
+    reason: str
+    note: str
+    status: str
+    staff_note: Optional[str] = None
+    created_at: datetime
+    reviewed_at: Optional[datetime] = None
+
+
+class StaffAbsenceReview(_Strict):
+    status: str = Field(..., regex="^(approved|rejected)$")
+    staff_note: Optional[str] = Field(None, max_length=500)
+
+
+class WeeklySummaryRead(BaseModel):
+    week_start: date
+    week_end: date
+    attended_lessons: int
+    scheduled_lessons: int
+    homework_completed: int
+    homework_total: int
+    average_grade: Optional[int] = None
+    highlights: List[str]
+    needs_attention: List[str]
+    teacher_recommendation: Optional[str] = None
+
+
+class TeacherQuestionCreate(_Strict):
+    subject: str = Field(..., min_length=2, max_length=120)
+    body: str = Field(..., min_length=5, max_length=2000)
+
+    @validator("subject", "body")
+    def nonblank_question(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Matn bo'sh bo'lishi mumkin emas")
+        return value
+
+
+class StaffTeacherReply(_Strict):
+    body: str = Field(..., min_length=2, max_length=2000)
+
+    @validator("body")
+    def nonblank_reply(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Javob bo'sh bo'lishi mumkin emas")
+        return value
+
+
+class StaffWeeklyRecommendation(_Strict):
+    text: str = Field(..., min_length=4, max_length=500)
+
+    @validator("text")
+    def nonblank_recommendation(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Tavsiya bo'sh bo'lishi mumkin emas")
+        return value
+
+
+class TeacherReplyRead(BaseModel):
+    id: int
+    body: str
+    author_name: str
+    created_at: datetime
+
+
+class TeacherQuestionRead(BaseModel):
+    id: int
+    child_id: int
+    subject: str
+    body: str
+    status: str
+    created_at: datetime
+    replies: List[TeacherReplyRead]
 
 
 # ── O'quv jarayoni ───────────────────────────────────────────────────────────

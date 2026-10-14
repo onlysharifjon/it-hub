@@ -788,9 +788,34 @@ def test_parent_delete_account_requires_authentication(client):
     assert res.status_code == 401
 
 
-def test_parent_deletion_closes_login_but_keeps_data(client, db, hunter_user):
+def test_parent_deletion_erases_account_but_preserves_financial_history(client, db, hunter_user):
     student = _mk_student(db, "Alibek Mominov", "+998900000041")
     parent = _mk_parent(db, [student], phone="+998900000042")
+    parent.display_name = "Alibekning onasi"
+    parent.avatar = "private-image"
+    old_hash = parent.hashed_password
+    group = _mk_group(db)
+    invoice = ParentInvoice(parent_id=parent.id, student_id=student.id, group_id=group.id,
+                            amount=700000, provider="payme", status="paid", paid_at=datetime.utcnow())
+    db.add(invoice)
+    db.flush()
+    db.add(PaymentTransaction(invoice_id=invoice.id, provider="payme", provider_txn_id="paid-1",
+                              state="performed", amount=700000, create_time=1, perform_time=2))
+    db.add(Payment(student_id=student.id, group_id=group.id, amount=700000,
+                   month=10, year=2026, parent_invoice_id=invoice.id))
+    pending = ParentInvoice(parent_id=parent.id, student_id=student.id, group_id=group.id,
+                            amount=50000, provider="payme", status="pending",
+                            expires_at=datetime.utcnow() + timedelta(hours=1))
+    db.add(pending)
+    db.flush()
+    pending_txn = PaymentTransaction(invoice_id=pending.id, provider="payme",
+                                     provider_txn_id="pending-1", state="created",
+                                     amount=50000, create_time=1)
+    db.add(pending_txn)
+    db.add(PhoneVerification(public_id="erase-otp", phone="+998900000042", status="verified",
+                             attempts=1, expires_at=datetime.utcnow() + timedelta(minutes=5),
+                             parent_id=parent.id))
+    db.commit()
     login = _login(client, "+998900000042").json()
     auth = {"Authorization": f"Bearer {login['access_token']}"}
     parent_id = parent.id
@@ -802,25 +827,43 @@ def test_parent_deletion_closes_login_but_keeps_data(client, db, hunter_user):
     assert deleted.status_code == 204, deleted.text
 
     db.expire_all()
-    p = db.query(Parent).filter(Parent.id == parent_id).one()               # ma'lumot saqlanadi
-    assert p.is_active is False and p.deleted_at is not None and p.phone == "+998900000042"
-    assert db.query(ParentChild).filter(ParentChild.parent_id == parent_id).count() == 1
-    assert db.query(ParentNotification).filter(ParentNotification.parent_id == parent_id).count() == 1
+    p = db.query(Parent).filter(Parent.id == parent_id).one()  # accounting FK tombstone
+    assert p.is_active is False and p.deleted_at is not None
+    assert p.full_name == "O'chirilgan akkaunt" and p.display_name is None and p.avatar is None
+    assert p.phone != "+998900000042" and p.username != "+998900000042"
+    assert p.hashed_password != old_hash and p.phone_verified_at is None
+    assert db.query(ParentChild).filter(ParentChild.parent_id == parent_id).count() == 0
+    assert db.query(ParentNotification).filter(ParentNotification.parent_id == parent_id).count() == 0
     assert db.query(ParentRefreshToken).filter(ParentRefreshToken.parent_id == parent_id).count() == 0
+    assert db.query(PhoneVerification).filter(PhoneVerification.phone == "+998900000042").count() == 0
+    assert db.query(ParentInvoice).filter(ParentInvoice.id == invoice.id).count() == 1
+    assert db.query(PaymentTransaction).filter(PaymentTransaction.invoice_id == invoice.id).count() == 1
+    assert db.query(Payment).filter(Payment.parent_invoice_id == invoice.id).count() == 1
+    db.refresh(pending)
+    assert pending.status == "cancelled" and pending.cancelled_at is not None
+    db.refresh(pending_txn)
+    assert pending_txn.state == "cancelled" and pending_txn.cancel_time is not None
+    from backend.parent.payments import config as payment_config, payme
+    with pytest.raises(payme.PaymeError):
+        payme._check_perform(db, {"account": {payment_config.payme_account_field(): pending.id},
+                                  "amount": 50000 * 100})
+    with pytest.raises(payme.PaymeError) as cannot_perform:
+        payme._perform(db, {"id": "pending-1"})
+    assert cannot_perform.value.code == payme.E_CANNOT_PERFORM
+    assert payme._cancel(db, {"id": "pending-1", "reason": 4})["state"] == payme.ST_CANCELLED
     # Sessiyalar bekor
     assert client.get("/parent/profile", headers=auth).status_code == 401
     assert client.post("/parent/auth/refresh", json={"refresh_token": login["refresh_token"]}).status_code == 401
     assert client.delete("/parent/account", headers=auth).status_code == 401
-    # Kirish: "mavjud emas" xabari
+    # Erased credentials cannot sign in.
     r = _login(client, "+998900000042")
-    assert r.status_code == 401 and r.json()["code"] == "account_not_found"
-    assert "administrator" in r.json()["message"]
+    assert r.status_code == 401 and r.json()["code"] == "invalid_credentials"
     # Boshqa ota-onalarga ta'sir yo'q
     other = _mk_parent(db, [_mk_student(db, "Boshqa", "+998900000043")], phone="+998900000044")
     assert _login(client, "+998900000044").status_code == 200
 
 
-def test_admin_recreate_restores_deleted_parent(client, db, hunter_user):
+def test_admin_creates_new_parent_after_deletion(client, db, hunter_user):
     student = _mk_student(db, "Malika Mominova", "+998900000051")
     parent = _mk_parent(db, [student], phone="+998900000052")
     h = _h(client, "+998900000052")
@@ -829,8 +872,11 @@ def test_admin_recreate_restores_deleted_parent(client, db, hunter_user):
     res = client.post("/parents", headers={"Authorization": f"Bearer {htoken}"},
                       json={"full_name": "Malika onasi", "phone": "+998900000052", "student_ids": [student.id]})
     assert res.status_code == 201, res.text
-    assert res.json()["id"] == parent.id                                      # yangi emas — tiklangan
+    assert res.json()["id"] != parent.id
     assert len(res.json()["children"]) == 1
+    assert db.query(ParentChild).filter(ParentChild.parent_id == parent.id).count() == 0
+    assert client.patch(f"/parents/{parent.id}", headers={"Authorization": f"Bearer {htoken}"},
+                        json={"is_active": True}).status_code == 404
     r = _login(client, "+998900000052", res.json()["generated_password"])
     assert r.status_code == 200, r.text
 
@@ -863,6 +909,11 @@ def test_parent_app_capabilities_fail_closed_until_payments_ready(client, db, mo
         "payment_providers": [],
         "account_deletion_enabled": False,
         "privacy_policy_url": "https://crm.minaracademy.uz/api/parent/privacy.html",
+        "push_enabled": False,
+        "absence_explanations_enabled": False,
+        "weekly_summary_enabled": False,
+        "teacher_questions_enabled": False,
+        "receipts_enabled": False,
     }
 
 

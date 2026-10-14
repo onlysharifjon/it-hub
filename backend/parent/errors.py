@@ -160,6 +160,9 @@ async def _unhandled_handler(request: Request, exc: Exception):
 
 
 def install(app: FastAPI) -> None:
+    # RequestIdMiddleware outermost: gate's 426/503 javoblariga ham bir xil ID qo'shadi.
+    from .release_config import ParentReleaseGateMiddleware
+    app.add_middleware(ParentReleaseGateMiddleware)
     app.add_middleware(RequestIdMiddleware)
     app.add_exception_handler(StarletteHTTPException, _http_handler)
     app.add_exception_handler(RequestValidationError, _validation_handler)

@@ -6,7 +6,7 @@ import {
   faTriangleExclamation, faRobot, faComments, faMoneyBillWave,
   faSitemap, faListCheck, faUsersGear, faCashRegister, faDesktop,
   faRocket, faChartPie, faArrowDownLong, faFileInvoiceDollar, faBuildingColumns,
-  faFileLines, faClockRotateLeft, faHandHoldingDollar,
+  faFileLines, faClockRotateLeft, faHandHoldingDollar, faMobileScreen,
 } from '@fortawesome/free-solid-svg-icons'
 
 /**
@@ -70,6 +70,8 @@ export const NAV_GROUPS = [
       { key: 'chatbot',       label: 'Chatbot',       icon: faComments,    tone: TONE.chatbot,       roles: ['hunter', 'admin'] },
       { key: 'feedbacks',     label: 'Izohlar',       icon: faCommentDots, tone: TONE.notifications, roles: ['call_center', 'admin'], badge: 'feedback' },
       { key: 'parents',       label: 'Ota-onalar',    icon: faPeopleRoof,  tone: TONE.students,      roles: ['hunter', 'admin'] },
+      { key: 'parent_engagement', label: 'Ota-ona murojaatlari', icon: faComments,
+        tone: TONE.notifications, roles: ['admin', 'support_teacher', 'teacher', 'hunter'] },
       { key: 'computers',     label: 'Kompyuterlar',  icon: faDesktop,     tone: TONE.groups,        roles: ['hunter', 'admin'] },
     ],
   },
@@ -130,6 +132,7 @@ export const NAV_GROUPS = [
     label: 'Tizim',
     items: [
       { key: 'bot_admin', label: 'Bot boshqaruvi', icon: faRobot, tone: TONE.settings, roles: ['admin'] },
+      { key: 'parent_release', label: 'Mobil ilova', icon: faMobileScreen, tone: TONE.settings, roles: ['admin'] },
     ],
   },
 ]

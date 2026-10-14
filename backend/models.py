@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Column, Index, text, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, Column, Index, text, Integer, String, Text, Boolean, DateTime, ForeignKey, Numeric, Table, Date, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -565,12 +565,34 @@ class Parent(Base):
     avatar = Column(Text, nullable=True)                            # base64 rasm (mobil ilova yuklaydi)
     is_active = Column(Boolean, nullable=False, default=True)
     phone_verified_at = Column(DateTime, nullable=True)             # Telegram OTP bilan tasdiqlangan payt
-    deleted_at = Column(DateTime, nullable=True)                    # ilovadan o'chirilgan: kirish yopiq, ma'lumot saqlanadi
+    deleted_at = Column(DateTime, nullable=True)                    # ilovadan o'chirilgan: PII o'chirilgan hisob-kitob tombstone
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # qaysi xodim yaratgan
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     created_by = relationship("User", foreign_keys=[created_by_id])
     children = relationship("ParentChild", back_populates="parent", cascade="all, delete-orphan", order_by="ParentChild.id")
+
+
+class ParentReleaseConfig(Base):
+    """CRM boshqaradigan yagona parent iOS release holati."""
+    __tablename__ = "parent_release_config"
+
+    id = Column(Integer, primary_key=True, default=1)
+    maintenance_enabled = Column(Boolean, nullable=False, default=False)
+    maintenance_title = Column(String(120), nullable=False)
+    maintenance_message = Column(String(600), nullable=False)
+    min_supported_build = Column(Integer, nullable=False, default=1)
+    latest_build = Column(Integer, nullable=False, default=5)
+    app_store_url = Column(String(500), nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_parent_release_config_singleton"),
+        CheckConstraint("min_supported_build >= 1", name="ck_parent_release_min_build"),
+        CheckConstraint("latest_build >= min_supported_build", name="ck_parent_release_latest_build"),
+    )
 
 
 class PhoneVerification(Base):
@@ -643,8 +665,94 @@ class ParentNotification(Base):
     body = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     read_at = Column(DateTime, nullable=True)
+    push_attempted_at = Column(DateTime, nullable=True)
+    push_error = Column(String(120), nullable=True)
+    push_attempts = Column(Integer, nullable=False, default=0)
+    push_next_attempt_at = Column(DateTime, nullable=True)
 
     parent = relationship("Parent", foreign_keys=[parent_id])
+
+
+class ParentPushDevice(Base):
+    __tablename__ = "parent_push_devices"
+
+    id = Column(Integer, primary_key=True)
+    parent_id = Column(Integer, ForeignKey("parents.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    token = Column(String(200), nullable=False)
+    platform = Column(String(12), nullable=False, default="ios")
+    environment = Column(String(12), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ParentNotificationPreference(Base):
+    __tablename__ = "parent_notification_preferences"
+
+    parent_id = Column(Integer, ForeignKey("parents.id", ondelete="CASCADE"), primary_key=True)
+    attendance = Column(Boolean, nullable=False, default=True)
+    schedule = Column(Boolean, nullable=False, default=True)
+    payments = Column(Boolean, nullable=False, default=True)
+    homework = Column(Boolean, nullable=False, default=True)
+    announcements = Column(Boolean, nullable=False, default=True)
+    weekly_summary = Column(Boolean, nullable=False, default=True)
+    teacher_messages = Column(Boolean, nullable=False, default=True)
+
+
+class ParentAbsenceExplanation(Base):
+    __tablename__ = "parent_absence_explanations"
+
+    id = Column(Integer, primary_key=True)
+    parent_id = Column(Integer, ForeignKey("parents.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    attendance_id = Column(Integer, ForeignKey("attendance.id", ondelete="CASCADE"), nullable=False)
+    reason = Column(String(20), nullable=False)
+    note = Column(String(1000), nullable=False, default="")
+    status = Column(String(20), nullable=False, default="pending")
+    staff_note = Column(String(500), nullable=True)
+    reviewed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    attendance = relationship("Attendance")
+    __table_args__ = (UniqueConstraint("parent_id", "attendance_id", name="uq_parent_absence_per_guardian"),)
+
+
+class ParentTeacherQuestion(Base):
+    __tablename__ = "parent_teacher_questions"
+
+    id = Column(Integer, primary_key=True)
+    parent_id = Column(Integer, ForeignKey("parents.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    group_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
+    subject = Column(String(120), nullable=False)
+    body = Column(String(2000), nullable=False)
+    status = Column(String(20), nullable=False, default="open")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    replies = relationship("ParentTeacherReply", back_populates="question", cascade="all, delete-orphan", order_by="ParentTeacherReply.id")
+
+
+class ParentTeacherReply(Base):
+    __tablename__ = "parent_teacher_replies"
+
+    id = Column(Integer, primary_key=True)
+    question_id = Column(Integer, ForeignKey("parent_teacher_questions.id", ondelete="CASCADE"), nullable=False, index=True)
+    staff_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    body = Column(String(2000), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    question = relationship("ParentTeacherQuestion", back_populates="replies")
+    staff = relationship("User")
+
+
+class ParentWeeklyRecommendation(Base):
+    __tablename__ = "parent_weekly_recommendations"
+
+    id = Column(Integer, primary_key=True)
+    student_id = Column(Integer, ForeignKey("students.id", ondelete="CASCADE"), nullable=False, index=True)
+    week_start = Column(Date, nullable=False)
+    text = Column(String(500), nullable=False)
+    staff_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (UniqueConstraint("student_id", "week_start", name="uq_parent_weekly_recommendation"),)
 
 
 class ScheduleSlot(Base):

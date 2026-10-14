@@ -11,7 +11,7 @@ from typing import List, Optional
 import io
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -319,6 +319,8 @@ def serve_upload(rel_path: str, exp: Optional[str] = None, sig: Optional[str] = 
 
 # Ota-ona mobil ilovasi API (/parent/...) — alohida paketda
 from .parent.router_parent import router as parent_router
+from .parent import schemas as parent_schemas
+from .parent import release_config as parent_release
 from .parent.notifications import notify_parents_of_student
 from .parent import errors as parent_errors
 from .parent.payments.router_callbacks import router as payment_callbacks_router
@@ -588,6 +590,47 @@ def write_audit(db, *, entity_type, entity_id, action, changed_by_id, old_value=
         new_value=json.dumps(new_value, ensure_ascii=False, default=str) if new_value is not None else None,
     )
     db.add(log)
+
+
+@app.get("/admin/parent-release-config", response_model=parent_schemas.ParentReleaseConfigAdmin)
+def get_parent_release_config(
+    response: Response,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    """CRM administratorigina mobil ilova release holatini ko'radi."""
+    response.headers["Cache-Control"] = "no-store"
+    return parent_release.admin_config(db)
+
+
+@app.put("/admin/parent-release-config", response_model=parent_schemas.ParentReleaseConfigAdmin)
+def update_parent_release_config(
+    payload: parent_schemas.ParentReleaseConfigUpdate,
+    response: Response,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_admin),
+):
+    """Yagona qatorni va audit jurnalini bitta tranzaksiyada saqlaydi."""
+    response.headers["Cache-Control"] = "no-store"
+    row = db.query(models.ParentReleaseConfig).filter(models.ParentReleaseConfig.id == 1).with_for_update().first()
+    old_value = parent_release.admin_config(db)
+    new_value = payload.dict()
+    if {key: old_value[key] for key in new_value} == new_value:
+        return old_value
+    if row is None:
+        row = models.ParentReleaseConfig(id=1)
+        db.add(row)
+    for key, value in new_value.items():
+        setattr(row, key, value)
+    row.updated_at = datetime.utcnow()
+    row.updated_by_id = actor.id
+    write_audit(
+        db, entity_type="parent_release_config", entity_id=1, action="update",
+        changed_by_id=actor.id,
+        old_value={key: old_value[key] for key in new_value}, new_value=new_value,
+    )
+    db.commit()
+    return parent_release.admin_config(db)
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────
@@ -1578,6 +1621,18 @@ def update_group(group_id: int, payload: schemas.GroupUpdate, db: Session = Depe
         g.closed_at = None if changes["is_active"] else datetime.utcnow()
     for k, v in changes.items():
         setattr(g, k, v)
+    if os.getenv("PARENT_EVENT_NOTIFICATIONS_ENABLED", "false").lower() == "true" and any(
+        k in changes and old[k] != str(changes[k]) for k in ("schedule", "lesson_time")
+    ):
+        for (sid,) in db.query(models.GroupStudent.student_id).filter(
+            models.GroupStudent.group_id == g.id,
+            models.GroupStudent.left_at.is_(None),
+        ).all():
+            notify_parents_of_student(
+                db, student_id=sid, ntype="schedule",
+                title="Dars jadvali yangilandi",
+                body=f"{g.name} guruhi jadvalini ilovada tekshiring.",
+            )
     write_audit(db, entity_type="group", entity_id=g.id, action="update",
                 changed_by_id=actor.id, old_value=old,
                 new_value={k: str(v) for k, v in changes.items()})
@@ -4954,6 +5009,11 @@ def create_homework(
             models.GroupStudent.group_id == group_id, models.GroupStudent.left_at.is_(None)).all():
         minar_notify.to_student(db, sid, "homework", "Yangi uy vazifasi 📝",
                                 payload.lesson_title or payload.text[:120], "homework")
+        if os.getenv("PARENT_EVENT_NOTIFICATIONS_ENABLED", "false").lower() == "true":
+            notify_parents_of_student(
+                db, student_id=sid, ntype="homework", title="Yangi uy vazifasi",
+                body=f"{group.name} guruhi uchun yangi vazifa berildi.",
+            )
     write_audit(db, entity_type="homework", entity_id=hw.id, action="create",
                 changed_by_id=actor.id,
                 new_value={"group_id": group_id, "lesson_number": payload.lesson_number,
@@ -8460,23 +8520,6 @@ def create_parent_account(
     phone = payload.phone.strip()
     username = (payload.username or phone).strip()
     existing = db.query(models.Parent).filter(models.Parent.phone == phone).first()
-    if existing is not None and existing.deleted_at is not None:
-        # Ilovadan o'chirilgan akkaunt — qayta yaratish o'rniga tiklanadi (ma'lumot saqlangan)
-        raw_password = payload.password or _gen_password()
-        existing.full_name = payload.full_name.strip()
-        if payload.display_name is not None:
-            existing.display_name = payload.display_name
-        existing.hashed_password = hash_password(raw_password)
-        existing.is_active, existing.deleted_at = True, None
-        linked = {c.student_id for c in existing.children}
-        for sid in dict.fromkeys(payload.student_ids):
-            if sid not in linked and db.query(models.Student).filter(models.Student.id == sid).first():
-                db.add(models.ParentChild(parent_id=existing.id, student_id=sid, created_at=datetime.utcnow()))
-        db.commit()
-        db.refresh(existing)
-        out = schemas.ParentAccountCreated(**_parent_account_read(existing).dict())
-        out.generated_password = raw_password
-        return out
     if existing is not None:
         raise HTTPException(409, "Bu telefon bilan ota-ona allaqachon mavjud")
     if db.query(models.Parent).filter(models.Parent.username == username).first():
@@ -8506,7 +8549,7 @@ def list_parent_accounts(
     actor: models.User = Depends(require_crm_access),
     db: Session = Depends(get_db),
 ):
-    q = db.query(models.Parent).options(
+    q = db.query(models.Parent).filter(models.Parent.deleted_at.is_(None)).options(
         joinedload(models.Parent.children).joinedload(models.ParentChild.student),
     )
     if search:
@@ -8525,7 +8568,7 @@ def get_parent_account(
     db: Session = Depends(get_db),
 ):
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
-    if not p:
+    if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     return _parent_account_read(p)
 
@@ -8538,7 +8581,7 @@ def update_parent_account(
     db: Session = Depends(get_db),
 ):
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
-    if not p:
+    if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     data = payload.dict(exclude_unset=True)
     if "phone" in data and data["phone"] != p.phone:
@@ -8546,8 +8589,6 @@ def update_parent_account(
             raise HTTPException(409, "Bu telefon band")
     for k, v in data.items():
         setattr(p, k, v)
-    if data.get("is_active") is True:
-        p.deleted_at = None              # ilovadan o'chirilgan akkauntni tiklash
     db.commit()
     db.refresh(p)
     return _parent_account_read(p)
@@ -8561,7 +8602,7 @@ def reset_parent_password(
     db: Session = Depends(get_db),
 ):
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
-    if not p:
+    if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     raw = payload.password or _gen_password()
     p.hashed_password = hash_password(raw)
@@ -8582,7 +8623,7 @@ def link_parent_child(
     db: Session = Depends(get_db),
 ):
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
-    if not p:
+    if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     if not db.query(models.Student).filter(models.Student.id == payload.student_id).first():
         raise HTTPException(404, "Talaba topilmadi")
@@ -8763,6 +8804,15 @@ def create_schedule_slot(
         room=payload.room, created_at=datetime.utcnow(),
     )
     db.add(slot)
+    if os.getenv("PARENT_EVENT_NOTIFICATIONS_ENABLED", "false").lower() == "true":
+        for (sid,) in db.query(models.GroupStudent.student_id).filter(
+            models.GroupStudent.group_id == group_id,
+            models.GroupStudent.left_at.is_(None),
+        ).all():
+            notify_parents_of_student(
+                db, student_id=sid, ntype="schedule", title="Dars jadvali yangilandi",
+                body="Dars jadvalini ilovada tekshiring.",
+            )
     db.commit()
     db.refresh(slot)
     return slot
@@ -8776,6 +8826,15 @@ def delete_schedule_slot(
 ):
     slot = db.query(models.ScheduleSlot).filter(models.ScheduleSlot.id == slot_id).first()
     if slot:
+        if os.getenv("PARENT_EVENT_NOTIFICATIONS_ENABLED", "false").lower() == "true":
+            for (sid,) in db.query(models.GroupStudent.student_id).filter(
+                models.GroupStudent.group_id == slot.group_id,
+                models.GroupStudent.left_at.is_(None),
+            ).all():
+                notify_parents_of_student(
+                    db, student_id=sid, ntype="schedule", title="Dars jadvali yangilandi",
+                    body="Dars jadvalini ilovada tekshiring.",
+                )
         db.delete(slot)
         db.commit()
 # ── Camera API ────────────────────────────────────────────────────────────────
@@ -9717,3 +9776,168 @@ _minar_setup(app)
 # Fayl oxirida ulanadi: router `require_auth`/`require_admin`ni shu moduldan oladi.
 from .finance.router import router as finance_router  # noqa: E402
 app.include_router(finance_router)
+
+
+# ── Ota-onalar murojaatlari (CRM xodimlari uchun) ─────────────────────────────
+from .parent import engagement as _parent_engagement, schemas as _parent_schemas  # noqa: E402
+
+
+def _parent_request_access(actor: models.User, group_id: Optional[int], db: Session) -> None:
+    if actor.role == UserRole.teacher.value:
+        group = db.query(models.Group).filter(models.Group.id == group_id).first()
+        if not group or group.teacher_id != actor.id:
+            raise HTTPException(status_code=403, detail="Bu guruh sizga biriktirilmagan")
+
+
+@app.get("/parent-engagement/students")
+def staff_parent_students(actor: models.User = Depends(require_attendance_editor),
+                          db: Session = Depends(get_db)):
+    q = db.query(models.Student.id, models.Student.full_name).join(
+        models.ParentChild, models.ParentChild.student_id == models.Student.id,
+    )
+    if actor.role == UserRole.teacher.value:
+        q = q.join(models.GroupStudent, models.GroupStudent.student_id == models.Student.id).join(
+            models.Group, models.Group.id == models.GroupStudent.group_id,
+        ).filter(models.Group.teacher_id == actor.id, models.GroupStudent.left_at.is_(None))
+    rows = q.distinct().order_by(models.Student.full_name).limit(1000).all()
+    return [{"id": sid, "full_name": name} for sid, name in rows]
+
+
+@app.get("/parent-engagement/absence-explanations")
+def staff_absence_explanations(
+    status_: Optional[str] = Query(None, alias="status", regex="^(pending|approved|rejected)$"),
+    actor: models.User = Depends(require_attendance_editor),
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.ParentAbsenceExplanation).join(
+        models.Attendance, models.Attendance.id == models.ParentAbsenceExplanation.attendance_id,
+    )
+    if actor.role == UserRole.teacher.value:
+        q = q.join(models.Group, models.Group.id == models.Attendance.group_id).filter(
+            models.Group.teacher_id == actor.id)
+    if status_:
+        q = q.filter(models.ParentAbsenceExplanation.status == status_)
+    rows = q.order_by(models.ParentAbsenceExplanation.created_at.desc()).limit(200).all()
+    return [{**_parent_engagement.absence_read(row).dict(),
+             "student_name": db.query(models.Student.full_name).filter(models.Student.id == row.student_id).scalar() or ""}
+            for row in rows]
+
+
+@app.patch("/parent-engagement/absence-explanations/{explanation_id}")
+def staff_review_absence(explanation_id: int, payload: _parent_schemas.StaffAbsenceReview,
+                         actor: models.User = Depends(require_attendance_editor),
+                         db: Session = Depends(get_db)):
+    row = db.query(models.ParentAbsenceExplanation).filter(
+        models.ParentAbsenceExplanation.id == explanation_id).first()
+    if not row:
+        raise HTTPException(404, "Izoh topilmadi")
+    _parent_request_access(actor, row.attendance.group_id, db)
+    if row.status != "pending":
+        raise HTTPException(409, "Izoh allaqachon ko'rib chiqilgan")
+    row.status = payload.status
+    row.staff_note = (payload.staff_note or "").strip() or None
+    row.reviewed_by_id = actor.id
+    row.reviewed_at = datetime.utcnow()
+    db.add(models.ParentNotification(
+        parent_id=row.parent_id, student_id=row.student_id, type="attendance",
+        title="Davomat izohi ko'rib chiqildi",
+        body="Izoh holatini ilovada tekshiring.", created_at=datetime.utcnow(),
+    ))
+    write_audit(db, entity_type="parent_absence_explanation", entity_id=row.id,
+                action="review", changed_by_id=actor.id,
+                new_value={"status": row.status})
+    db.commit()
+    return _parent_engagement.absence_read(row)
+
+
+@app.get("/parent-engagement/teacher-questions")
+def staff_teacher_questions(
+    status_: Optional[str] = Query(None, alias="status", regex="^(open|answered|closed)$"),
+    actor: models.User = Depends(require_attendance_editor),
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.ParentTeacherQuestion)
+    if actor.role == UserRole.teacher.value:
+        q = q.join(models.Group, models.Group.id == models.ParentTeacherQuestion.group_id).filter(
+            models.Group.teacher_id == actor.id)
+    if status_:
+        q = q.filter(models.ParentTeacherQuestion.status == status_)
+    rows = q.order_by(models.ParentTeacherQuestion.created_at.desc()).limit(200).all()
+    return [{**_parent_engagement.question_read(row).dict(),
+             "student_name": db.query(models.Student.full_name).filter(models.Student.id == row.student_id).scalar() or ""}
+            for row in rows]
+
+
+@app.post("/parent-engagement/teacher-questions/{question_id}/replies", status_code=201)
+def staff_reply_to_parent(question_id: int, payload: _parent_schemas.StaffTeacherReply,
+                          actor: models.User = Depends(require_attendance_editor),
+                          db: Session = Depends(get_db)):
+    row = db.query(models.ParentTeacherQuestion).filter(
+        models.ParentTeacherQuestion.id == question_id).first()
+    if not row:
+        raise HTTPException(404, "Savol topilmadi")
+    _parent_request_access(actor, row.group_id, db)
+    if row.status == "closed":
+        raise HTTPException(409, "Savol yopilgan")
+    reply = models.ParentTeacherReply(
+        question_id=row.id, staff_id=actor.id, body=payload.body.strip(),
+        created_at=datetime.utcnow(),
+    )
+    db.add(reply)
+    row.status = "answered"
+    db.add(models.ParentNotification(
+        parent_id=row.parent_id, student_id=row.student_id,
+        type="teacher_message", title="O'qituvchidan javob keldi",
+        body="Javobni ilovadagi savollar bo'limida ko'ring.", created_at=datetime.utcnow(),
+    ))
+    db.flush()
+    write_audit(db, entity_type="parent_teacher_reply", entity_id=reply.id,
+                action="create", changed_by_id=actor.id,
+                new_value={"question_id": row.id})
+    db.commit()
+    return _parent_engagement.question_read(row)
+
+
+@app.put("/parent-engagement/students/{student_id}/weekly-recommendations/{week_start}")
+def staff_weekly_recommendation(student_id: int, week_start: date,
+                                payload: _parent_schemas.StaffWeeklyRecommendation,
+                                actor: models.User = Depends(require_attendance_editor),
+                                db: Session = Depends(get_db)):
+    student = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not student:
+        raise HTTPException(404, "Talaba topilmadi")
+    if week_start.weekday() != 0:
+        raise HTTPException(422, "Hafta dushanbadan boshlanishi kerak")
+    if actor.role == UserRole.teacher.value and not any(
+        m.group and m.group.teacher_id == actor.id and m.left_at is None
+        for m in student.group_memberships
+    ):
+        raise HTTPException(403, "Bu talaba sizga biriktirilmagan")
+    row = db.query(models.ParentWeeklyRecommendation).filter(
+        models.ParentWeeklyRecommendation.student_id == student_id,
+        models.ParentWeeklyRecommendation.week_start == week_start,
+    ).first()
+    if row is None:
+        row = models.ParentWeeklyRecommendation(student_id=student_id, week_start=week_start)
+        db.add(row)
+    row.text = payload.text.strip()
+    row.staff_id = actor.id
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return {"student_id": student_id, "week_start": week_start,
+            "text": row.text, "updated_at": row.updated_at}
+
+
+@app.get("/parent-engagement/students/{student_id}/weekly-summary")
+def staff_student_weekly_summary(student_id: int, week_start: Optional[date] = None,
+                                 actor: models.User = Depends(require_attendance_editor),
+                                 db: Session = Depends(get_db)):
+    student = db.query(models.Student).filter(models.Student.id == student_id).first()
+    if not student:
+        raise HTTPException(404, "Talaba topilmadi")
+    if actor.role == UserRole.teacher.value and not any(
+        m.group and m.group.teacher_id == actor.id and m.left_at is None
+        for m in student.group_memberships
+    ):
+        raise HTTPException(403, "Bu talaba sizga biriktirilmagan")
+    return _parent_engagement.weekly_summary(db, student, week_start)
