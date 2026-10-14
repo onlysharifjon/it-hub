@@ -369,3 +369,28 @@ def test_digest_events_are_opt_in_and_idempotent(client, db, monkeypatch):
         ParentNotification.parent_id == parent.id,
         ParentNotification.type == "payment",
     ).count() == 1
+    reminder = db.query(ParentNotification).filter(
+        ParentNotification.parent_id == parent.id,
+        ParentNotification.type == "payment",
+    ).one()
+    assert "to'lov holatini tekshiring" in reminder.body
+    assert "muddat" not in reminder.body.lower()
+
+
+def test_schedule_and_homework_events_are_opt_in(client, db, monkeypatch):
+    child = _mk_student(db)
+    parent = _mk_parent(db, [child])
+    group = _mk_group(db)
+    _enroll(db, group, child)
+    staff_h = _staff_header(client, db)
+    monkeypatch.delenv("PARENT_EVENT_NOTIFICATIONS_ENABLED", raising=False)
+    assert client.put(f"/groups/{group.id}", headers=staff_h,
+                      json={"lesson_time": "15:00"}).status_code == 200
+    assert db.query(ParentNotification).filter_by(parent_id=parent.id, type="schedule").count() == 0
+    monkeypatch.setenv("PARENT_EVENT_NOTIFICATIONS_ENABLED", "true")
+    assert client.put(f"/groups/{group.id}", headers=staff_h,
+                      json={"lesson_time": "16:00"}).status_code == 200
+    assert client.post(f"/groups/{group.id}/homeworks", headers=staff_h,
+                       json={"text": "Uchta misol ishlang", "lesson_date": str(tz.today())}).status_code == 201
+    types = {row.type for row in db.query(ParentNotification).filter_by(parent_id=parent.id).all()}
+    assert {"schedule", "homework"}.issubset(types)
