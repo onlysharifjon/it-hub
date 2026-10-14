@@ -560,7 +560,10 @@ def _preferences(db: Session, parent_id: int) -> models.ParentNotificationPrefer
 
 
 def _preferences_read(row: models.ParentNotificationPreference) -> schemas.NotificationPreferences:
-    return schemas.NotificationPreferences(**{key: getattr(row, key, True) for key in _PREFERENCE_FIELDS})
+    return schemas.NotificationPreferences(**{
+        key: True if getattr(row, key, None) is None else bool(getattr(row, key))
+        for key in _PREFERENCE_FIELDS
+    })
 
 
 @router.post("/push-devices", status_code=204, response_class=Response)

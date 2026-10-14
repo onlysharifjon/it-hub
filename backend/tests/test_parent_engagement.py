@@ -30,6 +30,9 @@ def test_push_token_ownership_preferences_and_account_deletion(client, db):
     h2 = _h(client, second.phone)
     token = "a" * 64
     payload = {"token": token, "platform": "ios", "environment": "sandbox"}
+    defaults = client.get("/parent/notification-preferences", headers=h1)
+    assert defaults.status_code == 200
+    assert all(defaults.json().values())
     assert client.post("/parent/push-devices", json=payload, headers=h1).status_code == 204
     assert db.query(ParentPushDevice).one().parent_id == first.id
     assert client.delete(f"/parent/push-devices/{token}", headers=h2).status_code == 204
