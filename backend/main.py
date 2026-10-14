@@ -1622,7 +1622,7 @@ def update_group(group_id: int, payload: schemas.GroupUpdate, db: Session = Depe
     for k, v in changes.items():
         setattr(g, k, v)
     if os.getenv("PARENT_EVENT_NOTIFICATIONS_ENABLED", "false").lower() == "true" and any(
-        k in changes for k in ("schedule", "lesson_time")
+        k in changes and old[k] != str(changes[k]) for k in ("schedule", "lesson_time")
     ):
         for (sid,) in db.query(models.GroupStudent.student_id).filter(
             models.GroupStudent.group_id == g.id,
@@ -8520,23 +8520,6 @@ def create_parent_account(
     phone = payload.phone.strip()
     username = (payload.username or phone).strip()
     existing = db.query(models.Parent).filter(models.Parent.phone == phone).first()
-    if existing is not None and existing.deleted_at is not None:
-        # Ilovadan o'chirilgan akkaunt — qayta yaratish o'rniga tiklanadi (ma'lumot saqlangan)
-        raw_password = payload.password or _gen_password()
-        existing.full_name = payload.full_name.strip()
-        if payload.display_name is not None:
-            existing.display_name = payload.display_name
-        existing.hashed_password = hash_password(raw_password)
-        existing.is_active, existing.deleted_at = True, None
-        linked = {c.student_id for c in existing.children}
-        for sid in dict.fromkeys(payload.student_ids):
-            if sid not in linked and db.query(models.Student).filter(models.Student.id == sid).first():
-                db.add(models.ParentChild(parent_id=existing.id, student_id=sid, created_at=datetime.utcnow()))
-        db.commit()
-        db.refresh(existing)
-        out = schemas.ParentAccountCreated(**_parent_account_read(existing).dict())
-        out.generated_password = raw_password
-        return out
     if existing is not None:
         raise HTTPException(409, "Bu telefon bilan ota-ona allaqachon mavjud")
     if db.query(models.Parent).filter(models.Parent.username == username).first():
@@ -8566,7 +8549,7 @@ def list_parent_accounts(
     actor: models.User = Depends(require_crm_access),
     db: Session = Depends(get_db),
 ):
-    q = db.query(models.Parent).options(
+    q = db.query(models.Parent).filter(models.Parent.deleted_at.is_(None)).options(
         joinedload(models.Parent.children).joinedload(models.ParentChild.student),
     )
     if search:
@@ -8585,7 +8568,7 @@ def get_parent_account(
     db: Session = Depends(get_db),
 ):
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
-    if not p:
+    if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     return _parent_account_read(p)
 
@@ -8598,7 +8581,7 @@ def update_parent_account(
     db: Session = Depends(get_db),
 ):
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
-    if not p:
+    if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     data = payload.dict(exclude_unset=True)
     if "phone" in data and data["phone"] != p.phone:
@@ -8606,8 +8589,6 @@ def update_parent_account(
             raise HTTPException(409, "Bu telefon band")
     for k, v in data.items():
         setattr(p, k, v)
-    if data.get("is_active") is True:
-        p.deleted_at = None              # ilovadan o'chirilgan akkauntni tiklash
     db.commit()
     db.refresh(p)
     return _parent_account_read(p)
@@ -8621,7 +8602,7 @@ def reset_parent_password(
     db: Session = Depends(get_db),
 ):
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
-    if not p:
+    if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     raw = payload.password or _gen_password()
     p.hashed_password = hash_password(raw)
@@ -8642,7 +8623,7 @@ def link_parent_child(
     db: Session = Depends(get_db),
 ):
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
-    if not p:
+    if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
     if not db.query(models.Student).filter(models.Student.id == payload.student_id).first():
         raise HTTPException(404, "Talaba topilmadi")

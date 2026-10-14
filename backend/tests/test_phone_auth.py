@@ -430,12 +430,17 @@ def test_review_account_only_fictional_child_and_delete_blocks_login(client, db,
 
     assert client.delete("/parent/account", headers=h).status_code == 204
     db.expire_all()
-    assert db.query(Parent).filter_by(id=p.id, is_active=False).count() == 1           # o'chib ketmaydi
+    erased = db.query(Parent).filter_by(id=p.id, is_active=False).one()
+    assert erased.phone != REVIEW and erased.username != REVIEW
+    assert db.query(ParentChild).filter_by(parent_id=p.id).count() == 0
     assert db.query(ParentRefreshToken).filter_by(parent_id=p.id).count() == 0
     assert client.get("/parent/profile", headers=h).status_code == 401
+    stale_otp = _verify(client, vid, code="4321", phone=REVIEW)
+    assert stale_otp.status_code == 404 and stale_otp.json()["code"] == "verification_not_found"
     r = client.post("/parent/auth/login", json={"username": REVIEW, "password": "4321"})
-    assert r.status_code == 401 and r.json()["code"] == "account_not_found"
-    db.query(PhoneVerification).update({"last_sent_at": datetime.utcnow() - timedelta(seconds=61)}); db.commit()
+    assert r.status_code == 200, r.text
+    new_parent = db.query(Parent).filter_by(phone=REVIEW).one()
+    assert new_parent.id != p.id
     vid = _request(client, REVIEW).json()["verificationId"]
     r = _verify(client, vid, code="4321", phone=REVIEW)
-    assert r.status_code == 401 and r.json()["code"] == "account_not_found"
+    assert r.status_code == 200 and db.query(Parent).filter_by(phone=REVIEW).one().id == new_parent.id

@@ -11,6 +11,7 @@ import logging
 import os
 import hashlib
 import re
+import secrets
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -26,6 +27,7 @@ from . import apns, engagement, release_config, schemas, service
 from .deps import get_current_parent, get_owned_child
 from .errors import api_error, request_id
 from .payments import config as pay_config
+from .payments import core as payment_core
 from .phone_auth.service import account_deleted_error, review_password_login
 from .payments.checkout import create_checkout
 
@@ -272,12 +274,11 @@ def delete_parent_account(
     parent: models.Parent = Depends(get_current_parent),
     db: Session = Depends(get_db),
 ):
-    """Ilovadan akkauntni o'chirish: kirish yopiladi, ma'lumot o'chirilmaydi.
+    """Erase the app account's personal data while retaining accounting records.
 
-    Barcha refresh tokenlar bekor qilinadi, akkaunt `is_active=false` + `deleted_at`. Keyin shu raqam bilan
-    kirishda (parol yoki OTP) "Bunday raqam bizda mavjud emas" xabari chiqadi. Ota-ona ma'lumoti, farzand
-    bog'lanishi, invoyslar va o'quvchining akademik yozuvlari saqlanadi — administrator CRM'da shu raqam bilan
-    akkaunt yaratsa, o'sha akkaunt tiklanadi. 204 faqat commit'dan keyin.
+    Invoices reference a non-identifying tombstone parent row, so provider callbacks
+    and financial history remain reconcilable. A later account with the same phone
+    is a new account and cannot recover this one's messages or child links.
     """
     # Bir vaqtdagi login/refresh bilan poyga bo'lmasin
     target = (
@@ -290,13 +291,63 @@ def delete_parent_account(
         raise api_error("unauthorized", "Token yaroqsiz", 401)
 
     parent_id = target.id
+    old_phone = target.phone
+    canonical_phone = service.phone_e164(old_phone)
+    phone_values = {old_phone, canonical_phone}
     try:
-        db.query(models.ParentRefreshToken).filter(
-            models.ParentRefreshToken.parent_id == parent_id
+        # Provider callbacks lock transaction before invoice. Match that order
+        # to avoid deadlocks with an in-flight PerformTransaction.
+        open_invoice_ids = [id_ for (id_,) in db.query(models.ParentInvoice.id).filter(
+            models.ParentInvoice.parent_id == parent_id,
+            models.ParentInvoice.status == "pending",
+        ).all()]
+        if open_invoice_ids:
+            db.query(models.PaymentTransaction).filter(
+                models.PaymentTransaction.invoice_id.in_(open_invoice_ids),
+                models.PaymentTransaction.state == "created",
+            ).with_for_update().all()
+        open_invoices = db.query(models.ParentInvoice).filter(
+            models.ParentInvoice.id.in_(open_invoice_ids),
+            models.ParentInvoice.status == "pending",
+        ).order_by(models.ParentInvoice.id).with_for_update().all()
+        for invoice in open_invoices:
+            # Include a transaction created just before the invoice lock.
+            for txn in db.query(models.PaymentTransaction).filter(
+                models.PaymentTransaction.invoice_id == invoice.id,
+                models.PaymentTransaction.state == "created",
+            ).with_for_update().all():
+                payment_core.cancel(db, invoice, txn, reason=None)
+            invoice.status = "cancelled"
+            invoice.cancelled_at = datetime.utcnow()
+        question_ids = db.query(models.ParentTeacherQuestion.id).filter(
+            models.ParentTeacherQuestion.parent_id == parent_id
+        ).subquery()
+        db.query(models.ParentTeacherReply).filter(
+            models.ParentTeacherReply.question_id.in_(question_ids)
         ).delete(synchronize_session=False)
-        db.query(models.ParentPushDevice).filter(
-            models.ParentPushDevice.parent_id == parent_id
+        for model in (
+            models.ParentTeacherQuestion,
+            models.ParentAbsenceExplanation,
+            models.ParentNotification,
+            models.ParentNotificationPreference,
+            models.ParentPushDevice,
+            models.ParentChild,
+            models.ParentRefreshToken,
+        ):
+            db.query(model).filter(model.parent_id == parent_id).delete(synchronize_session=False)
+        db.query(models.PhoneVerification).filter(
+            (models.PhoneVerification.parent_id == parent_id) |
+            (models.PhoneVerification.phone.in_(phone_values))
         ).delete(synchronize_session=False)
+        # Letters only: normalize_phone must never mistake a tombstone for a real number.
+        tombstone = "deleted-" + "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(16))
+        target.full_name = "O'chirilgan akkaunt"
+        target.display_name = None
+        target.phone = tombstone
+        target.username = tombstone
+        target.hashed_password = secrets.token_hex(32)
+        target.avatar = None
+        target.phone_verified_at = None
         target.is_active = False
         target.deleted_at = datetime.utcnow()
         db.commit()
@@ -305,8 +356,8 @@ def delete_parent_account(
         log.exception("parent account deletion failed parent_id=%s request_id=%s",
                       parent_id, request_id(request))
         raise
-    # Audit: shaxsiy ma'lumotsiz (faqat id) — konteyner logi; DB'da parents.deleted_at.
-    log.warning("AUDIT parent_account_deleted parent_id=%s mode=deactivated request_id=%s",
+    # Audit contains only the tombstone ID; never log the former phone/name.
+    log.warning("AUDIT parent_account_deleted parent_id=%s mode=erased request_id=%s",
                 parent_id, request_id(request))
     return Response(status_code=204)
 

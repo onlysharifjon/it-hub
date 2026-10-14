@@ -7,8 +7,9 @@ from io import BytesIO
 
 from backend import tz
 from backend.models import (
-    Attendance, Grade, Homework, HomeworkSubmission, ParentInvoice, ParentNotification,
-    ParentPushDevice, Payment, PaymentTransaction, UserRole,
+    Attendance, Grade, Homework, HomeworkSubmission, ParentAbsenceExplanation,
+    ParentInvoice, ParentNotification, ParentNotificationPreference, ParentPushDevice,
+    ParentTeacherQuestion, ParentTeacherReply, Payment, PaymentTransaction, UserRole,
 )
 from backend.parent.apns import activation_cutoff, dispatch_batch
 from backend.parent.digests import run_daily
@@ -84,7 +85,7 @@ def test_absence_explanation_review_retry_and_child_ownership(client, db):
 
 def test_two_guardians_do_not_read_each_others_private_requests(client, db):
     child = _mk_student(db)
-    _mk_parent(db, [child])
+    first_parent = _mk_parent(db, [child])
     first_h = _h(client)
     _mk_parent(db, [child], phone="+998909990009")
     second_h = _h(client, "+998909990009")
@@ -106,10 +107,28 @@ def test_two_guardians_do_not_read_each_others_private_requests(client, db):
     assert second.status_code == 201 and second.json()["id"] != first.json()["id"]
     assert len(client.get(absence_path, headers=first_h).json()) == 1
     question_path = f"/parent/children/{child.id}/teacher-questions"
-    assert client.post(question_path, headers=first_h, json={
+    question = client.post(question_path, headers=first_h, json={
         "subject": "Private", "body": "My own question only",
-    }).status_code == 201
+    })
+    assert question.status_code == 201
     assert client.get(question_path, headers=second_h).json() == []
+    teacher_token = client.post("/auth/login", json={
+        "username": teacher.username, "password": "teacherpass",
+    }).json()["access_token"]
+    assert client.post(f"/parent-engagement/teacher-questions/{question.json()['id']}/replies",
+                       headers={"Authorization": f"Bearer {teacher_token}"},
+                       json={"body": "Private answer"}).status_code == 201
+    assert client.get("/parent/notification-preferences", headers=first_h).status_code == 200
+    assert client.post("/parent/push-devices", headers=first_h, json={
+        "token": "b" * 64, "platform": "ios", "environment": "sandbox",
+    }).status_code == 204
+    assert client.delete("/parent/account", headers=first_h).status_code == 204
+    assert db.query(ParentAbsenceExplanation).filter_by(parent_id=first_parent.id).count() == 0
+    assert db.query(ParentTeacherQuestion).filter_by(parent_id=first_parent.id).count() == 0
+    assert db.query(ParentTeacherReply).filter_by(question_id=question.json()["id"]).count() == 0
+    assert db.query(ParentNotificationPreference).filter_by(parent_id=first_parent.id).count() == 0
+    assert db.query(ParentPushDevice).filter_by(parent_id=first_parent.id).count() == 0
+    assert len(client.get(absence_path, headers=second_h).json()) == 1
 
 
 def test_weekly_summary_uses_real_records_and_staff_recommendation(client, db):
@@ -390,7 +409,10 @@ def test_schedule_and_homework_events_are_opt_in(client, db, monkeypatch):
     monkeypatch.setenv("PARENT_EVENT_NOTIFICATIONS_ENABLED", "true")
     assert client.put(f"/groups/{group.id}", headers=staff_h,
                       json={"lesson_time": "16:00"}).status_code == 200
+    assert client.put(f"/groups/{group.id}", headers=staff_h,
+                      json={"lesson_time": "16:00"}).status_code == 200
     assert client.post(f"/groups/{group.id}/homeworks", headers=staff_h,
                        json={"text": "Uchta misol ishlang", "lesson_date": str(tz.today())}).status_code == 201
     types = {row.type for row in db.query(ParentNotification).filter_by(parent_id=parent.id).all()}
     assert {"schedule", "homework"}.issubset(types)
+    assert db.query(ParentNotification).filter_by(parent_id=parent.id, type="schedule").count() == 1
