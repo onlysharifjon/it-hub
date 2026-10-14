@@ -31,6 +31,7 @@ const FeedbackInbox = lazy(() => import('./components/FeedbackInbox'))
 const Notifications = lazy(() => import('./components/Notifications'))
 const ChatBot = lazy(() => import('./components/ChatBot'))
 const Parents = lazy(() => import('./components/Parents'))
+const ParentEngagement = lazy(() => import('./components/ParentEngagement'))
 const MinarAccounts = lazy(() => import('./components/MinarAccounts'))
 import PublicIntake from './components/PublicIntake'
 const Employees = lazy(() => import('./components/Employees'))
@@ -89,6 +90,7 @@ const PAGE_ACCESS = {
   notifications:    ['admin', 'hunter', 'sales', 'call_center'],
   chatbot:          ['admin', 'hunter'],
   parents:          ['admin', 'hunter'],
+  parent_engagement: ['admin', 'support_teacher', 'teacher', 'hunter'],
   minar_accounts:   ['admin', 'support_teacher'],
   computers:        ['admin', 'hunter'],
   feedbacks:        ['admin', 'call_center'],
@@ -380,6 +382,7 @@ function App() {
           {activePage === 'notifications' && <Notifications />}
           {activePage === 'chatbot' && <ChatBot />}
           {activePage === 'parents' && <Parents currentUser={currentUser} />}
+          {activePage === 'parent_engagement' && <ParentEngagement />}
           {activePage === 'minar_accounts' && <MinarAccounts currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
           {activePage === 'employees' && <Employees currentUser={currentUser} />}

@@ -863,6 +863,11 @@ def test_parent_app_capabilities_fail_closed_until_payments_ready(client, db, mo
         "payment_providers": [],
         "account_deletion_enabled": False,
         "privacy_policy_url": "https://crm.minaracademy.uz/api/parent/privacy.html",
+        "push_enabled": False,
+        "absence_explanations_enabled": False,
+        "weekly_summary_enabled": False,
+        "teacher_questions_enabled": False,
+        "receipts_enabled": False,
     }
 
 

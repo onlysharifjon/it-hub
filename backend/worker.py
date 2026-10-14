@@ -17,12 +17,19 @@ log = logging.getLogger("ithub.worker")
 def main() -> None:
     from . import main as app_main
     from .minar import weekly
+    from .parent import apns, digests
 
     threads = [
         app_main.start_investor_scheduler(force=True),
         app_main.start_reminder_scheduler(force=True),
         weekly.start_scheduler(),       # Space: haftalik turnir + ota-onaga hisobot
     ]
+    push_thread = apns.start_scheduler()
+    if push_thread is not None:
+        threads.append(push_thread)
+    digest_thread = digests.start_scheduler(app_main._students_payment_map)
+    if digest_thread is not None:
+        threads.append(digest_thread)
     log.info("Worker ishga tushdi: %s", ", ".join(t.name for t in threads))
     while True:
         time.sleep(30)

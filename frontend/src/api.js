@@ -731,6 +731,22 @@ export async function unlinkParentChild(id, studentId) {
 export async function broadcastToParents(text) {
   return request('/parents/broadcast', { method: 'POST', body: JSON.stringify({ text }) })
 }
+export async function fetchParentAbsences() { return request('/parent-engagement/absence-explanations') }
+export async function reviewParentAbsence(id, payload) {
+  return request(`/parent-engagement/absence-explanations/${id}`, { method: 'PATCH', body: JSON.stringify(payload) })
+}
+export async function fetchParentQuestions() { return request('/parent-engagement/teacher-questions') }
+export async function replyParentQuestion(id, body) {
+  return request(`/parent-engagement/teacher-questions/${id}/replies`, { method: 'POST', body: JSON.stringify({ body }) })
+}
+export async function fetchParentEngagementStudents() { return request('/parent-engagement/students') }
+export async function fetchStudentWeeklySummary(studentId, weekStart) {
+  return request(`/parent-engagement/students/${studentId}/weekly-summary?week_start=${encodeURIComponent(weekStart)}`)
+}
+export async function saveStudentWeeklyRecommendation(studentId, weekStart, text) {
+  return request(`/parent-engagement/students/${studentId}/weekly-recommendations/${encodeURIComponent(weekStart)}`,
+    { method: 'PUT', body: JSON.stringify({ text }) })
+}
 export async function broadcastToStaff(text) {
   return request('/users/broadcast', { method: 'POST', body: JSON.stringify({ text }) })
 }

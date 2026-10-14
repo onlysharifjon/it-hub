@@ -9,7 +9,9 @@ import base64
 import binascii
 import logging
 import os
-from datetime import datetime, timedelta
+import hashlib
+import re
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
@@ -20,7 +22,7 @@ from sqlalchemy.orm import Session
 from .. import models, security, tz, uploads_sign
 from ..database import get_db
 from ..phone_utils import normalize_phone
-from . import release_config, schemas, service
+from . import apns, engagement, release_config, schemas, service
 from .deps import get_current_parent, get_owned_child
 from .errors import api_error, request_id
 from .payments import config as pay_config
@@ -35,6 +37,10 @@ AVATAR_MAX_BYTES = 2 * 1024 * 1024
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/app/uploads")
 # Ilovadagi "Akkauntni o'chirish" tugmasi uchun flag. Endpoint flag'dan qat'i nazar ishlaydi.
 ACCOUNT_DELETION_ENABLED = os.getenv("PARENT_ACCOUNT_DELETION_ENABLED", "false").strip().lower() == "true"
+
+
+def _feature_enabled(env_name: str) -> bool:
+    return os.getenv(env_name, "false").strip().lower() == "true"
 log = logging.getLogger("ithub.parent")
 
 
@@ -193,6 +199,11 @@ def parent_app_config(parent: models.Parent = Depends(get_current_parent)):
         payment_providers=providers,
         account_deletion_enabled=ACCOUNT_DELETION_ENABLED,
         privacy_policy_url="https://crm.minaracademy.uz/api/parent/privacy.html",
+        push_enabled=apns.configured(),
+        absence_explanations_enabled=_feature_enabled("PARENT_ABSENCE_EXPLANATIONS_ENABLED"),
+        weekly_summary_enabled=_feature_enabled("PARENT_WEEKLY_SUMMARY_ENABLED"),
+        teacher_questions_enabled=_feature_enabled("PARENT_TEACHER_QUESTIONS_ENABLED"),
+        receipts_enabled=_feature_enabled("PARENT_RECEIPTS_ENABLED"),
     )
 
 
@@ -283,6 +294,9 @@ def delete_parent_account(
         db.query(models.ParentRefreshToken).filter(
             models.ParentRefreshToken.parent_id == parent_id
         ).delete(synchronize_session=False)
+        db.query(models.ParentPushDevice).filter(
+            models.ParentPushDevice.parent_id == parent_id
+        ).delete(synchronize_session=False)
         target.is_active = False
         target.deleted_at = datetime.utcnow()
         db.commit()
@@ -322,12 +336,13 @@ def _period(month: int, year: int) -> tuple:
 @router.get("/children/{child_id}/payment-summary", response_model=schemas.ChildPaymentSummary)
 def payment_summary(
     child: models.Student = Depends(get_owned_child),
+    parent: models.Parent = Depends(get_current_parent),
     month: int = Query(..., ge=1, le=12),
     year: int = Query(...),
     db: Session = Depends(get_db),
 ):
     month, year = _period(month, year)
-    return service.build_payment_summary(db, child, month, year)
+    return service.build_payment_summary(db, child, month, year, parent.id)
 
 
 @router.post("/children/{child_id}/pay", response_model=schemas.CheckoutResponse)
@@ -350,6 +365,129 @@ def attendance(
 ):
     month, year = _period(month, year)
     return service.build_attendance(db, child, month, year)
+
+
+@router.get("/children/{child_id}/absence-explanations", response_model=List[schemas.AbsenceExplanationRead])
+def absence_explanations(child: models.Student = Depends(get_owned_child),
+                         parent: models.Parent = Depends(get_current_parent),
+                         db: Session = Depends(get_db)):
+    rows = db.query(models.ParentAbsenceExplanation).filter(
+        models.ParentAbsenceExplanation.student_id == child.id,
+        models.ParentAbsenceExplanation.parent_id == parent.id,
+    ).order_by(models.ParentAbsenceExplanation.created_at.desc(),
+               models.ParentAbsenceExplanation.id.desc()).all()
+    return [engagement.absence_read(row) for row in rows]
+
+
+@router.post("/children/{child_id}/absence-explanations", response_model=schemas.AbsenceExplanationRead,
+             status_code=201)
+def create_absence_explanation(payload: schemas.AbsenceExplanationCreate,
+                               request: Request,
+                               child: models.Student = Depends(get_owned_child),
+                               parent: models.Parent = Depends(get_current_parent),
+                               db: Session = Depends(get_db)):
+    if not security.rate_limit_ok(f"parent-absence:{parent.id}:{_client_ip(request)}", limit=10, window=3600):
+        raise _rate_limited()
+    if payload.lesson_date > tz.today():
+        raise api_error("validation_error", "Kelajakdagi dars uchun izoh yuborib bo'lmaydi", 422)
+    attendance = db.query(models.Attendance).filter(
+        models.Attendance.student_id == child.id,
+        models.Attendance.lesson_date == payload.lesson_date,
+        models.Attendance.is_present.is_(False),
+    ).all()
+    if payload.group_name:
+        attendance = [row for row in attendance if row.group and row.group.name == payload.group_name]
+    if not attendance:
+        raise api_error("not_found", "Qoldirilgan dars topilmadi", 404)
+    if len(attendance) != 1:
+        raise api_error("ambiguous_lesson", "Guruhni aniq tanlang", 422)
+    row = models.ParentAbsenceExplanation(
+        parent_id=parent.id, student_id=child.id, attendance_id=attendance[0].id,
+        reason=payload.reason, note=payload.note.strip(), status="pending", created_at=datetime.utcnow(),
+    )
+    existing = db.query(models.ParentAbsenceExplanation).filter(
+        models.ParentAbsenceExplanation.attendance_id == attendance[0].id,
+        models.ParentAbsenceExplanation.parent_id == parent.id,
+    ).first()
+    if existing:
+        if existing.status != "rejected" or existing.parent_id != parent.id:
+            raise api_error("already_submitted", "Bu dars uchun izoh allaqachon yuborilgan", 409)
+        existing.reason, existing.note = payload.reason, payload.note.strip()
+        existing.status, existing.staff_note = "pending", None
+        existing.reviewed_by_id, existing.reviewed_at = None, None
+        existing.created_at = datetime.utcnow()
+        db.commit()
+        return engagement.absence_read(existing)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return engagement.absence_read(row)
+
+
+@router.get("/children/{child_id}/weekly-summary", response_model=schemas.WeeklySummaryRead)
+def weekly_summary(child: models.Student = Depends(get_owned_child),
+                   week_start: Optional[date] = None, db: Session = Depends(get_db)):
+    if week_start and (week_start.weekday() != 0 or week_start > tz.today() or
+                       week_start < tz.today() - timedelta(days=365)):
+        raise api_error("validation_error", "Hafta dushanbadan boshlansin (so'nggi 1 yil)", 422)
+    return engagement.weekly_summary(db, child, week_start)
+
+
+@router.get("/children/{child_id}/teacher-questions", response_model=List[schemas.TeacherQuestionRead])
+def teacher_questions(child: models.Student = Depends(get_owned_child),
+                      parent: models.Parent = Depends(get_current_parent),
+                      db: Session = Depends(get_db)):
+    rows = db.query(models.ParentTeacherQuestion).filter(
+        models.ParentTeacherQuestion.student_id == child.id,
+        models.ParentTeacherQuestion.parent_id == parent.id,
+    ).order_by(models.ParentTeacherQuestion.created_at.desc(),
+               models.ParentTeacherQuestion.id.desc()).all()
+    return [engagement.question_read(row) for row in rows]
+
+
+@router.post("/children/{child_id}/teacher-questions", response_model=schemas.TeacherQuestionRead,
+             status_code=201)
+def create_teacher_question(payload: schemas.TeacherQuestionCreate, request: Request,
+                            child: models.Student = Depends(get_owned_child),
+                            parent: models.Parent = Depends(get_current_parent),
+                            db: Session = Depends(get_db)):
+    if not security.rate_limit_ok(f"parent-question:{parent.id}:{_client_ip(request)}", limit=8, window=3600):
+        raise _rate_limited()
+    memberships = service.active_memberships(child)
+    if not memberships or not memberships[0].group.teacher_id:
+        raise api_error("teacher_not_assigned", "Bolaga o'qituvchi biriktirilmagan", 404)
+    row = models.ParentTeacherQuestion(
+        parent_id=parent.id, student_id=child.id, group_id=memberships[0].group_id,
+        subject=payload.subject.strip(), body=payload.body.strip(),
+        status="open", created_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return engagement.question_read(row)
+
+
+@router.get("/children/{child_id}/payments/{payment_id}/receipt")
+def payment_receipt(payment_id: int, child: models.Student = Depends(get_owned_child),
+                    parent: models.Parent = Depends(get_current_parent),
+                    db: Session = Depends(get_db)):
+    payment = db.query(models.Payment).filter(
+        models.Payment.id == payment_id, models.Payment.student_id == child.id,
+        models.Payment.parent_invoice_id.isnot(None),
+    ).first()
+    inv = db.query(models.ParentInvoice).filter(
+        models.ParentInvoice.id == payment.parent_invoice_id,
+        models.ParentInvoice.parent_id == parent.id,
+        models.ParentInvoice.student_id == child.id,
+        models.ParentInvoice.status == "paid",
+    ).first() if payment else None
+    if not inv or not any(t.state == "performed" for t in inv.transactions):
+        raise api_error("not_found", "Tasdiqlangan to'lov cheki topilmadi", 404)
+    pdf = engagement.verified_receipt_pdf(inv)
+    return Response(content=pdf, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="minar-receipt-{inv.id}.pdf"',
+        "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+    })
 
 
 @router.get("/children/{child_id}/schedule", response_model=List[schemas.ScheduleSlotRead])
@@ -411,6 +549,74 @@ def certificate_file(certificate_id: int, exp: Optional[str] = None, sig: Option
 
 
 # ── Bildirishnomalar ─────────────────────────────────────────────────────────
+
+_PREFERENCE_FIELDS = tuple(schemas.NotificationPreferences.__fields__)
+
+
+def _preferences(db: Session, parent_id: int) -> models.ParentNotificationPreference:
+    return (db.query(models.ParentNotificationPreference)
+            .filter(models.ParentNotificationPreference.parent_id == parent_id).first()
+            or models.ParentNotificationPreference(parent_id=parent_id))
+
+
+def _preferences_read(row: models.ParentNotificationPreference) -> schemas.NotificationPreferences:
+    return schemas.NotificationPreferences(**{key: getattr(row, key, True) for key in _PREFERENCE_FIELDS})
+
+
+@router.post("/push-devices", status_code=204, response_class=Response)
+def register_push_device(payload: schemas.PushDeviceCreate,
+                         parent: models.Parent = Depends(get_current_parent),
+                         db: Session = Depends(get_db)):
+    token = payload.token.lower()
+    digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+    row = db.query(models.ParentPushDevice).filter(models.ParentPushDevice.token_hash == digest).first()
+    now = datetime.utcnow()
+    if row:
+        row.parent_id = parent.id
+        row.environment = payload.environment
+        row.updated_at = now
+    else:
+        db.add(models.ParentPushDevice(
+            parent_id=parent.id, token_hash=digest, token=token,
+            platform="ios", environment=payload.environment,
+            created_at=now, updated_at=now,
+        ))
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/push-devices/{token}", status_code=204, response_class=Response)
+def unregister_push_device(token: str, parent: models.Parent = Depends(get_current_parent),
+                           db: Session = Depends(get_db)):
+    if not re.fullmatch(r"[a-fA-F0-9]{64}", token):
+        raise api_error("validation_error", "Push token noto'g'ri", 422)
+    digest = hashlib.sha256(token.lower().encode("ascii")).hexdigest()
+    db.query(models.ParentPushDevice).filter(
+        models.ParentPushDevice.token_hash == digest,
+        models.ParentPushDevice.parent_id == parent.id,
+    ).delete(synchronize_session=False)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.get("/notification-preferences", response_model=schemas.NotificationPreferences)
+def notification_preferences(parent: models.Parent = Depends(get_current_parent),
+                             db: Session = Depends(get_db)):
+    return _preferences_read(_preferences(db, parent.id))
+
+
+@router.patch("/notification-preferences", response_model=schemas.NotificationPreferences)
+def update_notification_preferences(payload: schemas.NotificationPreferencesUpdate,
+                                    parent: models.Parent = Depends(get_current_parent),
+                                    db: Session = Depends(get_db)):
+    row = _preferences(db, parent.id)
+    for key, value in payload.dict(exclude_unset=True).items():
+        if value is None:
+            raise api_error("validation_error", "null qiymat qabul qilinmaydi", 422)
+        setattr(row, key, value)
+    db.add(row)
+    db.commit()
+    return _preferences_read(row)
 
 @router.get("/notifications", response_model=List[schemas.ParentNotificationRead])
 def notifications(parent: models.Parent = Depends(get_current_parent), db: Session = Depends(get_db)):
