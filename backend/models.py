@@ -1042,6 +1042,7 @@ class CoinTransaction(Base):
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)
     amount = Column(Integer, nullable=False)                # musbat butun son
     reason = Column(String(300), nullable=True)
+    reversal_of_id = Column(Integer, ForeignKey("coin_transactions.id"), nullable=True, unique=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
     student = relationship("Student", foreign_keys=[student_id])

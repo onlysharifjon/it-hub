@@ -22,12 +22,12 @@ from ..models import UserRole
 from . import auth as student_auth
 from . import catalog as C
 from . import notify
-from .models import MinarAccount, MinarPurchase
+from .models import MinarAccount, MinarPurchase, MinarStock, MinarLedger
 
 router = APIRouter()
 _bearer = HTTPBearer(auto_error=False)
 _PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"      # 0/o, 1/l/i kabi adashadigan belgilarsiz
-ORDER_STATUSES = ("pending", "ready", "collected")
+ORDER_STATUSES = ("pending", "ready", "collected", "cancelled")
 
 
 def staff_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer),
@@ -66,12 +66,13 @@ def _active_group(db: Session, student_id: int) -> Optional[models.Group]:
 
 def _create(db: Session, student: models.Student, user: models.User, course: Optional[str],
             password: Optional[str]) -> dict:
+    explicit_course = course
     group = _active_group(db, student.id)
     course = course or C.default_course_for_stage(group.stage if group else None)
     plain = password or _new_password()
     acc = MinarAccount(
         student_id=student.id, login_id=_login_id(student.id), password_hash=security.hash_password(plain),
-        course=course, created_by_id=user.id, created_at=datetime.utcnow(), password_changed_at=datetime.utcnow(),
+        course=course, course_override=explicit_course, created_by_id=user.id, created_at=datetime.utcnow(), password_changed_at=datetime.utcnow(),
     )
     db.add(acc)
     db.flush()
@@ -92,6 +93,7 @@ class BulkCreate(BaseModel):
 
 
 class AccountPatch(BaseModel):
+    age_band: Optional[str] = None
     course: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -125,7 +127,7 @@ def list_accounts(group_id: Optional[int] = Query(None), q: Optional[str] = Quer
         g = _active_group(db, st.id)
         out.append({
             "student_id": st.id, "full_name": st.full_name, "group": g.name if g else None,
-            "login_id": acc.login_id, "course": acc.course, "is_active": acc.is_active,
+            "login_id": acc.login_id, "course": acc.course, "course_override":acc.course_override, "age_band":acc.age_band, "is_active": acc.is_active,
             # Akkaunt yoqilgan, lekin talaba arxivda/nofaol bo'lsa o'quvchi kira olmaydi ("Akkaunt faol emas")
             "student_inactive": bool(st.is_archived or not st.is_active), "is_test": acc.is_test,
             "can_login": student_auth.account_usable(acc, st),
@@ -233,8 +235,18 @@ def patch_account(student_id: int, payload: AccountPatch, db: Session = Depends(
     _check_course(payload.course)
     acc = _account_by_student(db, student_id)
     changes = {}
-    if payload.course is not None:
-        acc.course = changes["course"] = payload.course
+    if "course" in payload.__fields_set__:
+        acc.course_override=payload.course
+        if payload.course:
+            acc.course=payload.course
+        else:
+            group=_active_group(db,student_id)
+            acc.course=C.default_course_for_stage(group.stage if group else None)
+        changes["course"]=acc.course
+    if "age_band" in payload.__fields_set__:
+        if payload.age_band not in (None,"7-9","10-12","13-16","17+"):
+            raise HTTPException(400,detail="Yosh toifasi noto‘g‘ri")
+        acc.age_band=changes["age_band"]=payload.age_band
     if payload.is_active is not None:
         acc.is_active = changes["is_active"] = payload.is_active
         if not payload.is_active:
@@ -283,7 +295,20 @@ def update_order(order_id: str, payload: OrderPatch, db: Session = Depends(get_d
     p, acc, st = row
     if p.status not in ORDER_STATUSES:
         raise HTTPException(status_code=400, detail="Bu buyurtma (Hero buyumi) holati o'zgartirilmaydi")
+    from ..wallet import lock
+    lock(db, acc.student_id)
+    db.refresh(p, with_for_update=True)
     old = p.status
+    transitions = {"pending": {"ready", "cancelled"}, "ready": {"collected", "cancelled"}, "collected": set(), "cancelled": set()}
+    if payload.status == old:
+        return _order_dict(p, acc, st)
+    if payload.status not in transitions.get(old, set()):
+        raise HTTPException(409, detail="Bu holatga o‘tkazish mumkin emas")
+    if payload.status == "cancelled":
+        db.add(MinarLedger(account_id=acc.id,ref_key=f"refund:{p.id}",kind="refund",title=f"Qaytarildi: {p.name}",amount=p.price,local_date=tz.today().isoformat()))
+        stock=db.query(MinarStock).filter_by(product_id=p.product_id).with_for_update().first()
+        if stock:stock.quantity+=1
+        notify.to_account(db,acc.id,"order","Buyurtma bekor qilindi",f"{p.price} coin hamyoningizga qaytarildi.","shop")
     p.status, p.updated_at, p.updated_by_id = payload.status, datetime.utcnow(), user.id
     _audit(db, user, "order_status", acc.id, {"order_id": p.id, "from": old, "to": payload.status})
     if payload.status == "ready" and old != "ready":

@@ -32,6 +32,9 @@ const Notifications = lazy(() => import('./components/Notifications'))
 const ChatBot = lazy(() => import('./components/ChatBot'))
 const Parents = lazy(() => import('./components/Parents'))
 const ParentEngagement = lazy(() => import('./components/ParentEngagement'))
+const SpaceWorkflows = lazy(() => import('./components/SpaceWorkflows'))
+const SpaceOrders = lazy(() => import('./components/SpaceWorkflows').then(m=>({default:m.SpaceOrders})))
+const SpaceGuides = lazy(() => import('./components/SpaceGuides'))
 const MinarAccounts = lazy(() => import('./components/MinarAccounts'))
 import PublicIntake from './components/PublicIntake'
 const Employees = lazy(() => import('./components/Employees'))
@@ -62,6 +65,9 @@ function readHash() {
 // qolishning oldini olish — buning o'rniga rolga mos boshlang'ich sahifaga
 // qaytariladi.
 const PAGE_ACCESS = {
+  space_study: ['admin','support_teacher','teacher'],
+  space_orders: ['admin','support_teacher'],
+  space_guides: ['admin'],
   lessons:          ['admin', 'support_teacher', 'teacher'],
   students:         ['admin', 'support_teacher', 'hunter', 'sales', 'call_center'],
   student_detail:   ['admin', 'support_teacher', 'hunter', 'sales', 'call_center'],
@@ -383,6 +389,9 @@ function App() {
           {activePage === 'chatbot' && <ChatBot />}
           {activePage === 'parents' && <Parents currentUser={currentUser} />}
           {activePage === 'parent_engagement' && <ParentEngagement />}
+          {activePage === 'space_study' && <SpaceWorkflows currentUser={currentUser}/>}
+          {activePage === 'space_orders' && <SpaceOrders/>}
+          {activePage === 'space_guides' && <SpaceGuides/>}
           {activePage === 'minar_accounts' && <MinarAccounts currentUser={currentUser} />}
           {activePage === 'users' && <Users currentUser={currentUser} />}
           {activePage === 'employees' && <Employees currentUser={currentUser} />}

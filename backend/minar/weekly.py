@@ -25,7 +25,7 @@ from ..parent.notifications import notify_parents_of_student
 from . import catalog as C
 from . import achievements, notify
 from .models import (
-    MinarAccount, MinarJobRun, MinarLedger, MinarLesson, MinarPlaygroundSolve, MinarResult, MinarTournamentAward,
+    MinarProgress, MinarAccount, MinarJobRun, MinarLedger, MinarLesson, MinarPlaygroundSolve, MinarResult, MinarTournamentAward,
 )
 from .service import public_name
 
@@ -63,6 +63,7 @@ def points(db: Session, start: date, account_ids: list[int]) -> dict[int, int]:
     lo, hi = _bounds(start)
     ids = list(account_ids) or [0]
     queries = (
+        db.query(MinarProgress.account_id,func.count(MinarProgress.id)*30).filter(MinarProgress.account_id.in_(ids),MinarProgress.completed_at>=lo,MinarProgress.completed_at<hi).group_by(MinarProgress.account_id),
         db.query(MinarResult.account_id, func.sum(MinarResult.xp))
         .filter(MinarResult.account_id.in_(ids), MinarResult.created_at >= lo, MinarResult.created_at < hi)
         .group_by(MinarResult.account_id),
@@ -96,11 +97,11 @@ def _group_of(db: Session, student_ids: list[int]) -> dict[int, models.Group]:
 
 def _row(acc: MinarAccount, st: models.Student, pts: int, me: MinarAccount) -> dict:
     return {"id": acc.login_id, "name": public_name(st.full_name), "avatar": C.CHARACTER_EMOJI.get(acc.character, "🤖"),
-            "points": pts, "me": acc.id == me.id}
+            "points": pts, "me": acc.id == me.id, "accountOrder": acc.id}
 
 
 def _rank(rows: list[dict]) -> list[dict]:
-    rows.sort(key=lambda r: (-r["points"], r["name"]))
+    rows.sort(key=lambda r: (-r["points"], r.get("accountOrder", r["id"])))
     for i, r in enumerate(rows):
         r["place"] = i + 1
     return rows
@@ -130,6 +131,8 @@ def standings(db: Session, me: MinarAccount) -> dict:
     return {
         "week": {"start": start.isoformat(), "end": (start + timedelta(days=6)).isoformat(),
                  "endsAt": tz.isoformat(end_local - tz.OFFSET)},
+        "levelCohort": {"name":f"{C.level_of(me.xp)}-darajaga yaqin", "standings":_rank([_row(acc,st,pts.get(aid,0),me) for aid,(acc,st) in accounts.items() if abs(C.level_of(acc.xp)-C.level_of(me.xp))<=2])[:50]},
+        "ageCohort": {"name":f"{me.age_band} yosh", "standings":_rank([_row(acc,st,pts.get(aid,0),me) for aid,(acc,st) in accounts.items() if acc.age_band==me.age_band])[:50]} if me.age_band else None,
         "prizes": list(PRIZES), "minPoints": MIN_POINTS,
         "myPoints": pts.get(me.id, 0),
         "group": {"name": my_group.name, "standings": _rank(group_rows)} if my_group else None,
@@ -219,6 +222,11 @@ def _report_body(db: Session, acc: MinarAccount, st: models.Student, start: date
         f"🎮 O‘yinlar: {games} ta · 💻 Kod topshiriqlari: {code} ta",
         f"⭐ Haftalik ochko (XP): {pts} · 🪙 Yig‘ilgan coin: {int(coins)}",
     ]
+    from .models import MinarProgress
+    learned = db.query(func.count(MinarProgress.id)).filter(MinarProgress.account_id==acc.id,
+        MinarProgress.completed_at>=lo, MinarProgress.completed_at<hi).scalar() or 0
+    from ..wallet import balance
+    lines += [f"📚 Yangi o‘zlashtirilgan mavzular: {learned}", f"🪙 Hozirgi yagona balans: {balance(db, st.id)}"]
     return "\n".join(lines)
 
 

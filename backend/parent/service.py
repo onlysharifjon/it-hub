@@ -464,11 +464,8 @@ def build_events(db: Session) -> List[schemas.EventRead]:
 
 
 def build_coins(db: Session, student: models.Student) -> schemas.ChildCoins:
-    total = int(
-        db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0))
-        .filter(models.CoinTransaction.student_id == student.id)
-        .scalar()
-    )
+    from ..wallet import balance
+    total = balance(db, student.id)
     rows = (
         db.query(models.CoinTransaction)
         .filter(models.CoinTransaction.student_id == student.id)
@@ -481,4 +478,9 @@ def build_coins(db: Session, student: models.Student) -> schemas.ChildCoins:
                          teacher_name=_user_name(t.teacher) or None, date=t.created_at)
         for t in rows
     ]
-    return schemas.ChildCoins(total=total, recent=recent)
+    from ..minar.models import MinarAccount, MinarLedger
+    ledger = db.query(MinarLedger).join(MinarAccount, MinarAccount.id == MinarLedger.account_id).filter(
+        MinarAccount.student_id == student.id).order_by(MinarLedger.created_at.desc()).limit(30).all()
+    recent += [schemas.CoinItem(amount=l.amount, reason=l.title, teacher_name="SPACE", date=l.created_at) for l in ledger]
+    recent.sort(key=lambda r: r.date, reverse=True)
+    return schemas.ChildCoins(total=total, recent=recent[:30])

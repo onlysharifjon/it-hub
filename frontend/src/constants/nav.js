@@ -84,6 +84,8 @@ export const NAV_GROUPS = [
       { key: 'today_attendance', label: 'Bugungi darslar', icon: faCalendarCheck,   tone: TONE.attendance, roles: EXCEPT('audit', 'finance') },
       { key: 'academic',         label: 'Baholar va izohlar', icon: faGraduationCap, tone: TONE.academic,   roles: ['admin', 'support_teacher', 'teacher'] },
       { key: 'lessons',          label: 'Dars rejalari',  icon: faBook,             tone: TONE.academic,   roles: ['admin', 'support_teacher', 'teacher'], expandable: 'categories' },
+      { key:'space_study',label:'SPACE ta’lim',icon:faBookOpen,tone:TONE.academic,roles:['admin','support_teacher','teacher'] },
+      { key:'space_orders',label:'SPACE buyurtmalari',icon:faReceipt,tone:TONE.students,roles:['admin','support_teacher'] },
       { key: 'minar_accounts',   label: 'Minar Space',    icon: faRocket,           tone: TONE.students,   roles: ['admin', 'support_teacher'] },
     ],
   },
@@ -132,6 +134,7 @@ export const NAV_GROUPS = [
     label: 'Tizim',
     items: [
       { key: 'bot_admin', label: 'Bot boshqaruvi', icon: faRobot, tone: TONE.settings, roles: ['admin'] },
+      { key:'space_guides',label:'Yo‘riqnomalar',icon:faFileLines,tone:TONE.settings,roles:['admin'] },
       { key: 'parent_release', label: 'Mobil ilova', icon: faMobileScreen, tone: TONE.settings, roles: ['admin'] },
     ],
   },

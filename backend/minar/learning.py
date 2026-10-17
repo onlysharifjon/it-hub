@@ -12,6 +12,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_
 
 from .. import core_calc, models, schemas, tz
 from .errors import MinarError
@@ -40,7 +41,7 @@ def curriculum(db: Session, acc: MinarAccount) -> dict:
     groups = active_groups(db, acc.student_id)
     if not groups:
         return {"group": None, "lessons": [], "completed": 0, "total": 0}
-    g = groups[0]
+    g = next((g for g in groups if g.id == acc.active_group_id), groups[0])
     stage = g.stage or "foundation"
     total = g.course.total_lessons if g.course else schemas.STAGE_TOTAL_LESSONS.get(stage, 24)
     completed = core_calc.group_completed_lessons(db, [g.id]).get(g.id, 0)
@@ -77,25 +78,35 @@ def _homework_dict(hw: models.Homework, sub: Optional[models.HomeworkSubmission]
         "answer": sub.answer if sub else None, "link": sub.link if sub else None,
         "submittedAt": tz.isoformat(sub.submitted_at) if sub and sub.submitted_at else None,
         "grade": sub.grade if sub and status == "graded" else None,
-        "comment": sub.teacher_comment if sub and status == "graded" else None,
+        "comment": sub.teacher_comment if sub and status in ("graded", "returned") else None,
         "coins": sub.coins if sub and status == "graded" else 0,
     }
 
 
-def homework_list(db: Session, acc: MinarAccount) -> list[dict]:
+def homework_list(db: Session, acc: MinarAccount, offset: int = 0, status: str = "all") -> list[dict]:
     group_ids = [g.id for g in active_groups(db, acc.student_id)]
     if not group_ids:
         return []
-    hws = db.query(models.Homework).filter(models.Homework.group_id.in_(group_ids)) \
-        .order_by(models.Homework.lesson_date.desc(), models.Homework.id.desc()).limit(HOMEWORK_LIMIT).all()
+    q = _homework_query(db, acc, group_ids)
+    if status != "all":
+        q = q.filter(or_(models.HomeworkSubmission.id.is_(None), models.HomeworkSubmission.status.in_(("pending", "returned")))) if status == "pending" else q.filter(models.HomeworkSubmission.status == status)
+    hws = q.order_by(models.Homework.lesson_date.desc(), models.Homework.id.desc()).offset(max(0, offset)).limit(HOMEWORK_LIMIT).all()
     subs = {s.homework_id: s for s in db.query(models.HomeworkSubmission).filter(
         models.HomeworkSubmission.student_id == acc.student_id,
         models.HomeworkSubmission.homework_id.in_([h.id for h in hws] or [0])).all()}
     return [_homework_dict(h, subs.get(h.id)) for h in hws]
 
 
+def _homework_query(db, acc, group_ids):
+    return db.query(models.Homework).outerjoin(models.HomeworkSubmission, and_(
+        models.HomeworkSubmission.homework_id == models.Homework.id,
+        models.HomeworkSubmission.student_id == acc.student_id)).filter(models.Homework.group_id.in_(group_ids))
+
+
 def pending_count(db: Session, acc: MinarAccount) -> int:
-    return sum(1 for h in homework_list(db, acc) if h["status"] == "pending")
+    gids = [g.id for g in active_groups(db, acc.student_id)]
+    return _homework_query(db, acc, gids).filter(or_(models.HomeworkSubmission.id.is_(None),
+        models.HomeworkSubmission.status.in_(("pending", "returned")))).count()
 
 
 def _clean_link(value: Any) -> Optional[str]:
@@ -114,7 +125,9 @@ def submit(db: Session, acc: MinarAccount, homework_id: int, payload: dict) -> d
     hw = db.query(models.Homework).filter(models.Homework.id == homework_id).first()
     if not hw or hw.group_id not in {g.id for g in active_groups(db, acc.student_id)}:
         raise MinarError(404, "Uy vazifasi topilmadi.")
-    answer = payload.get("answer")
+    from .support import clean_draft
+    cleaned = clean_draft(db, acc, payload)
+    answer = cleaned["answer"]
     if not isinstance(answer, str) or not answer.strip():
         raise MinarError(400, "Javobingni yoz.")
     if len(answer) > ANSWER_MAX:
@@ -139,5 +152,9 @@ def submit(db: Session, acc: MinarAccount, homework_id: int, payload: dict) -> d
             body=f"{hw.group.name} · {hw.lesson_title or hw.lesson_date.strftime('%d.%m.%Y')}",
             link=f"/groups/{hw.group_id}", is_read=False, created_at=now,
         ))
+    from .models import MinarRevision, MinarDraft
+    import json
+    db.add(MinarRevision(account_id=acc.id,homework_id=hw.id,payload=json.dumps(cleaned),status="submitted"))
+    db.query(MinarDraft).filter_by(account_id=acc.id,homework_id=hw.id).delete()
     db.commit()
     return _homework_dict(hw, sub)

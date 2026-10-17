@@ -1,0 +1,11 @@
+{
+  "Backend": "To‘liq to‘plam: 324 ta test muvaffaqiyatli. PostgreSQLga xos 2 ta test SQLite muhitida tashlab ketildi va alohida PostgreSQL sinovida o‘tdi.",
+  "PostgreSQL": "Yangilangan Minar va audit to‘plami: 114 ta test muvaffaqiyatli. Parallel CRM/SPACE sarfi, oxirgi sovg‘a uchun raqobat, kurs, mukofot, yo‘riqnoma ruxsatlari va readiness tekshirildi.",
+  "Frontend": "SPACE production build va 18 ta Node testi muvaffaqiyatli. CRM production build muvaffaqiyatli.",
+  "Brauzer": "Chromium: o‘quvchi va admin sahifalari; PDF yuklash; offline qoralama → ulanish → qayta ochish; vazifa → qaytarish → qayta topshirish → 93/100 baho; dars testi; mavzuga bog‘langan savol/javob; portfolio tasdig‘i/ulashish/yopish; xarid → tayyor → topshirildi tekshirildi. Konsol xatosi kuzatilmadi.",
+  "Mobil ko‘rinish": "390×844 ekran emulyatsiyasida 9 ta asosiy bo‘lim tekshirildi; gorizontal chiqib ketish kuzatilmadi. Haqiqiy Android/iOS qurilmasi va ekran o‘quvchi bilan alohida sinov bajarilmagan.",
+  "Monitoring": "3 ta alohida test: HTTP status, readiness javobi va eskirgan zaxira. Backend sinovida baza yoki Redis ishlamasa readiness 503 qaytarishi tekshirildi.",
+  "Zaxira va migratsiya": "Relizdan oldin PostgreSQL, yuklangan fayllar va bot bazasi nusxalandi. Haqiqiy nusxa alohida PostgreSQL bazasiga tiklandi, ikkala migratsiya qo‘llandi, 48 modul yaratildi. Tarixiy xodim bog‘lanishlari tuzatilgandan keyin ikkinchi to‘liq dump/restore xatosiz o‘tdi; sinov nusxalari o‘chirildi.",
+  "Tezlik": "Sintetik muhit: bootstrap 28 SQL so‘rovi, holat JSON 5.7 KB. 5 parallel ulanishdagi 30 HTTP so‘rov: median 318 ms, P95 463 ms, xato yo‘q. Bu production pik yuklama kafolati emas.",
+  "Tashqi xizmatlar": "AI provayder kaliti va Telegram manzili mavjud emasligi sabab haqiqiy provayder/Telegram yuborish sinovi bajarilmadi. Tayyor o‘quv yordamchisi va superadmin ichidagi holat oynasi ishlatiladi. Jonli talabalarga sinov xabarlari yuborilmadi."
+}

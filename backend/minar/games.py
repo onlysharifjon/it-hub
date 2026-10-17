@@ -17,6 +17,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from .. import security
 from . import catalog as C
 from . import game_bank as bank
 from .errors import MinarError
@@ -145,6 +146,8 @@ def public_session(s: MinarGameSession) -> dict:
 
 
 def start(db: Session, acc: MinarAccount, payload: dict) -> dict:
+    if not security.rate_limit_ok(f"minar-game-start:{acc.id}", limit=30, window=60):
+        raise MinarError(429, "Biroz kutib, qayta urinib ko‘r.")
     game = payload.get("game")
     if game not in GAMES:
         raise MinarError(400, "O‘yin topilmadi.")
@@ -252,7 +255,7 @@ def finish(s: MinarGameSession, result: dict) -> tuple[dict, bool]:
         return ({"score": score, "moves": moves, "maxMoves": MEMORY_MAX_MOVES},
                 score == MEMORY_PAIRS and moves <= MEMORY_MAX_MOVES)
     duration = _int(result.get("duration"), 1, s.duration)
-    if elapsed + TIME_SLACK < duration:
+    if elapsed + 0.5 < duration:
         raise MinarError(400, BAD_RESULT)
     if s.game == "typing":
         typed = result.get("typed")
@@ -266,11 +269,32 @@ def finish(s: MinarGameSession, result: dict) -> tuple[dict, bool]:
                  "score": stats["correct"], "words": stats["words"]},
                 stats["correct"] >= 15 and stats["accuracy"] >= 80)
     # ztype
-    hits = result.get("hits")
-    words = ztype_words(s.course, s.seed)
-    if not isinstance(hits, list) or len(hits) > duration * 2 + 2:
-        raise MinarError(400, BAD_RESULT)
-    seen = {_int(h, 0, min(len(words) - 1, duration * 2 + 5)) for h in hits}
-    if len(seen) != len(hits):
+    hits = st.get("hits", [])
+    claimed = result.get("hits", [])
+    if not isinstance(claimed, list) or claimed != [h["index"] for h in hits]:
         raise MinarError(400, BAD_RESULT)
     return {"score": len(hits), "duration": duration}, len(hits) >= 5
+
+
+
+def hit(db: Session, acc: MinarAccount, payload: dict) -> dict:
+    """Record each correctly typed asteroid at server time, within its spawn window."""
+    s = _open(db, acc, payload.get('session'), ('ztype',))
+    idx = _int(payload.get('index'), 0, 199)
+    word = payload.get('word')
+    words = ztype_words(s.course, s.seed)
+    st = _state(s)
+    hits = st.get('hits', [])
+    if idx in [h['index'] for h in hits]:
+        return {'accepted': True, 'score': len(hits)}
+    elapsed = (datetime.utcnow() - s.started_at).total_seconds()
+    # Minimum possible spawn time under the same acceleration as the client.
+    base, minimum = {'easy': (2.1,1.1), 'normal':(1.8,.9), 'hard':(1.5,.7)}[s.difficulty]
+    earliest = sum(max(minimum, base - k*.065) for k in range(idx))
+    last = hits[-1]['at'] if hits else 0
+    if word != words[idx] or elapsed < earliest or elapsed > ZTYPE_SECONDS + TIME_SLACK or elapsed-last < len(words[idx])/18:
+        raise MinarError(400, BAD_RESULT)
+    hits.append({'index': idx, 'at': elapsed})
+    s.state = json.dumps({**st, 'hits': hits})
+    db.commit()
+    return {'accepted': True, 'score': len(hits)}

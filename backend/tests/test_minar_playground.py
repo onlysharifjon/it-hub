@@ -54,7 +54,7 @@ def test_reference_solution_passes_and_starter_fails(task_id):
     ("css-4", {"css": ".title { text-align: left }"}),
     ("css-8", {"css": ".row { flex-direction: column }"}),                       # @media'siz
     ("js-1", {"js": "// console.log('Salom, Minar!')", "output": ["Salom, Minar!"]}),   # izohdagi kod hisoblanmaydi
-    ("js-2", {"js": "let coins = 10; coins += 5; console.log(coins)", "output": ["16"]}),
+    ("js-2", {"js": "let coins = 10; coins += 6; console.log(coins)", "output": ["15"]}),
     ("js-8", {"js": 'const hero = { name: "Robo" }; console.log(hero.name)', "output": ["Robo"]}),
 ])
 def test_wrong_solutions_fail(task_id, payload):

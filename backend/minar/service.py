@@ -1,31 +1,31 @@
 """Minar Space biznes-mantiqi.
 
 Frontenddagi demo dvigatel (`lib/minar/engine.js`) qoidalarining serverdagi ishonchli nusxasi.
-Barcha yozuvchi amallar `LOCK` ostida bajariladi (jarayon bitta — pm2 fork, `security.py` dagi kabi),
+Barcha yozuvchi amallar bazadagi talaba va akkaunt satri qulfi ostida bajariladi,
 takroriy amallar esa bazadagi UNIQUE cheklovlar bilan ham himoyalangan.
 """
 from __future__ import annotations
 
 import json
-import threading
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, and_, exists
+from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, tz
+from ..wallet import account_transaction
 from . import achievements, learning, notify, playground
 from . import catalog as C
 from . import games
 from .errors import MinarError
 from .models import (
-    MinarAccount, MinarBattle, MinarLedger, MinarLesson, MinarPurchase, MinarQuest, MinarResult,
+    MinarStock, MinarAccount, MinarBattle, MinarLedger, MinarLesson, MinarPurchase, MinarQuest, MinarResult,
 )
 
-LOCK = threading.RLock()
 CT = models.CoinTransaction
 
 BAD_RESULT = "Natija tekshiruvdan o‘tmadi."
@@ -53,7 +53,14 @@ def public_name(full_name: str | None) -> str:
 # ── Hisoblar ────────────────────────────────────────────────────────────────
 
 def _positive(col):
-    return func.coalesce(func.sum(case((col > 0, col), else_=0)), 0)
+    condition = col > 0
+    if getattr(col, "class_", None) is CT:
+        reversal = aliased(CT)
+        condition = and_(condition, CT.reversal_of_id.is_(None),
+            ~exists().where(reversal.reversal_of_id == CT.id).correlate(CT))
+    elif getattr(col, "class_", None) is MinarLedger:
+        condition = and_(condition, MinarLedger.kind != "refund")
+    return func.coalesce(func.sum(case((condition, col), else_=0)), 0)
 
 
 def balance_and_earned(db: Session, acc: MinarAccount) -> tuple[int, int]:
@@ -63,6 +70,15 @@ def balance_and_earned(db: Session, acc: MinarAccount) -> tuple[int, int]:
     lt, le = db.query(func.coalesce(func.sum(MinarLedger.amount), 0), _positive(MinarLedger.amount)) \
         .filter(MinarLedger.account_id == acc.id).one()
     return int(ct) + int(lt), int(ce) + int(le)
+
+
+def earned_today(db: Session, acc: MinarAccount) -> int:
+    start, end = tz.day_bounds(tz.today())
+    crm = db.query(_positive(CT.amount)).filter(CT.student_id == acc.student_id,
+        CT.created_at >= start, CT.created_at < end).scalar()
+    space = db.query(_positive(MinarLedger.amount)).filter(MinarLedger.account_id == acc.id,
+        MinarLedger.local_date == today_key()).scalar()
+    return int(crm) + int(space)
 
 
 def effective_streak(acc: MinarAccount) -> int:
@@ -105,7 +121,7 @@ def _group_label(db: Session, student_id: int) -> str:
 
 # ── Holat (StudentState) ────────────────────────────────────────────────────
 
-def _history(db: Session, acc: MinarAccount, limit: int = 500) -> list[dict]:
+def _history(db: Session, acc: MinarAccount, limit: int = 30) -> list[dict]:
     items: list[tuple[datetime, dict]] = []
     for t in db.query(CT).filter(CT.student_id == acc.student_id).order_by(CT.created_at.desc()).limit(limit).all():
         reason = (t.reason or "").strip()
@@ -126,48 +142,41 @@ def _history(db: Session, acc: MinarAccount, limit: int = 500) -> list[dict]:
 
 def _attendance(db: Session, acc: MinarAccount) -> list[dict]:
     sid = acc.student_id
-    present: dict[str, bool] = {}
-    for a in db.query(models.Attendance).filter(
-        models.Attendance.student_id == sid, models.Attendance.is_present.isnot(None)
-    ).all():
-        k = a.lesson_date.isoformat()
-        present[k] = present.get(k, False) or bool(a.is_present)
+    entries = db.query(models.Attendance, models.Group.name).join(models.Group, models.Group.id == models.Attendance.group_id).filter(
+        models.Attendance.student_id == sid, models.Attendance.is_present.isnot(None)).order_by(models.Attendance.lesson_date.desc()).limit(500).all()
 
     first_seen: dict[str, datetime] = {}
     for c in db.query(models.CameraAttendance).filter(
         models.CameraAttendance.student_id == sid,
         models.CameraAttendance.person_type == "student",
         models.CameraAttendance.event_type == "keldi",
+        models.CameraAttendance.detected_at >= tz.day_bounds(min((a.lesson_date for a, _ in entries), default=tz.today()))[0],
     ).all():
         k = _local_date(c.detected_at)
         if k not in first_seen or c.detected_at < first_seen[k]:
             first_seen[k] = c.detected_at
 
-    coins: dict[str, int] = {}
-    for t in db.query(CT).filter(CT.student_id == sid, CT.amount > 0).all():
-        k = _local_date(t.created_at)
-        coins[k] = coins.get(k, 0) + int(t.amount)
-
     out = []
-    for k in sorted(present):
-        here = present[k]
-        out.append({
-            "date": k,
+    for a, group_name in entries:
+        k, here = a.lesson_date.isoformat(), bool(a.is_present)
+        out.append({"id": a.id, "groupId": a.group_id, "group": group_name, "date": k,
             "status": "present" if here else "absent",
             "time": tz.to_local(first_seen[k]).strftime("%H:%M") if here and k in first_seen else None,
-            "coins": coins.get(k, 0) if here else 0,
-        })
+            "coins": 0})
+
     return out
 
 
 def build_state(db: Session, acc: MinarAccount) -> dict:
+    from .study import enrollments
+    enrollment_rows = enrollments(db, acc)
     student = db.query(models.Student).filter(models.Student.id == acc.student_id).one()
     name, surname = _split_name(student.full_name)
     balance, earned = balance_and_earned(db, acc)
 
     results = []
     for r in db.query(MinarResult).filter(MinarResult.account_id == acc.id) \
-            .order_by(MinarResult.created_at.desc()).limit(200).all():
+            .order_by(MinarResult.created_at.desc()).limit(30).all():
         try:
             data = json.loads(r.payload)
         except ValueError:
@@ -178,27 +187,34 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
         {"id": p.id, "productId": p.product_id, "name": p.name, "price": p.price,
          "date": p.local_date, "status": p.status}
         for p in db.query(MinarPurchase).filter(MinarPurchase.account_id == acc.id)
-        .order_by(MinarPurchase.created_at.desc()).all()
+        .order_by(MinarPurchase.created_at.desc()).limit(100).all()
     ]
     lessons = [f"{l.course}-{l.lesson_index}" for l in db.query(MinarLesson)
                .filter(MinarLesson.account_id == acc.id).order_by(MinarLesson.completed_at).all()]
     quests = [f"{q.local_date}:{q.quest}" for q in db.query(MinarQuest)
-              .filter(MinarQuest.account_id == acc.id).order_by(MinarQuest.claimed_at).all()]
+              .filter(MinarQuest.account_id == acc.id, MinarQuest.local_date >= (tz.today()-timedelta(days=7)).isoformat()).order_by(MinarQuest.claimed_at).all()]
     checkins = [k[0].split(":", 1)[1] for k in db.query(MinarLedger.ref_key).filter(
-        MinarLedger.account_id == acc.id, MinarLedger.kind == "checkin").order_by(MinarLedger.local_date).all()]
+        MinarLedger.account_id == acc.id, MinarLedger.kind == "checkin", MinarLedger.local_date >= (tz.today()-timedelta(days=90)).isoformat()).order_by(MinarLedger.local_date).all()]
 
     game_rewards = {g: int(n) for g, n in db.query(MinarResult.game, func.count(MinarResult.id)).filter(
         MinarResult.account_id == acc.id, MinarResult.local_date == today_key(), MinarResult.award > 0,
     ).group_by(MinarResult.game).all()}
 
+    today = today_key()
+    daily_games = [g for g, in db.query(MinarResult.game).filter(MinarResult.account_id==acc.id,MinarResult.local_date==today).distinct()]
+    daily_lesson = db.query(MinarLedger.id).filter(MinarLedger.account_id==acc.id,MinarLedger.kind=="lesson",MinarLedger.local_date==today).first() is not None
     return {
+        "dailyProgress": {"typing":"typing" in daily_games,"games":len(daily_games),"lesson":daily_lesson},
         "version": 1,
+        "enrollments": enrollment_rows,
+        "stock": {r.product_id:r.quantity for r in db.query(MinarStock).all()},
         "profile": {
             "id": acc.login_id, "name": name, "surname": surname, "course": acc.course,
             "group": _group_label(db, acc.student_id), "character": acc.character,
         },
         "balance": balance,
         "earned": earned,
+        "earnedToday": earned_today(db, acc),
         "xp": acc.xp,
         "streak": effective_streak(acc),
         "lastLogin": acc.last_login,
@@ -241,7 +257,7 @@ def _commit(db: Session) -> None:
 
 def run(db: Session, acc: MinarAccount, fn: Callable[..., tuple[int, str]], *args: Any) -> dict:
     """Amalni qulf ostida bajarib, to'liq holat bilan javob tayyorlaydi."""
-    with LOCK:
+    with account_transaction(db, acc):
         db.refresh(acc)
         award, message = fn(db, acc, *args)
         db.refresh(acc)
@@ -253,7 +269,7 @@ def run(db: Session, acc: MinarAccount, fn: Callable[..., tuple[int, str]], *arg
 
 def run_playground(db: Session, acc: MinarAccount, task_id: str, payload: Any) -> dict:
     """Kod maydoni tekshiruvi: tekshiruv natijalari + (yechilgan bo'lsa) yangilangan holat."""
-    with LOCK:
+    with account_transaction(db, acc):
         db.refresh(acc)
         results, ok, first = playground.check(db, acc, task_id, payload)
         if not ok:
@@ -312,6 +328,12 @@ def act_purchase(db: Session, acc: MinarAccount, product_id: Any, request_id: An
     if balance < price:
         raise MinarError(400, "Coinlaring hali yetmaydi. Yana bir o‘yin o‘ynab ko‘r!")
 
+    if category == "space":
+        stock = db.query(MinarStock).filter_by(product_id=product_id).with_for_update().first()
+        if not stock or stock.quantity <= 0:
+            raise MinarError(409, "Bu sovg‘a hozir omborda qolmagan.")
+        stock.quantity -= 1
+        stock.updated_at = datetime.utcnow()
     now = datetime.utcnow()
     _credit(db, acc, -price, name, "purchase", f"purchase:{request_id}")
     db.add(MinarPurchase(
@@ -424,20 +446,35 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
         raise MinarError(400, "Natija topilmadi.")
     session = None
     if result.get("game") == "battle":
-        rid = result.get("id")
-        if not isinstance(rid, str) or not (8 <= len(rid) <= 64):
-            raise MinarError(400, "Natija identifikatori noto‘g‘ri.")
+        if result.get("practice") is True:
+            return 0, "Mashq yakunlandi. Mashq uchun XP va coin berilmaydi."
+        match_id = result.get("matchId")
+        if not isinstance(match_id, str) or not 8 <= len(match_id) <= 40:
+            raise MinarError(400, BAD_RESULT)
+        battle = db.query(MinarBattle).filter(MinarBattle.match_id == match_id).first()
+        if not battle or battle.status != "finished" or acc.id not in (battle.host_account_id, battle.guest_account_id):
+            raise MinarError(400, BAD_RESULT)
+        rid = f"battle:{match_id}"
     else:
         session = games.load(db, acc, result.get("session") or result.get("id"))
         rid = session.id
+    # Preserve idempotency for matches rewarded by older releases using client result IDs.
+    if session is None:
+        for old in db.query(MinarResult).filter(MinarResult.account_id==acc.id,MinarResult.game=="battle").all():
+            try:
+                if json.loads(old.payload).get("matchId")==battle.match_id:
+                    return old.award, "Natija allaqachon saqlangan."
+            except ValueError:
+                continue
     prev = db.query(MinarResult).filter(MinarResult.account_id == acc.id, MinarResult.result_id == rid).first()
     if prev:
         return prev.award, "Natija allaqachon saqlangan."
 
     if session is None:
-        payload, eligible = validate_battle(result)
-        if eligible:
-            eligible = battle_win_confirmed(db, acc, payload["matchId"])
+        eligible = not battle.draw and battle.winner_account_id == acc.id
+        payload = {"game": "battle", "mode": battle.mode, "matchId": battle.match_id,
+                   "won": eligible, "draw": bool(battle.draw), "practice": False,
+                   "score": (battle.host_score if acc.id == battle.host_account_id else battle.guest_score) or 0}
     else:
         payload, eligible = games.finish(session, result)
         payload = {"game": session.game, **payload}
@@ -450,7 +487,9 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
         MinarResult.account_id == acc.id, MinarResult.local_date == today,
         MinarResult.game == game, MinarResult.award > 0).scalar() or 0
     award = C.GAME_BASE[game] if eligible and played < C.DAILY_REWARDED_GAMES else 0
-    xp = C.XP_WIN if eligible else C.XP_TRY
+    attempts = db.query(func.count(MinarResult.id)).filter(MinarResult.account_id == acc.id,
+        MinarResult.local_date == today, MinarResult.game == game).scalar() or 0
+    xp = (C.XP_WIN if eligible else C.XP_TRY) if attempts < 10 else 0
 
     db.add(MinarResult(
         account_id=acc.id, result_id=rid, game=game, payload=json.dumps(payload),
@@ -491,7 +530,7 @@ def leaderboard(db: Session, me: MinarAccount, metric: str, period: str, course:
     q = (
         db.query(MinarAccount, models.Student.full_name)
         .join(models.Student, models.Student.id == MinarAccount.student_id)
-        .filter(MinarAccount.is_active.is_(True), models.Student.is_active.is_(True),
+        .filter(MinarAccount.is_active.is_(True), MinarAccount.is_test.is_(False), models.Student.is_active.is_(True),
                 models.Student.is_archived.is_(False))
     )
     for acc, full_name in q.all():
@@ -512,7 +551,9 @@ def leaderboard(db: Session, me: MinarAccount, metric: str, period: str, course:
         return r["week"] if metric == "coins" and period == "week" else r["coins"] if metric == "coins" \
             else r["active"] if metric == "active" else r["xp"]
 
-    rows.sort(key=lambda r: (-value(r), r["name"]))
+    rows.sort(key=lambda r: (-value(r), r["id"]))
+    for i, row in enumerate(rows, 1):
+        row.update(rank=i, total=len(rows))
     top = rows[:50]
     if me.login_id not in {r["id"] for r in top}:
         top += [r for r in rows if r["id"] == me.login_id]

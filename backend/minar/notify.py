@@ -44,19 +44,20 @@ def _dict(n: MinarNotification) -> dict:
             "time": tz.isoformat(n.created_at), "read": n.read_at is not None}
 
 
-def list_for(db: Session, acc: MinarAccount) -> dict:
-    rows = db.query(MinarNotification).filter(MinarNotification.account_id == acc.id) \
-        .order_by(MinarNotification.created_at.desc(), MinarNotification.id.desc()).limit(KEEP + 1).all()
-    if len(rows) > KEEP:   # eskilarini tozalash (ro'yxat ochilganda — yozish yo'lini sekinlashtirmaydi)
-        db.query(MinarNotification).filter(MinarNotification.account_id == acc.id,
-                                           MinarNotification.id < rows[KEEP - 1].id).delete()
-        db.commit()
-    return {"items": [_dict(n) for n in rows[:LIST_LIMIT]], "unread": unread_count(db, acc)}
+def list_for(db: Session, acc: MinarAccount, before: int = 0) -> dict:
+    q = db.query(MinarNotification).filter(MinarNotification.account_id == acc.id)
+    if before:
+        q = q.filter(MinarNotification.id < before)
+    rows = q.order_by(MinarNotification.id.desc()).limit(LIST_LIMIT + 1).all()
+    return {"items": [_dict(n) for n in rows[:LIST_LIMIT]], "unread": unread_count(db, acc),
+            "next": rows[LIST_LIMIT-1].id if len(rows) > LIST_LIMIT else None}
 
 
 def mark_read(db: Session, acc: MinarAccount, ids: Any) -> dict:
     q = db.query(MinarNotification).filter(MinarNotification.account_id == acc.id,
                                            MinarNotification.read_at.is_(None))
+    if ids is None:
+        raise MinarError(400, "Ko‘rsatilgan bildirishnoma IDlarini yuboring.")
     if ids is not None:
         if not isinstance(ids, list) or len(ids) > 200 or not all(isinstance(i, int) and not isinstance(i, bool)
                                                                   for i in ids):

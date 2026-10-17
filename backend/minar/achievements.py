@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 
-from sqlalchemy import func
+from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 
 from .. import models, tz
@@ -124,7 +124,32 @@ def _unlocked(db: Session, acc: MinarAccount) -> dict[str, datetime]:
 
 
 def _values(db: Session, acc: MinarAccount, metrics: set[str]) -> dict[str, int]:
-    return {m: int(METRICS[m](db, acc)) for m in metrics if m in METRICS}
+    from .models import MinarProgress
+    from .service import _positive
+    count = lambda cls, *conditions: db.query(func.count(cls.id)).filter(*conditions).scalar_subquery()
+    fields = {
+        "wins": count(MinarResult, MinarResult.account_id==acc.id, MinarResult.xp==C.XP_WIN),
+        "battle_wins": count(MinarBattle, MinarBattle.winner_account_id==acc.id, MinarBattle.status=="finished"),
+        "lessons": count(MinarLesson,MinarLesson.account_id==acc.id)+count(MinarProgress,MinarProgress.account_id==acc.id,MinarProgress.completed_at.isnot(None)),
+        "code_solved": count(MinarPlaygroundSolve,MinarPlaygroundSolve.account_id==acc.id),
+        "homework_done": count(models.HomeworkSubmission,models.HomeworkSubmission.student_id==acc.student_id,models.HomeworkSubmission.status.in_(("submitted","graded")),models.HomeworkSubmission.answer.isnot(None)),
+        "homework_excellent": count(models.HomeworkSubmission,models.HomeworkSubmission.student_id==acc.student_id,models.HomeworkSubmission.status=="graded",models.HomeworkSubmission.grade>=90),
+        "tournament_podium": count(MinarTournamentAward,MinarTournamentAward.account_id==acc.id),
+        "tournament_wins": count(MinarTournamentAward,MinarTournamentAward.account_id==acc.id,MinarTournamentAward.place==1),
+        "earned": db.query(_positive(models.CoinTransaction.amount)).filter(models.CoinTransaction.student_id==acc.student_id).scalar_subquery()+db.query(_positive(MinarLedger.amount)).filter(MinarLedger.account_id==acc.id).scalar_subquery(),
+    }
+    wanted=[m for m in fields if m in metrics]
+    values=dict(zip(wanted,db.query(*(fields[m] for m in wanted)).one())) if wanted else {}
+    values.update(streak=acc.streak or 0,level=C.level_of(acc.xp))
+    special={"quiz_perfect":("quiz",lambda p:p.get("score")==p.get("total")),
+             "bug_perfect":("bug",lambda p:p.get("score")==p.get("total")),
+             "memory_fast":("memory",lambda p:(p.get("moves") or 99)<=8),
+             "typing_fast":("typing",lambda p:(p.get("wpm") or 0)>=30 and (p.get("accuracy") or 0)>=90)}
+    needed={m:v for m,v in special.items() if m in metrics}
+    if needed:
+        rows=db.query(MinarResult.game,MinarResult.payload).filter(MinarResult.account_id==acc.id,MinarResult.xp==C.XP_WIN,MinarResult.game.in_([v[0] for v in needed.values()])).all()
+        for m,(game,predicate) in needed.items():values[m]=int(any(g==game and predicate(json.loads(raw)) for g,raw in rows))
+    return {m:int(values.get(m,0)) for m in metrics}
 
 
 def _public(a: Achievement, progress: int, unlocked_at: datetime | None) -> dict:

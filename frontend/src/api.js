@@ -866,3 +866,14 @@ export const finance = {
     setTimeout(() => URL.revokeObjectURL(url), 2000)
   },
 }
+
+// SPACE workflows: authenticated CRM transport, including protected downloads.
+export const spaceStaff = {
+  get: path => request('/space/admin'+path),
+  save: (path,body,method='POST') => request('/space/admin'+path,{method,body:JSON.stringify(body)}),
+  async download(path,name){
+    const r=await fetch(API_BASE+'/space/admin'+path,{headers:token?{Authorization:`Bearer ${token}`}:{}})
+    if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.message||e.detail||'Yuklab bo‘lmadi')}
+    const url=URL.createObjectURL(await r.blob());const a=Object.assign(document.createElement('a'),{href:url,download:name});document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)
+  }
+}

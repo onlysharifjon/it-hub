@@ -3,7 +3,7 @@ import uuid
 
 from backend import models
 from backend.minar import achievements, catalog as C
-from backend.minar.models import MinarAccount, MinarAchievement, MinarLedger, MinarNotification
+from backend.minar.models import MinarAccount, MinarAchievement, MinarLedger, MinarNotification, MinarStock
 from backend.tests.test_minar import (  # noqa: F401  (fixture'lar)
     H, _minar_env, acct, give_coins, post, start_game,
 )
@@ -25,18 +25,20 @@ def test_notifications_list_read_and_unread_in_state(client, db, acct, metodist_
     assert items["unread"] == 1 and items["items"][0]["kind"] == "coin" and "7 coin" in items["items"][0]["title"]
     assert items["items"][0]["link"] == "history" and items["items"][0]["read"] is False
     assert post(client, "/notifications/read", {"ids": "all"}).status_code == 400
-    assert post(client, "/notifications/read", {}).json() == {"unread": 0}
+    assert post(client, "/notifications/read", {"ids":[n["id"] for n in items["items"]]}).json() == {"unread": 0}
     assert client.get("/space/notifications").json()["items"][0]["read"] is True
 
 
-def test_notifications_are_private_and_pruned(client, db, acct):
+def test_notifications_are_private_and_paginated(client, db, acct):
     acc = _acc(db)
     for i in range(120):
         db.add(MinarNotification(account_id=acc.id, kind="system", title=f"n{i}"))
     db.commit()
     data = client.get("/space/notifications").json()
     assert len(data["items"]) == 50 and data["items"][0]["title"] == "n119"
-    assert db.query(MinarNotification).count() == 100
+    assert db.query(MinarNotification).count() == 120
+    assert data["next"]
+    assert len(client.get(f"/space/notifications?before={data['next']}").json()["items"]) == 50
     st2 = models.Student(full_name="Boshqa Bola", phone1="+998900000002", is_active=True)
     db.add(st2)
     db.flush()
@@ -52,6 +54,7 @@ def test_notifications_are_private_and_pruned(client, db, acct):
 
 
 def test_order_ready_notifies_student(client, db, acct, metodist_user, metodist_token):
+    db.add(MinarStock(product_id="stickers",quantity=1));db.commit()
     st, _ = acct
     give_coins(db, st, 100, metodist_user.id)
     post(client, "/shop/purchases", {"productId": "stickers", "requestId": str(uuid.uuid4())})

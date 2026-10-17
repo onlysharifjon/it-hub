@@ -17,6 +17,9 @@ class MinarAccount(Base):
     login_id = Column(String(20), nullable=False, unique=True, index=True)   # "MA0042" (katta harf)
     password_hash = Column(String(255), nullable=False)
     course = Column(String(20), nullable=False, default="HTML")              # HTML | CSS | JavaScript
+    course_override = Column(String(20), nullable=True)
+    age_band = Column(String(10), nullable=True)
+    active_group_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
     character = Column(String(10), nullable=False, default="robo")           # robo | foxy | drako
     equipment = Column(Text, nullable=False, default="{}")                   # {"hat": "cap", ...} JSON
     xp = Column(Integer, nullable=False, default=0)
@@ -227,3 +230,134 @@ class MinarLoginToken(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
+
+
+class MinarGroupCourse(Base):
+    __tablename__ = 'minar_group_courses'
+    group_id = Column(Integer, ForeignKey('groups.id', ondelete='CASCADE'), primary_key=True)
+    course = Column(String(20), nullable=False)
+
+
+class MinarContent(Base):
+    """Student-facing content, intentionally separate from confidential teacher guides."""
+    __tablename__ = 'minar_content'
+    id = Column(Integer, primary_key=True)
+    slug = Column(String(80), nullable=False, unique=True)
+    lesson_id = Column(Integer, ForeignKey('lessons.id', ondelete='SET NULL'), nullable=True, index=True)
+    course = Column(String(20), nullable=False, index=True)
+    topic = Column(String(80), nullable=False)
+    title = Column(String(200), nullable=False)
+    body = Column(Text, nullable=False)
+    video_url = Column(String(500), nullable=True)
+    resource_url = Column(String(500), nullable=True)
+    exercise = Column(Text, nullable=False, default='')
+    questions = Column(Text, nullable=False, default='[]')
+    position = Column(Integer, nullable=False, default=0)
+    published = Column(Boolean, nullable=False, default=False)
+    updated_by_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarProgress(Base):
+    __tablename__ = 'minar_progress'
+    __table_args__ = (UniqueConstraint('account_id', 'content_id', name='uq_minar_progress'),)
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey('minar_accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+    content_id = Column(Integer, ForeignKey('minar_content.id', ondelete='CASCADE'), nullable=False)
+    best_score = Column(Integer, nullable=False, default=0)
+    last_score = Column(Integer, nullable=False, default=0)
+    attempts = Column(Integer, nullable=False, default=0)
+    review_level = Column(Integer, nullable=False, default=0)
+    completed_at = Column(DateTime, nullable=True)
+    next_review_at = Column(DateTime, nullable=True)
+    last_attempt_at = Column(DateTime, nullable=True)
+
+
+class MinarLearningAttempt(Base):
+    __tablename__ = 'minar_learning_attempts'
+    __table_args__ = (UniqueConstraint('account_id', 'request_id', name='uq_minar_attempt_req'),)
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey('minar_accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+    content_id = Column(Integer, ForeignKey('minar_content.id', ondelete='CASCADE'), nullable=False)
+    request_id = Column(String(64), nullable=False)
+    score = Column(Integer, nullable=False)
+    mistakes = Column(Text, nullable=False, default='[]')
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarDraft(Base):
+    __tablename__ = 'minar_drafts'
+    __table_args__ = (UniqueConstraint('account_id', 'homework_id', name='uq_minar_draft'),)
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey('minar_accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+    homework_id = Column(Integer, ForeignKey('homeworks.id', ondelete='CASCADE'), nullable=False)
+    payload = Column(Text, nullable=False, default='{}')
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarRevision(Base):
+    __tablename__ = 'minar_revisions'
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey('minar_accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+    homework_id = Column(Integer, ForeignKey('homeworks.id', ondelete='CASCADE'), nullable=False, index=True)
+    payload = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False)
+    staff_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarAttachment(Base):
+    __tablename__ = 'minar_attachments'
+    id = Column(String(36), primary_key=True)
+    account_id = Column(Integer, ForeignKey('minar_accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    mime = Column(String(50), nullable=False)
+    size = Column(Integer, nullable=False)
+    path = Column(String(200), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarProject(Base):
+    __tablename__ = 'minar_projects'
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey('minar_accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+    title = Column(String(120), nullable=False)
+    description = Column(Text, nullable=False)
+    url = Column(String(500), nullable=False)
+    status = Column(String(20), nullable=False, default='pending')
+    feedback = Column(Text, nullable=True)
+    share_token = Column(String(64), nullable=True, unique=True)
+    reviewed_by_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarHelpThread(Base):
+    __tablename__ = 'minar_help_threads'
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey('minar_accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+    group_id = Column(Integer, ForeignKey('groups.id', ondelete='SET NULL'), nullable=True)
+    homework_id = Column(Integer, ForeignKey('homeworks.id', ondelete='SET NULL'), nullable=True)
+    content_id = Column(Integer, ForeignKey('minar_content.id', ondelete='SET NULL'), nullable=True)
+    subject = Column(String(120), nullable=False)
+    status = Column(String(20), nullable=False, default='open')
+    assigned_to_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarHelpMessage(Base):
+    __tablename__ = 'minar_help_messages'
+    id = Column(Integer, primary_key=True)
+    thread_id = Column(Integer, ForeignKey('minar_help_threads.id', ondelete='CASCADE'), nullable=False, index=True)
+    staff_id = Column(Integer, ForeignKey('users.id'), nullable=True)
+    body = Column(Text, nullable=False)
+    attachments = Column(Text, nullable=False, default='[]')
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarStock(Base):
+    __tablename__ = 'minar_stock'
+    product_id = Column(String(30), primary_key=True)
+    quantity = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)

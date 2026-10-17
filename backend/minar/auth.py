@@ -196,6 +196,7 @@ def change_password(db: Session, request: Request, acc: MinarAccount, current: A
         q = q.filter(MinarSession.id != sess.id)
         sess.password_reset_until = None
     q.delete(synchronize_session=False)
+    db.query(MinarLoginToken).filter(MinarLoginToken.account_id == acc.id).delete()
     db.commit()
 
 
@@ -209,6 +210,7 @@ def logout(db: Session, request: Request, response: Response) -> None:
 
 def revoke_sessions(db: Session, account_id: int) -> None:
     db.query(MinarSession).filter(MinarSession.account_id == account_id).delete()
+    db.query(MinarLoginToken).filter(MinarLoginToken.account_id == account_id).delete()
 
 
 def current_account(request: Request, db: Session = Depends(get_db)) -> MinarAccount:

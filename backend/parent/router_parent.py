@@ -710,3 +710,14 @@ def events(parent: models.Parent = Depends(get_current_parent), db: Session = De
 @router.get("/children/{child_id}/coins", response_model=schemas.ChildCoins)
 def coins(child: models.Student = Depends(get_owned_child), db: Session = Depends(get_db)):
     return service.build_coins(db, child)
+
+
+@router.get("/children/{child_id}/study")
+def study_summary(child: models.Student = Depends(get_owned_child), db: Session = Depends(get_db)):
+    from ..minar.models import MinarAccount
+    from ..minar.study import knowledge
+    from ..minar.learning import pending_count
+    from ..wallet import balance
+    acc=db.query(MinarAccount).filter_by(student_id=child.id).first()
+    return {"balance":balance(db,child.id),"pendingHomework":pending_count(db,acc) if acc else 0,
+            "knowledge":knowledge(db,acc) if acc else {"topics":[],"mistakes":[]}}

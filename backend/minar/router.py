@@ -117,8 +117,8 @@ def curriculum(acc: MinarAccount = Account, db: Session = Depends(get_db)):
 
 
 @router.get("/homework")
-def homework(acc: MinarAccount = Account, db: Session = Depends(get_db)):
-    return learning.homework_list(db, acc)
+def homework(offset: int = 0, status: str = "all", acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return learning.homework_list(db, acc, offset, status)
 
 
 @router.post("/homework/{homework_id}/submit")
@@ -144,8 +144,8 @@ def tournament(acc: MinarAccount = Account, db: Session = Depends(get_db)):
 
 
 @router.get("/notifications")
-def notifications(acc: MinarAccount = Account, db: Session = Depends(get_db)):
-    return notify.list_for(db, acc)
+def notifications(before: int = 0, acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return notify.list_for(db, acc, before)
 
 
 @router.post("/notifications/read")
@@ -186,3 +186,33 @@ def join_battle(code: str, acc: MinarAccount = Account, db: Session = Depends(ge
 @router.websocket("/battles")
 async def battle_socket(ws: WebSocket):
     await battles.handle(ws)
+
+
+@router.post("/games/hit")
+def game_hit(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return games.hit(db, acc, payload)
+
+
+@router.get('/history')
+def coin_history(offset: int = 0, month: Optional[str] = None, acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    from .history import listing
+    return listing(db, acc, offset, month)
+
+
+@router.post('/playground/run')
+def playground_run(payload: dict = Body(...), acc: MinarAccount = Account):
+    from .. import security
+    from .js_runner import execute
+    if not security.rate_limit_ok(f'minar-run:{acc.id}',limit=30,window=60):
+        raise MinarError(429,'Biroz kutib qayta ishga tushiring.')
+    return execute(playground._code(payload,'js'))
+
+@router.get('/game-history')
+def game_history(offset:int=0,month:Optional[str]=None,acc:MinarAccount=Account,db:Session=Depends(get_db)):
+    from .history import game_listing
+    return game_listing(db,acc,offset,month)
+
+@router.get('/attendance-history')
+def attendance_history(offset:int=0,month:Optional[str]=None,acc:MinarAccount=Account,db:Session=Depends(get_db)):
+    from .history import attendance_listing
+    return attendance_listing(db,acc,month,offset)

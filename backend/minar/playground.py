@@ -376,7 +376,10 @@ def _output_lines(payload: dict) -> list[str]:
 
 def evaluate(task: Task, payload: dict) -> list[dict]:
     html, css, js = _code(payload, "html"), _code(payload, "css"), _code(payload, "js")
-    ctx = {"dom": parse_html(html), "css": parse_css(css), "js": js, "output": _output_lines(payload)}
+    from .js_runner import execute
+    _output_lines(payload)  # Validate legacy field size; its values never determine rewards.
+    execution = execute(js, task.id) if "js" in task.languages else {"output": [], "semantic": True}
+    ctx = {"dom": parse_html(html), "css": parse_css(css), "js": js, "output": execution["output"]}
     results = []
     for c in task.checks:
         try:
@@ -384,6 +387,8 @@ def evaluate(task: Task, payload: dict) -> list[dict]:
         except Exception:     # foydalanuvchi kodi har qanday shaklda bo'lishi mumkin — tekshiruv yiqilmasin
             ok = False
         results.append({"label": c.label, "ok": ok})
+    if "js" in task.languages:
+        results.append({"label": execution.get("error") or "Serverda bajarish va qo‘shimcha tekshiruv", "ok": not execution.get("error") and execution.get("semantic", False)})
     return results
 
 

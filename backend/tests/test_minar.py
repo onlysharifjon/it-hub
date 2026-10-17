@@ -10,7 +10,7 @@ from backend import models, tz
 from backend.main import app
 from backend.minar import auth as minar_auth
 from backend.minar import achievements, battles, catalog as C, games, service
-from backend.minar.models import MinarAccount, MinarBattle, MinarGameSession
+from backend.minar.models import MinarAccount, MinarBattle, MinarGameSession, MinarStock
 from backend.tests.conftest import TestSessionLocal
 
 
@@ -402,7 +402,10 @@ def test_all_game_rules(client, db, acct):
     assert finish(client, play_questions(client, db, "bug", 1)).json()["award"] == 0
     for n, want in ((5, 15), (4, 0)):
         z = start_game(client, "ztype")
-        backdate(db, z["id"], 60)
+        for i in range(n):
+            row=session_row(db,z["id"]);row.started_at=datetime.utcnow()-timedelta(seconds=2+i*3);db.commit()
+            assert post(client,"/games/hit",{"session":z["id"],"index":i,"word":z["words"][i]}).status_code==200
+        row=session_row(db,z["id"]);row.started_at=datetime.utcnow()-timedelta(seconds=60);db.commit()
         assert finish(client, z, hits=list(range(n)), duration=60).json()["award"] == want
 
 
@@ -410,7 +413,7 @@ def test_battle_reward_needs_server_confirmed_win(client, db, acct):
     st, creds = acct
     claim = {"id": "match-forged-1", "game": "battle", "mode": "typing", "won": True, "draw": False,
              "score": 99, "matchId": "match-forged-1", "practice": False}
-    assert post(client, "/games/results", {"type": "game", "result": claim}).json()["award"] == 0     # server bilmaydi
+    assert post(client, "/games/results", {"type": "game", "result": claim}).status_code == 400     # server bilmaydi
     practice = {**claim, "id": "match-practice-1", "matchId": "match-practice-1", "practice": True}
     assert post(client, "/games/results", {"type": "game", "result": practice}).json()["award"] == 0
     acc = db.query(MinarAccount).one()
@@ -432,7 +435,7 @@ def test_battle_reward_needs_server_confirmed_win(client, db, acct):
                        created_at=datetime.utcnow()))
     db.commit()
     steal = {**claim, "id": "match-real-0002", "matchId": "match-real-0002"}
-    assert post(client, "/games/results", {"type": "game", "result": steal}).json()["award"] == 0
+    assert post(client, "/games/results", {"type": "game", "result": steal}).status_code == 400
 
 
 # ── Xarid, kiyim, qahramon ──────────────────────────────────────────────────
@@ -490,6 +493,7 @@ def test_character_change_keeps_everything(client, db, acct, metodist_user):
 
 
 def test_shop_gift_order_lifecycle(client, db, metodist_token, acct, metodist_user):
+    db.add(MinarStock(product_id="stickers", quantity=2)); db.commit()
     st, _ = acct
     give_coins(db, st, 300, metodist_user.id)
     for _ in range(2):                                                                   # sovg'a ko'p marta olinadi
@@ -525,7 +529,9 @@ def test_teacher_coins_and_attendance_flow_into_state(client, db, acct, metodist
     titles = {h["title"]: h for h in s["history"]}
     assert titles["Darsda faol"]["kind"] == "reward" and titles["Tuzatish"]["amount"] == -3
     att = {a["date"]: a for a in s["attendance"]}
-    assert att[lesson_day.isoformat()] == {"date": lesson_day.isoformat(), "status": "present", "time": "14:02", "coins": 10}
+    assert att[lesson_day.isoformat()]["status"] == "present"
+    assert att[lesson_day.isoformat()]["time"] == "14:02"
+    assert att[lesson_day.isoformat()]["groupId"] == group.id
     absent = att[(tz.today() - timedelta(days=4)).isoformat()]
     assert absent["status"] == "absent" and absent["time"] is None and absent["coins"] == 0
     assert (tz.today() - timedelta(days=6)).isoformat() not in att                       # belgilanmagan dars ko'rsatilmaydi
@@ -542,7 +548,7 @@ def test_leaderboard_masks_names_filters_and_includes_self(client, db, metodist_
     rows = client.get("/space/leaderboard?metric=coins&period=all&course=all").json()
     assert isinstance(rows, list) and [r["name"] for r in rows] == ["Malika K.", "Azizbek K."]
     assert rows[0] == {"id": c2["login_id"], "name": "Malika K.", "avatar": "🤖", "coins": 80, "week": 80, "xp": 0,
-                       "active": 0, "course": "JavaScript"}
+                       "active": 0, "course": "JavaScript", "rank": 1, "total": 2}
     js = client.get("/space/leaderboard?course=JavaScript").json()
     assert [r["id"] for r in js] == [c2["login_id"]]
     assert client.get("/space/leaderboard?metric=hack").status_code == 400
@@ -574,7 +580,7 @@ def test_assistant_uses_model_when_key_set(client, acct, monkeypatch):
         return "Model javobi"
     monkeypatch.setattr(assistant, "_ask_model", fake)
     r = post(client, "/assistant/messages", {"messages": [{"role": "user", "content": "let nima?"}]})
-    assert r.json() == {"message": "Model javobi"} and seen["course"] == "HTML"
+    assert r.json() == {"message": "Model javobi", "mode":"ai", "notice":None} and seen["course"] == "HTML"
 
 
 # ── Battle: REST ────────────────────────────────────────────────────────────
@@ -609,7 +615,7 @@ def _ws_pair(client, db, metodist_token, mode):
     return hc, gc, host, guest, room, joined
 
 
-def _recv_until(ws, kind, limit=8):
+def _recv_until(ws, kind, limit=16):
     for _ in range(limit):
         m = ws.receive_json()
         if m["type"] == kind:
@@ -676,7 +682,7 @@ def test_ws_quiz_battle_scoring_and_draw(client, ws_client, db, metodist_token):
         hws.send_json({"type": "start"})
         start = _recv_until(hws, "start")
         battles.ROOMS[room["roomId"]].start_ms -= 5000
-        answers = C.QUIZ_ANSWERS["HTML"]
+        answers = [q["answer"] for q in battles.ROOMS[room["roomId"]].questions]
         for qi in range(5):
             time.sleep(0.35)                                         # server: javoblar orasida >= 300 ms
             hws.send_json({"type": "progress", "matchId": start["matchId"], "questionIndex": qi, "answerIndex": answers[qi]})

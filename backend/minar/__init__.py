@@ -28,6 +28,12 @@ def setup(app, *, student: bool | None = None, admin: bool = True) -> None:
     if student:
         from .router import router as student_router
         app.include_router(student_router, prefix="/space", tags=["space"])
+        from .study_router import router as study_router
+        app.include_router(study_router, prefix="/space", tags=["study"])
     if admin:
         from .admin import router as admin_router
         app.include_router(admin_router, prefix="/space/admin", tags=["space-admin"])
+        from .guides import router as guides_router
+        app.include_router(guides_router, prefix="/space/admin", tags=["space-guides"])
+        from .staff_study import router as staff_study_router
+        app.include_router(staff_study_router, prefix="/space/admin", tags=["space-staff"])

@@ -168,7 +168,8 @@ export default function MinarAccounts({ currentUser }) {
         </span>
       ),
     },
-    { key: 'course', header: 'Kurs', sortable: true },
+    { key: 'course', header: 'Kurs', sortable: true,render:r=><select aria-label={r.full_name+' kursi'} value={r.course} onChange={async e=>{try{await patchMinarAccount(r.student_id,{course:e.target.value});toast.success('Kurs yangilandi');load()}catch(e){toast.error(e.message)}}}>{COURSES.map(c=><option key={c}>{c}</option>)}</select> },
+    {key:'age_band',header:'Yosh toifasi',render:r=><select aria-label={r.full_name+' yosh toifasi'} value={r.age_band||''} onChange={async e=>{try{await patchMinarAccount(r.student_id,{age_band:e.target.value||null});load()}catch(e){toast.error(e.message)}}}><option value="">Kiritilmagan</option>{['7-9','10-12','13-16','17+'].map(a=><option key={a}>{a}</option>)}</select>},
     { key: 'xp', header: 'XP', sortable: true, align: 'right' },
     { key: 'streak', header: 'Streak', sortable: true, align: 'right' },
     {

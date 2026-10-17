@@ -5074,6 +5074,9 @@ def grade_homework_submission(homework_id: int, student_id: int, payload: schema
     st = db.query(models.Student).filter(models.Student.id == student_id).first()
     if not member or not st:
         raise HTTPException(status_code=404, detail="Talaba bu guruhda emas")
+    from .wallet import lock
+    lock(db, student_id)
+    db.query(MinarAccount).filter_by(student_id=student_id).with_for_update().first()
     sub = db.query(models.HomeworkSubmission).filter(
         models.HomeworkSubmission.homework_id == hw.id,
         models.HomeworkSubmission.student_id == student_id).with_for_update().first()
@@ -5671,8 +5674,9 @@ def _coins_spent_this_month(db: Session, teacher_id: int, now: Optional[datetime
     """
     now = now or tz.now()
     start_utc, end_utc = tz.month_bounds(now.year, now.month)
+    from .minar.service import _positive
     return int(
-        db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0))
+        db.query(_positive(models.CoinTransaction.amount))
         .filter(
             models.CoinTransaction.teacher_id == teacher_id,
             models.CoinTransaction.created_at >= start_utc,
@@ -5707,6 +5711,8 @@ def coin_summary(db: Session = Depends(get_db), actor: models.User = Depends(req
 def _award_coins(db: Session, actor: models.User, *, student_id: int, group_id: Optional[int],
                  amount: int, reason: Optional[str]) -> models.CoinTransaction:
     """Talabaga coin berish (budjet nazorati, audit, ota-ona va Space bildirishnomasi). Commit qilmaydi."""
+    # Serialize budget checks across workers. Positive credits need no wallet balance check.
+    db.query(models.User.id).filter(models.User.id == actor.id).with_for_update().one()
     # Teacher uchun oylik budjet nazorati (boshqa rollar cheklanmagan)
     if actor.role == UserRole.teacher.value:
         budget = _teacher_coin_budget(db, actor.id)
@@ -5746,11 +5752,8 @@ def give_coins(payload: schemas.CoinGive, db: Session = Depends(get_db), actor: 
 
 
 def _student_coin_total(db: Session, student_id: int) -> int:
-    return int(
-        db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0))
-        .filter(models.CoinTransaction.student_id == student_id)
-        .scalar()
-    )
+    from .wallet import balance
+    return balance(db, student_id)
 
 
 @app.post("/coins/deduct", response_model=schemas.CoinTransactionRead, status_code=201)
@@ -5760,6 +5763,8 @@ def deduct_coins(payload: schemas.CoinDeduct, db: Session = Depends(get_db), act
     if not student:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
 
+    from .wallet import lock
+    lock(db, payload.student_id)
     total = _student_coin_total(db, payload.student_id)
     if payload.amount > total:
         raise HTTPException(status_code=400, detail=f"Talabada faqat {max(0, total)} coin bor — balans manfiy bo'lolmaydi")
@@ -5788,7 +5793,7 @@ def cancel_coin_transaction(
     db: Session = Depends(get_db),
     actor: models.User = Depends(require_attendance_editor),
 ):
-    """Berilgan/yechilgan coin yozuvini bekor qilish (o'chirish). Teacher — faqat o'zi bergan, admin — barchasi."""
+    """Coinni qarama-qarshi yozuv bilan bekor qilish. Asl yozuv tarixda saqlanadi."""
     t = db.query(models.CoinTransaction).filter(models.CoinTransaction.id == transaction_id).first()
     if not t:
         raise HTTPException(status_code=404, detail="Coin yozuvi topilmadi")
@@ -5799,7 +5804,15 @@ def cancel_coin_transaction(
                 old_value={"student_id": t.student_id, "amount": t.amount, "reason": t.reason})
     student_id = t.student_id
     amount = t.amount
-    db.delete(t)
+    from .wallet import lock, balance
+    lock(db, student_id)
+    if t.reversal_of_id or db.query(models.CoinTransaction.id).filter(
+            models.CoinTransaction.reversal_of_id == t.id).first():
+        raise HTTPException(status_code=409, detail="Bu operatsiya allaqachon bekor qilingan")
+    if amount > balance(db, student_id):
+        raise HTTPException(status_code=400, detail="Coin sarflangan: balans manfiy bo‘lishi mumkin emas")
+    db.add(models.CoinTransaction(student_id=student_id, teacher_id=t.teacher_id, group_id=t.group_id,
+        amount=-amount, reason=f"Bekor qilish #{t.id}: {t.reason or ''}"[:300], reversal_of_id=t.id))
     db.flush()
     notify_parents_of_student(
         db, student_id=student_id, ntype="announcement",
@@ -5831,19 +5844,18 @@ def list_coin_transactions(
 @app.get("/coins/totals", response_model=List[schemas.StudentCoinTotal])
 def coin_totals(db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
     """Talabalar bo'yicha umumiy coin reytingi (teacher — faqat o'z guruhlari talabalari)."""
-    q = (
-        db.query(models.Student.id, models.Student.full_name,
-                 func.coalesce(func.sum(models.CoinTransaction.amount), 0).label("total"))
-        .join(models.CoinTransaction, models.CoinTransaction.student_id == models.Student.id)
-        .group_by(models.Student.id)
-    )
+    from .minar.models import MinarAccount, MinarLedger
+    ct = db.query(models.CoinTransaction.student_id.label("sid"), func.sum(models.CoinTransaction.amount).label("n")).group_by(models.CoinTransaction.student_id).subquery()
+    lt = db.query(MinarAccount.student_id.label("sid"), func.sum(MinarLedger.amount).label("n")).join(MinarLedger, MinarLedger.account_id == MinarAccount.id).group_by(MinarAccount.student_id).subquery()
+    total = func.coalesce(ct.c.n, 0) + func.coalesce(lt.c.n, 0)
+    q = db.query(models.Student.id, models.Student.full_name, total).outerjoin(ct, ct.c.sid == models.Student.id).outerjoin(lt, lt.c.sid == models.Student.id)
     if actor.role == UserRole.teacher.value:
         gids = _teacher_group_ids(db, actor) or {0}
-        q = q.join(models.GroupStudent, models.GroupStudent.student_id == models.Student.id) \
-             .filter(models.GroupStudent.group_id.in_(gids), models.GroupStudent.left_at.is_(None)) \
-             .group_by(models.Student.id)
-    rows = q.order_by(func.sum(models.CoinTransaction.amount).desc()).limit(100).all()
-    return [schemas.StudentCoinTotal(student_id=r[0], student_name=r[1], total=int(r[2])) for r in rows]
+        q = q.filter(models.Student.id.in_(db.query(models.GroupStudent.student_id).filter(
+            models.GroupStudent.group_id.in_(gids), models.GroupStudent.left_at.is_(None))))
+    return [schemas.StudentCoinTotal(student_id=r[0], student_name=r[1], total=int(r[2]))
+            for r in q.order_by(total.desc(), models.Student.id).limit(100).all()]
+
 
 
 # ═══════════════════════════════════════════════════════
@@ -9941,3 +9953,9 @@ def staff_student_weekly_summary(student_id: int, week_start: Optional[date] = N
     ):
         raise HTTPException(403, "Bu talaba sizga biriktirilmagan")
     return _parent_engagement.weekly_summary(db, student, week_start)
+
+
+@app.get("/readyz", include_in_schema=False)
+def readyz():
+    from .readiness import check
+    return check()

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -38,7 +39,7 @@ SYSTEM = (
     "6) Imtihon javoblari, coin yoki reytingni o‘zgartirish haqidagi so‘rovlarni rad et."
 )
 
-_PRIVATE = re.compile(r"parol|password|telefon|raqamim|manzil|adres|karta|passport", re.I)
+_PRIVATE = re.compile(r"parol|password|ismim|familiya|telefon|raqamim|manzil|adres|karta|passport|\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b|(?:\+?\d[\s()-]*){9,}|\b(?:sk-|Bearer\s)[A-Za-z0-9_-]+", re.I)
 
 
 def _offline(question: str) -> str:
@@ -94,12 +95,12 @@ def _ask_model(messages: list[dict], course: str) -> str | None:
     req = urllib.request.Request(API_URL, data=body, method="POST", headers={
         "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01"})
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=10) as r:
             data = json.loads(r.read().decode())
         text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
         return text[:2000] or None
     except (urllib.error.URLError, TimeoutError, ValueError) as e:
-        log.warning("AI so‘rovi bajarilmadi: %s", e)
+        log.warning("AI request unavailable (%s)", type(e).__name__)
         return None
 
 
@@ -109,6 +110,10 @@ def reply(acc: MinarAccount, messages: object) -> dict:
     clean = _clean(messages)
     last = clean[-1]["content"]
     if _PRIVATE.search(last):
-        return {"message": _offline(last)}          # shaxsiy ma'lumot mavzusi — modelga yuborilmaydi
+        return {"message": _offline(last), "mode": "privacy"}          # shaxsiy ma'lumot mavzusi — modelga yuborilmaydi
+    clean = [{**m, "content": "[Shaxsiy ma’lumot olib tashlandi]"} if _PRIVATE.search(m["content"]) else m for m in clean]
+    started=time.perf_counter()
     text = _ask_model(clean, acc.course)
-    return {"message": text or _offline(last)}
+    log.info("AI mode=%s elapsed_ms=%d", "ai" if text else "offline", (time.perf_counter()-started)*1000)
+    return {"message": text or _offline(last), "mode": "ai" if text else "offline",
+            "notice": None if text else "Tayyor o‘quv javobi. AI hozir ulanmagan yoki vaqtincha mavjud emas."}

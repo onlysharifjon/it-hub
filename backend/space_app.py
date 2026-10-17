@@ -28,3 +28,9 @@ setup(app, student=True, admin=False)
 def healthz():
     from .minar import battles
     return {"ok": True, "rooms": battles.active_rooms()}
+
+
+@app.get("/readyz", include_in_schema=False)
+def readyz():
+    from .readiness import check
+    return check()

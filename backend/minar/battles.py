@@ -31,6 +31,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import models, security
 from ..database import SessionLocal
 from . import catalog as C
+from . import games
 from .auth import account_usable, origin_allowed
 from .errors import MinarError
 from .models import MinarAccount, MinarBattle
@@ -129,6 +130,7 @@ class Room:
         self.state = "waiting"            # waiting | ready | playing | done | closed
         self.paired = False
         self.match_id = ""
+        self.questions = []
         self.start_ms = 0
         self.prog = {"host": Prog(), "guest": Prog()}
         self.finished: set[str] = set()
@@ -323,11 +325,13 @@ async def _on_message(room: Room, conn: Conn, m: dict) -> bool:
 async def _start(room: Room, conn: Conn) -> None:
     if conn.role != "host" or room.state != "ready" or not room.host or not room.guest:
         return
+    room.questions = games.questions("quiz", room.course, secrets.randbits(31))
     room.state = "playing"
     room.match_id = str(uuid.uuid4())
     room.start_ms = int(time.time() * 1000) + 1000
     payload = {"type": "start", "sender": "server", "at": room.start_ms, "mode": room.mode,
-               "course": room.course, "matchId": room.match_id}
+               "course": room.course, "matchId": room.match_id,
+               "questions": [{"q":q["q"], "options":q["options"]} for q in room.questions]}
     await _send(room.host, payload)
     await _send(room.guest, payload)
     await run_in_threadpool(_db_update, room.id, status="playing", match_id=room.match_id,
@@ -374,8 +378,9 @@ async def _progress(room: Room, conn: Conn, m: dict) -> None:
             return                                   # savolni o'qishga ham ulgurmaydigan tezlik
         p.last_answer_ms = now_ms
         p.answers.append(ai)
-        if ai == C.QUIZ_ANSWERS[room.course][qi]:
+        if ai == room.questions[qi]["answer"]:
             p.score += 1
+        await _send(conn, {"type":"answer", "sender":"server", "index":qi, "correct":ai == room.questions[qi]["answer"], "score":p.score, "matchId":room.match_id})
         p.progress = len(p.answers) / C.QUIZ_TOTAL * 100
         p.done = len(p.answers) == C.QUIZ_TOTAL
     if p.done:

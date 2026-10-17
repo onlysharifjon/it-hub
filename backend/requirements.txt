@@ -13,3 +13,4 @@ redis==5.0.8
 segno==1.6.6
 httpx[http2]==0.27.2
 reportlab==4.2.5
+quickjs-ng==0.17.0.1
