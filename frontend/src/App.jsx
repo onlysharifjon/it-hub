@@ -54,6 +54,7 @@ import { NAV_GROUPS, flatNav, hasPerm } from './constants/nav'
 
 function readHash() {
   const raw = window.location.hash.replace('#', '').trim()
+  if (raw.startsWith('space_guides/')) return 'space_guides'
   return raw || 'lessons'
 }
 

@@ -1,4 +1,4 @@
-"""Build the versioned, offline-readable SPACE manuals served only to superadmin."""
+"""Build the versioned SPACE reader content and files served only to superadmin."""
 from pathlib import Path
 from html import escape
 from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,PageBreak,KeepTogether,ListFlowable,ListItem
@@ -24,7 +24,7 @@ styles['Heading2'].fontName='GuideBold';styles['Heading2'].fontSize=13;styles['H
 DATE='18.10.2026'
 GUIDE=[
 ('Kirish va bo‘limlar',[
-('Superadmin yo‘li','CRM: https://crm.minaracademy.uz. Admin akkaunti bilan kiring → chap menyu → Tizim → Yo‘riqnomalar → kerakli hujjatda Yuklab olish. PDF internet bo‘lmasa ham o‘qiladi. HTML nusxani brauzerda ochish yoki chop etish mumkin. Faqat admin roli hujjatni yuklab oladi; havolani boshqa rolga berish ruxsat bermaydi.'),
+('Superadmin yo‘li','CRM: https://crm.minaracademy.uz. Admin akkaunti bilan kiring → chap menyu → Tizim → Yo‘riqnomalar → kerakli hujjatda Ko‘rish. Hujjat to‘liq matni bilan alohida sahifada ochiladi. Mundarijadan kerakli bo‘limga o‘ting; Yo‘riqnomalarga qaytish tugmasi ro‘yxatni ochadi. Sahifa yorug‘ va qorong‘i rejimga moslashadi. Faqat admin roli hujjatni ko‘radi; havolani boshqa rolga berish ruxsat bermaydi.'),
 ('Yangi ish joylari','Ta’lim menyusidagi SPACE ta’lim bo‘limida dars materiallari, uy vazifalari, loyihalar va savollar boshqariladi. SPACE buyurtmalari bo‘limida sovg‘a buyurtmalari va ombor qoldig‘i yuritiladi. Minar Space bo‘limida akkaunt, QR, parol, kurs va ixtiyoriy yosh toifasi boshqariladi.'),
 ('Rollar','Admin: barcha SPACE boshqaruvi va yo‘riqnomalar. Support teacher: akkauntlar, kurslar, materiallar, o‘quv ishlarini tekshirish va buyurtmalar. Ustoz: o‘z guruhidagi uy vazifalari, loyihalar va o‘ziga biriktirilgan savollar. O‘quvchi: o‘z kabineti, fayllari, javoblari va loyihalari. Ota-ona: faqat o‘ziga bog‘langan farzand ma’lumotlari.')]),
 ('Birinchi sozlash',[
@@ -111,10 +111,17 @@ def pdf(path,title,subtitle,sections):
  doc=SimpleDocTemplate(str(path),pagesize=A4,rightMargin=44,leftMargin=44,topMargin=44,bottomMargin=57,title=title,author='Minar Academy')
  doc.build(story,onFirstPage=page,onLaterPages=page)
 
+def reader(path,title,subtitle,sections):
+ data={'title':title,'subtitle':subtitle,'version':DATE,
+       'sections':[{'title':heading,'blocks':[{'title':name,'body':body} for name,body in blocks]}
+                   for heading,blocks in sections]}
+ path.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+
 def main():
  OUT.mkdir(exist_ok=True)
  subtitle='Admin, ustoz va o‘quvchi uchun amaliy foydalanish yo‘riqnomasi.'
  pdf(OUT/'space-guide.pdf','SPACE foydalanish yo‘riqnomasi',subtitle,GUIDE)
+ reader(OUT/'space-guide.json','SPACE foydalanish yo‘riqnomasi',subtitle,GUIDE)
  html='<!doctype html><html lang="uz"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>SPACE yo‘riqnomasi</title><style>body{max-width:920px;margin:40px auto;padding:20px;font:16px/1.75 system-ui;color:#263348}h1,h2,h3{line-height:1.3}h1{font-size:36px}h2{color:#6553bb;border-top:1px solid #ddd;padding-top:28px;margin-top:40px}nav{background:#f5f3ff;padding:20px;border-radius:15px}a{color:#5546aa}@media print{nav{break-after:page}h2,h3{break-after:avoid}body{font-size:11pt;margin:0}}</style><h1>SPACE foydalanish yo‘riqnomasi</h1><p>'+escape(subtitle)+' · '+DATE+'</p><nav><strong>Mundarija</strong><ol>'
  html+=''.join(f'<li><a href="#s{i}">{escape(h)}</a></li>' for i,(h,_) in enumerate(GUIDE))+'</ol></nav>'
  for i,(h,blocks) in enumerate(GUIDE):
@@ -128,5 +135,6 @@ def main():
  ('Zaxiradan tiklashda qo‘shimcha tuzatish',[('Tarixiy xodim bog‘lanishlari','Tiklash sinovida oldin o‘chirilgan 3 ta xodim identifikatoriga bog‘langan 29 ta audit va 2 ta ogohlantirish yozuvi aniqlandi. Tarix o‘chirilmadi. Ushbu identifikatorlar uchun Arxiv yozuvi nomli, shaxsiy ma’lumotsiz, faol bo‘lmagan akkauntlar qo‘shildi. Asl shaxs va roli noma’lum; ularni faollashtirmang. Login paroli tasodifiy va hech kimga berilmagan; ish haqi hisoblanmaydi.')]),
  ('Operator kiritadigan ma’lumotlar',[('Ombor','Haqiqiy qoldiq admin tomonidan sanab kiritiladi; boshlang‘ich qiymat 0.'),('AI va Telegram','AI kaliti va Telegram kanal sozlamasi mavjud emas. Tayyor yordamchi hamda superadmin ichidagi monitoring ishlaydi. Maxfiy kalitlar hujjatda saqlanmaydi.'),('Kontent va mobil ilova','Materiallarni ustoz o‘quv dasturiga moslab nashr qiladi. Ota-ona API/hisoblari yangilandi; yangi mobil ekranlarni ilova do‘koniga chiqarish ushbu server relizining qismi emas.')])]
  pdf(OUT/'space-changes.pdf','SPACE audit: bajarilgan ishlar','Aniqlangan 26 band bo‘yicha o‘zgarishlar, yangi imkoniyatlar va tekshirish dalillari.',sections)
- print('Generated:', ', '.join(p.name for p in OUT.glob('*') if p.suffix in ('.pdf','.html')))
+ reader(OUT/'space-changes.json','SPACE audit: bajarilgan ishlar','Aniqlangan 26 band bo‘yicha o‘zgarishlar, yangi imkoniyatlar va tekshirish dalillari.',sections)
+ print('Generated:', ', '.join(p.name for p in OUT.glob('*') if p.suffix in ('.pdf','.html','.json')))
 if __name__=='__main__':main()

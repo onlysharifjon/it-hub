@@ -1,0 +1,204 @@
+{
+  "title": "SPACE audit: bajarilgan ishlar",
+  "subtitle": "Aniqlangan 26 band bo‘yicha o‘zgarishlar, yangi imkoniyatlar va tekshirish dalillari.",
+  "version": "18.10.2026",
+  "sections": [
+    {
+      "title": "Audit tuzatishlari",
+      "blocks": [
+        {
+          "title": "A01 · Yagona coin hisobi",
+          "body": "Umumiy balans, ko‘p jarayonli tranzaksiya qulfi, o‘chirish o‘rniga qaytaruvchi yozuv; ota-ona va CRM moslashtirildi."
+        },
+        {
+          "title": "A02–A03 · Battle natijasi va takroriy mukofot",
+          "body": "Faqat serverdagi ishtirokchi va tugagan match qabul qilinadi; match bo‘yicha bir martalik mukofot, mashqqa XP yo‘q."
+        },
+        {
+          "title": "A04 · ZType natijasi",
+          "body": "Har so‘z serverga yuboriladi; so‘z, paydo bo‘lish vaqti va yozish tezligi tekshiriladi; soxta indekslar rad etiladi."
+        },
+        {
+          "title": "A05 · JavaScript tekshirish",
+          "body": "Mijoz yuborgan konsol matni mukofot uchun ishlatilmaydi. QuickJS-NG cheklangan alohida jarayonda kodni bajaradi; qo‘shimcha semantik tekshiruvlar bor."
+        },
+        {
+          "title": "A06 · QR tokenlar",
+          "body": "Parol tiklash, almashtirish va bloklash eski QR tokenlarini ham bekor qiladi."
+        },
+        {
+          "title": "A07 · Eski uy vazifalari",
+          "body": "To‘liq pending hisob, status filtri va sahifalash."
+        },
+        {
+          "title": "A08 · Davomat",
+          "body": "Bir kundagi turli guruh darslari alohida ko‘rsatiladi."
+        },
+        {
+          "title": "A09 · Teng ochkoli turnir",
+          "body": "Ekran reytingi va mukofot bir xil barqaror tartibdan foydalanadi."
+        },
+        {
+          "title": "A10 · AI maxfiyligi",
+          "body": "Suhbat tarixidagi barcha xabarlar shaxsiy ma’lumot bo‘yicha tozalanadi; xatolar jurnaliga matn yoki kalit yozilmaydi."
+        },
+        {
+          "title": "A11 · Test akkauntlari",
+          "body": "Umumiy reyting va turnirda is_test akkauntlar qatnashmaydi."
+        },
+        {
+          "title": "A12 · Dastur holati",
+          "body": "Yuklash xatosi qayta urinish bilan ko‘rsatiladi; kiritilmagan dars yakunlangan deb aytilmaydi."
+        },
+        {
+          "title": "A13 · Bildirishnomalar",
+          "body": "Faqat ko‘rsatilgan IDlar o‘qilgan bo‘ladi; qolganlar sahifalab ochiladi."
+        },
+        {
+          "title": "A14 · Haqiqiy o‘rin",
+          "body": "Server rank va total qaytaradi; 50-o‘rindan past shaxsiy o‘rin saqlanadi; dashboard shu rankni ishlatadi."
+        },
+        {
+          "title": "C01–C02 · Buyurtma va ombor",
+          "body": "CRM ish jarayoni, qoldiq band qilish, nazoratli o‘tishlar, qaytarim va audit; xarid niyati tarmoq qayta urinishida saqlanadi."
+        },
+        {
+          "title": "C03 · Kurslar integratsiyasi",
+          "body": "Guruh-kurs xaritasi, faol guruh tanlash va akkaunt kursini boshqarish; avvalgi tarix saqlanadi."
+        },
+        {
+          "title": "C04 · Yangilanish va sessiya",
+          "body": "Fokus, internet qaytishi va 30 soniyalik yangilash; 401 da login, akkauntga ajratilgan qoralama."
+        },
+        {
+          "title": "C05 · AI rejimi",
+          "body": "Aniq AI/tayyor javob rejimi, 10 soniyalik provayder limiti, xavfsiz xato va kechikish jurnali. Ishlaydigan tashqi AI uchun kalit kerak."
+        },
+        {
+          "title": "C06–C07 · Qoralama va brauzer xavfsizligi",
+          "body": "Akkaunt bo‘yicha kod qoralamasi; chiqishda tozalash; HTML skriptsiz, JS esa vaqt/xotira/tarmoq/fayl cheklovi ostida serverda bajariladi."
+        },
+        {
+          "title": "C08 · Kontent va takrorlash",
+          "body": "48 boshlang‘ich material, CMS, mini-test, bilim xaritasi va 1/3/7/14 kunlik takrorlash."
+        },
+        {
+          "title": "C09 · Tarix chegaralari",
+          "body": "Coin, o‘yin va davomat tarixiga sahifalash va oy filtri; yig‘indilar serverdagi to‘liq davr bo‘yicha."
+        },
+        {
+          "title": "C10 · Monitoring",
+          "body": "Liveness va DB/Redis readiness ajratildi; kutilgan HTTP 200 va JSON tekshiriladi; superadmin status hisoboti."
+        },
+        {
+          "title": "C11 · Yuklama",
+          "body": "Umumiy Python qulfi olib tashlanib talaba/akkaunt bazaviy qulfi qo‘yildi. Bootstrap cheklangan ro‘yxatlar qaytaradi; yutuq ko‘rsatkichlari jamlangan so‘rovda hisoblanadi."
+        },
+        {
+          "title": "C12 · Battle quiz",
+          "body": "Savollar va javob variantlari har match uchun serverda tanlanadi; to‘g‘ri javob frontend boshlang‘ich ma’lumotida yo‘q."
+        }
+      ]
+    },
+    {
+      "title": "Yangi imkoniyatlar",
+      "blocks": [
+        {
+          "title": "Dars materiallarini nashr qilish",
+          "body": "Tayyor materiallar; Yaratish va tahrirlash; Mini-test; O‘quvchi qanday bajaradi"
+        },
+        {
+          "title": "Bugungi o‘qish va bilim xaritasi",
+          "body": "Bosh sahifa; Bilim xaritasi; Kunlik vazifa"
+        },
+        {
+          "title": "Uy vazifasi: o‘quvchi",
+          "body": "Qoralama; Fayl biriktirish; Yuborish va qaytarish; Eski vazifalar"
+        },
+        {
+          "title": "Uy vazifasi: ustoz va admin",
+          "body": "Tekshirish; Fikr va rag‘bat"
+        },
+        {
+          "title": "Portfolio, sertifikat va yordam",
+          "body": "Portfolio; Umumiy havola; Sertifikat; Ustozga savol"
+        },
+        {
+          "title": "Coin, sovg‘a va adolatli motivatsiya",
+          "body": "Yagona balans; Buyurtma oqimi; Bekor qilish; Mukofotlar; Turnir"
+        },
+        {
+          "title": "Tarix, davomat va ota-ona",
+          "body": "To‘liq tarix; Ota-ona"
+        }
+      ]
+    },
+    {
+      "title": "Tekshirish natijalari",
+      "blocks": [
+        {
+          "title": "Backend",
+          "body": "To‘liq to‘plam: 324 ta test muvaffaqiyatli. PostgreSQLga xos 2 ta test SQLite muhitida tashlab ketildi va alohida PostgreSQL sinovida o‘tdi."
+        },
+        {
+          "title": "PostgreSQL",
+          "body": "Yangilangan Minar va audit to‘plami: 114 ta test muvaffaqiyatli. Parallel CRM/SPACE sarfi, oxirgi sovg‘a uchun raqobat, kurs, mukofot, yo‘riqnoma ruxsatlari va readiness tekshirildi."
+        },
+        {
+          "title": "Frontend",
+          "body": "SPACE production build va 18 ta Node testi muvaffaqiyatli. CRM production build muvaffaqiyatli."
+        },
+        {
+          "title": "Brauzer",
+          "body": "Chromium: o‘quvchi va admin sahifalari; PDF yuklash; offline qoralama → ulanish → qayta ochish; vazifa → qaytarish → qayta topshirish → 93/100 baho; dars testi; mavzuga bog‘langan savol/javob; portfolio tasdig‘i/ulashish/yopish; xarid → tayyor → topshirildi tekshirildi. Konsol xatosi kuzatilmadi."
+        },
+        {
+          "title": "Mobil ko‘rinish",
+          "body": "390×844 ekran emulyatsiyasida 9 ta asosiy bo‘lim tekshirildi; gorizontal chiqib ketish kuzatilmadi. Haqiqiy Android/iOS qurilmasi va ekran o‘quvchi bilan alohida sinov bajarilmagan."
+        },
+        {
+          "title": "Monitoring",
+          "body": "3 ta alohida test: HTTP status, readiness javobi va eskirgan zaxira. Backend sinovida baza yoki Redis ishlamasa readiness 503 qaytarishi tekshirildi."
+        },
+        {
+          "title": "Zaxira va migratsiya",
+          "body": "Relizdan oldin PostgreSQL, yuklangan fayllar va bot bazasi nusxalandi. Haqiqiy nusxa alohida PostgreSQL bazasiga tiklandi, ikkala migratsiya qo‘llandi, 48 modul yaratildi. Tarixiy xodim bog‘lanishlari tuzatilgandan keyin ikkinchi to‘liq dump/restore xatosiz o‘tdi; sinov nusxalari o‘chirildi."
+        },
+        {
+          "title": "Tezlik",
+          "body": "Sintetik muhit: bootstrap 28 SQL so‘rovi, holat JSON 5.7 KB. 5 parallel ulanishdagi 30 HTTP so‘rov: median 318 ms, P95 463 ms, xato yo‘q. Bu production pik yuklama kafolati emas."
+        },
+        {
+          "title": "Tashqi xizmatlar",
+          "body": "AI provayder kaliti va Telegram manzili mavjud emasligi sabab haqiqiy provayder/Telegram yuborish sinovi bajarilmadi. Tayyor o‘quv yordamchisi va superadmin ichidagi holat oynasi ishlatiladi. Jonli talabalarga sinov xabarlari yuborilmadi."
+        }
+      ]
+    },
+    {
+      "title": "Zaxiradan tiklashda qo‘shimcha tuzatish",
+      "blocks": [
+        {
+          "title": "Tarixiy xodim bog‘lanishlari",
+          "body": "Tiklash sinovida oldin o‘chirilgan 3 ta xodim identifikatoriga bog‘langan 29 ta audit va 2 ta ogohlantirish yozuvi aniqlandi. Tarix o‘chirilmadi. Ushbu identifikatorlar uchun Arxiv yozuvi nomli, shaxsiy ma’lumotsiz, faol bo‘lmagan akkauntlar qo‘shildi. Asl shaxs va roli noma’lum; ularni faollashtirmang. Login paroli tasodifiy va hech kimga berilmagan; ish haqi hisoblanmaydi."
+        }
+      ]
+    },
+    {
+      "title": "Operator kiritadigan ma’lumotlar",
+      "blocks": [
+        {
+          "title": "Ombor",
+          "body": "Haqiqiy qoldiq admin tomonidan sanab kiritiladi; boshlang‘ich qiymat 0."
+        },
+        {
+          "title": "AI va Telegram",
+          "body": "AI kaliti va Telegram kanal sozlamasi mavjud emas. Tayyor yordamchi hamda superadmin ichidagi monitoring ishlaydi. Maxfiy kalitlar hujjatda saqlanmaydi."
+        },
+        {
+          "title": "Kontent va mobil ilova",
+          "body": "Materiallarni ustoz o‘quv dasturiga moslab nashr qiladi. Ota-ona API/hisoblari yangilandi; yangi mobil ekranlarni ilova do‘koniga chiqarish ushbu server relizining qismi emas."
+        }
+      ]
+    }
+  ]
+}

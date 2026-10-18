@@ -241,6 +241,27 @@ def test_guides_are_downloadable_only_by_superadmin(client,admin_token,teacher_t
     assert client.get('/space/admin/guides/../models.py',headers=H(admin_token)).status_code==404
 
 
+def test_guides_reader_exposes_full_documents_only_to_superadmin(client,admin_token,teacher_token,metodist_token):
+    from backend.minar.guides import CONTENTS,DOCS
+    index=client.get('/space/admin/guides',headers=H(admin_token)).json()
+    assert {g['id'] for g in index}==set(CONTENTS)
+    for guide in index:
+        url='/space/admin/guides/'+guide['id']+'/content'
+        assert client.get(url).status_code==401
+        for token in (teacher_token,metodist_token):
+            assert client.get(url,headers=H(token)).status_code==403
+        response=client.get(url,headers=H(admin_token))
+        assert response.status_code==200
+        assert response.headers['cache-control']=='private, no-store'
+        assert 'content-disposition' not in response.headers
+        data=response.json()
+        assert data==json.loads((DOCS/CONTENTS[guide['id']]).read_text(encoding='utf-8'))
+        assert data['title'] and data['version'] and len(data['sections'])>=5
+        assert all(section['title'] and section['blocks'] and all(block['title'] and block['body'] for block in section['blocks']) for section in data['sections'])
+    for name in ('missing.pdf','verification.json','space-guide.json','%2e%2e%2fmodels.py'):
+        assert client.get('/space/admin/guides/'+name+'/content',headers=H(admin_token)).status_code==404
+
+
 def test_completed_course_has_daily_practice_between_review_dates(client,db,acct,admin_token):
     c=content(client,admin_token)
     public=client.get('/space/study/content/'+str(c['id'])).json()
