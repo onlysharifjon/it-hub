@@ -3923,7 +3923,57 @@ def finance_monthly(
     """Oylik moliyaviy kesim — o'quvchilar tafsiloti bilan."""
     data = _finance_month(db, month, year, with_students=True)
     _attach_unpaid_streaks(db, data)
+    data["debtors"] = _cumulative_debtors(db, month, year)
     return data
+
+
+def _cumulative_debtors(db: Session, month: int, year: int, lookback: int = 6) -> list:
+    """Qarzdorlar ro'yxati — To'lovlar sahifasi bilan AYNAN bir xil hisob.
+
+    `_students_payment_map` (jamlangan qarz: ro'yxatdan o'tgandan so'ralgan oygacha
+    jami majburiyat − jami to'lov − avans) va `/students?is_active=true` bilan bir
+    xil talabalar to'plami (arxiv va demo chiqarilgan). Shu sababli Moliya →
+    Qarzdorlik va To'lovlar → Qarzdorlik summasi doim teng chiqadi.
+    """
+    students = (
+        db.query(models.Student)
+        .options(joinedload(models.Student.group_memberships).joinedload(models.GroupStudent.tariff),
+                 joinedload(models.Student.group_memberships).joinedload(models.GroupStudent.group))
+        .filter(models.Student.is_active == True,     # noqa: E712
+                models.Student.is_archived == False,  # noqa: E712
+                models.Student.is_demo == False)      # noqa: E712
+        .all()
+    )
+    pmap = _students_payment_map(db, students, month, year)
+    debtors = [s for s in students if pmap[s.id][3] == "debtor"]
+    if not debtors:
+        return []
+
+    # "Necha oydan beri to'lov yo'q" — talaba bo'yicha (guruhdan qat'i nazar)
+    periods = _month_offsets(month, year, lookback)
+    rows = db.query(models.Payment.student_id, models.Payment.month, models.Payment.year).filter(
+        models.Payment.student_id.in_([s.id for s in debtors]),
+        models.Payment.year.in_({y for _, y in periods}),
+    ).all()
+    paid = {(sid, m, y) for sid, m, y in rows}
+
+    out = []
+    for s in debtors:
+        streak = 0
+        for m, y in reversed(periods):
+            if (s.id, m, y) in paid:
+                break
+            streak += 1
+        out.append({
+            "student_id": s.id,
+            "student_name": s.full_name,
+            "phone": s.phone1,
+            "group_names": [m.group.name for m in s.group_memberships if m.group and m.left_at is None],
+            "debt": float(pmap[s.id][2]),
+            "months_without_payment": streak,
+        })
+    out.sort(key=lambda d: d["debt"], reverse=True)
+    return out
 
 
 # ── Kassa (naqd oqim) ────────────────────────────────────────────────────────

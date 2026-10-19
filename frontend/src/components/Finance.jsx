@@ -137,18 +137,10 @@ export default function Finance({ onNavigate }) {
     return map
   }, [trend])
 
-  // ── Qarzdorlar (guruhlar bo'ylab birlashgan) ──────────────────────────────
-  const debtors = useMemo(() => {
-    const out = []
-    for (const g of groups) {
-      for (const s of (g.unpaid_students || [])) {
-        out.push({ ...s, group_id: g.group_id, group_name: g.group_name })
-      }
-    }
-    return out.sort((a, b) => b.owed - a.owed)
-  }, [groups])
-
-  const totalDebt = debtors.reduce((s, d) => s + Number(d.owed || 0), 0)
+  // ── Qarzdorlar — jamlangan qarz, To'lovlar sahifasi bilan bir xil hisob ──
+  const debtors = data?.debtors || []
+  const totalDebt = debtors.reduce((s, d) => s + Number(d.debt || 0), 0)
+  const unpaidThisMonth = groups.reduce((s, g) => s + (g.unpaid_count || 0), 0)
   const chronic = debtors.filter(d => (d.months_without_payment || 0) >= 3)
 
   const groupRows = useMemo(() => groups.map(g => {
@@ -158,9 +150,9 @@ export default function Finance({ onNavigate }) {
       collection: g.expected > 0 ? (g.actual / g.expected) * 100 : null,
       risk: risk.level,
       riskScore: risk.score,
-      debtShare: totalDebt > 0 ? (g.deficit / totalDebt) * 100 : 0,
+      debtShare: data?.total_deficit > 0 ? (g.deficit / data.total_deficit) * 100 : 0,
     }
-  }), [groups, totalDebt])
+  }), [groups, data])
 
   const watchList = useMemo(
     () => groupRows.filter(g => g.deficit > 0).sort((a, b) => b.riskScore - a.riskScore).slice(0, 3),
@@ -180,11 +172,11 @@ export default function Finance({ onNavigate }) {
         sub: avgCollection != null ? `6 oylik o'rtacha ${avgCollection.toFixed(1)}%` : null,
       })
     }
-    const top5 = debtors.slice(0, 5).reduce((s, d) => s + d.owed, 0)
+    const top5 = debtors.slice(0, 5).reduce((s, d) => s + d.debt, 0)
     if (debtors.length > 5 && totalDebt > 0) {
       out.push({
         id: 'concentration', tone: 'info',
-        text: `Eng katta 5 qarzdor jami qoldiqning ${Math.round(top5 / totalDebt * 100)}% ini tashkil qiladi`,
+        text: `Eng katta 5 qarzdor jami qarzning ${Math.round(top5 / totalDebt * 100)}% ini tashkil qiladi`,
         sub: `${money(top5)} / ${money(totalDebt)}`,
       })
     }
@@ -192,7 +184,7 @@ export default function Finance({ onNavigate }) {
     if (worst && worst.debtShare >= 15) {
       out.push({
         id: 'worst-group', tone: 'warning',
-        text: `${worst.group_name} guruhi qoldiqning ${Math.round(worst.debtShare)}% ini beryapti`,
+        text: `${worst.group_name} guruhi shu oy yig'ilmagan summaning ${Math.round(worst.debtShare)}% ini beryapti`,
         sub: `${money(worst.deficit)} · ${worst.unpaid_count} o'quvchi to'lamagan`,
         action: () => { setFinanceView('groups'); setExpanded(worst.group_id) },
         actionLabel: "O'quvchilarni ko'rish",
@@ -210,7 +202,7 @@ export default function Finance({ onNavigate }) {
       out.push({
         id: 'chronic', tone: 'danger',
         text: `${chronic.length} o'quvchi 3+ oydan beri to'lov qilmagan`,
-        sub: `Jami ${money(chronic.reduce((s, d) => s + d.owed, 0))}`,
+        sub: `Jami ${money(chronic.reduce((s, d) => s + d.debt, 0))}`,
       })
     }
     return out
@@ -331,7 +323,7 @@ export default function Finance({ onNavigate }) {
       ) : data ? (
         <>
           {/* ── 2. KPI: bitta yetakchi raqam + uchta yordamchi ── */}
-          <SummaryRow items={[{ label: 'Kutilayotgan to‘lovlar', value: fmt(data.total_expected), unit: 'so‘m', sub: groups.length + ' guruh · ' + totals.students + ' talaba' }, { label: 'Yig‘ilgan', value: fmt(data.total_actual), unit: 'so‘m', tone: 'success', sub: collectionPct.toFixed(1) + '% yig‘ilish' }, { label: 'Qoldiq', value: fmt(data.total_deficit), unit: 'so‘m', sub: debtors.length + ' ta talaba', tone: 'danger' }]} />
+          <SummaryRow items={[{ label: 'Kutilayotgan to‘lovlar', value: fmt(data.total_expected), unit: 'so‘m', sub: groups.length + ' guruh · ' + totals.students + ' talaba' }, { label: 'Yig‘ilgan', value: fmt(data.total_actual), unit: 'so‘m', tone: 'success', sub: collectionPct.toFixed(1) + '% yig‘ilish' }, { label: 'Shu oy yig‘ilmagan', value: fmt(data.total_deficit), unit: 'so‘m', sub: unpaidThisMonth + ' ta talaba', tone: 'warning' }, { label: 'Jami qarzdorlik', value: fmt(totalDebt), unit: 'so‘m', sub: debtors.length + ' ta qarzdor', tone: 'danger' }]} />
           <ViewTabs value={financeView} onChange={setFinanceView} items={[{ key: 'overview', label: 'Umumiy tahlil' }, { key: 'groups', label: 'Guruhlar kesimi', count: groups.length }, { key: 'debtors', label: 'Qarzdorlik', count: debtors.length }]} />
           {financeView === 'overview' && <>
           {/* ── 3. Trend va tahlil: trend — sahifaning asosiy grafigi ── */}
@@ -345,7 +337,7 @@ export default function Finance({ onNavigate }) {
                 label="Yig‘ilish darajasi"
                 segments={[
                   { label: "Yig'ilgan", value: data.total_actual, tone: 'success' },
-                  { label: 'Qoldiq', value: data.total_deficit, tone: 'danger' },
+                  { label: 'Yig‘ilmagan', value: data.total_deficit, tone: 'danger' },
                 ]}
                 format={money}
               />
@@ -445,7 +437,7 @@ export default function Finance({ onNavigate }) {
 
           </>}
           {financeView === 'debtors' && <>
-          {debtors.length === 0 && <EmptyState title="Qarzdorlik yo‘q" description="Tanlangan davrda to‘lov kutilayotgan talabalar yo‘q." />}
+          {debtors.length === 0 && <EmptyState title="Qarzdorlik yo‘q" description="Tanlangan oygacha jamlangan qarzi bor talaba yo‘q." />}
           {/* ── 6. To'lov kutilmoqda ── */}
           {debtors.length > 0 && (
             <section className="fin-card fin-debtors" aria-label="Qarzdorlar">
@@ -462,7 +454,7 @@ export default function Finance({ onNavigate }) {
                 {debtors.slice(0, debtorLimit).map((d, i) => {
                   const mo = d.months_without_payment || 0
                   return (
-                    <li key={`${d.group_id}-${d.student_id}`} className={`fin-debtor${i < 3 ? ' is-top' : ''}`}>
+                    <li key={d.student_id} className={`fin-debtor${i < 3 ? ' is-top' : ''}`}>
                       <span className="fin-debtor-rank num">{i + 1}</span>
                       <span className="fin-debtor-name">
                         {d.student_name}
@@ -473,12 +465,10 @@ export default function Finance({ onNavigate }) {
                         )}
                       </span>
                       <span className="fin-debtor-meta">
-                        <FontAwesomeIcon icon={faUserGroup} /> {d.group_name}
-                        {d.tariff_name && <> · {d.tariff_name}</>}
-                        {d.total_lessons_held > 0 && <> · {d.attended}/{d.total_lessons_held} dars</>}
+                        <FontAwesomeIcon icon={faUserGroup} /> {d.group_names?.length ? d.group_names.join(', ') : 'guruhsiz'}
                       </span>
                       <span className="fin-debtor-owed num">
-                        {fmt(d.owed)}<em>so'm</em>
+                        {fmt(d.debt)}<em>so'm</em>
                       </span>
                       <span className="fin-debtor-act">
                         {d.phone ? (
