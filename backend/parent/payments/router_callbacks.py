@@ -2,6 +2,7 @@
 
 nginx orqali tashqi manzillar (PUBLIC_BASE_URL + /api):
   POST /api/payment-callbacks/payme
+  POST /api/payme                       (alias — Payme kabinetidagi URL)
   POST /api/payment-callbacks/click/prepare
   POST /api/payment-callbacks/click/complete
   POST /api/payment-callbacks/uzum/{check|create|confirm|reverse|status}
@@ -15,9 +16,11 @@ from ...database import get_db
 from . import click, payme, uzum
 
 router = APIRouter(prefix="/payment-callbacks", tags=["payment-callbacks"], include_in_schema=False)
+alias_router = APIRouter(tags=["payment-callbacks"], include_in_schema=False)
 
 
 @router.post("/payme")
+@alias_router.post("/payme")
 async def payme_callback(request: Request, db: Session = Depends(get_db)):
     return await payme.handle(request, db)
 

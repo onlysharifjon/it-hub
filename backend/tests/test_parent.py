@@ -693,6 +693,14 @@ def test_payme_non_json_and_unknown_method(client, db, providers):
     assert _payme(client, "Hack", {}).json()["error"]["code"] == -32601
 
 
+def test_payme_alias_path(client, db, providers):
+    auth = base64.b64encode(f"Paycom:{PAYME_KEY}".encode()).decode()
+    r = client.post("/payme", headers={"Authorization": f"Basic {auth}"},
+                    json={"jsonrpc": "2.0", "id": 1, "method": "Hack", "params": {}})
+    assert r.status_code == 200 and r.json()["error"]["code"] == -32601
+    assert client.post("/payme", json={}).json()["error"]["code"] == -32504
+
+
 # ── Click ────────────────────────────────────────────────────────────────────
 
 def _click(client, path, inv_id, amount, action, ctid="ck-1", prepare_id=None, error=0, secret=CLICK_SECRET):
