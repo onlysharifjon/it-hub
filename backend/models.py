@@ -574,7 +574,7 @@ class Parent(Base):
 
 
 class ParentReleaseConfig(Base):
-    """CRM boshqaradigan yagona parent iOS release holati."""
+    """CRM boshqaradigan iOS va Android parent release holati."""
     __tablename__ = "parent_release_config"
 
     id = Column(Integer, primary_key=True, default=1)
@@ -584,6 +584,9 @@ class ParentReleaseConfig(Base):
     min_supported_build = Column(Integer, nullable=False, default=1)
     latest_build = Column(Integer, nullable=False, default=5)
     app_store_url = Column(String(500), nullable=False)
+    android_min_supported_build = Column(Integer, nullable=False, default=1)
+    android_latest_build = Column(Integer, nullable=False, default=1)
+    play_store_url = Column(String(500), nullable=False, default="")
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
@@ -592,6 +595,8 @@ class ParentReleaseConfig(Base):
         CheckConstraint("id = 1", name="ck_parent_release_config_singleton"),
         CheckConstraint("min_supported_build >= 1", name="ck_parent_release_min_build"),
         CheckConstraint("latest_build >= min_supported_build", name="ck_parent_release_latest_build"),
+        CheckConstraint("android_min_supported_build >= 1", name="ck_parent_release_android_min_build"),
+        CheckConstraint("android_latest_build >= android_min_supported_build", name="ck_parent_release_android_latest_build"),
     )
 
 
@@ -679,7 +684,7 @@ class ParentPushDevice(Base):
     id = Column(Integer, primary_key=True)
     parent_id = Column(Integer, ForeignKey("parents.id", ondelete="CASCADE"), nullable=False, index=True)
     token_hash = Column(String(64), nullable=False, unique=True)
-    token = Column(String(200), nullable=False)
+    token = Column(String(4096), nullable=False)
     platform = Column(String(12), nullable=False, default="ios")
     environment = Column(String(12), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

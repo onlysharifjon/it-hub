@@ -51,6 +51,33 @@ def test_push_token_ownership_preferences_and_account_deletion(client, db):
     assert db.query(ParentPushDevice).count() == 0
 
 
+def test_android_fcm_token_is_opaque_case_sensitive_and_owned(client, db):
+    student = _mk_student(db)
+    first = _mk_parent(db, [student])
+    h1 = _h(client)
+    second = _mk_parent(db, [student], phone="+998909990011")
+    h2 = _h(client, second.phone)
+    token = "fcm:AbCdEfGhIjKlMnOpQrStUvWxYz1234567890"
+    payload = {"token": token, "platform": "android"}
+    assert client.post("/parent/push-devices", headers=h1, json=payload).status_code == 204
+    row = db.query(ParentPushDevice).one()
+    assert row.parent_id == first.id and row.token == token
+    assert row.platform == "android" and row.environment == "fcm"
+    assert client.delete(f"/parent/push-devices/{token}", headers=h2).status_code == 204
+    assert db.query(ParentPushDevice).count() == 1
+    assert client.post("/parent/push-devices", headers=h2, json=payload).status_code == 204
+    db.expire_all()
+    assert db.query(ParentPushDevice).one().parent_id == second.id
+    assert client.delete(f"/parent/push-devices/{token.lower()}", headers=h2).status_code == 204
+    assert db.query(ParentPushDevice).count() == 1
+    assert client.delete(f"/parent/push-devices/{token}", headers=h2).status_code == 204
+    assert db.query(ParentPushDevice).count() == 0
+    assert client.post("/parent/push-devices", headers=h1,
+                       json={**payload, "environment": "sandbox"}).status_code == 422
+    assert client.post("/parent/push-devices", headers=h1,
+                       json={"token": "x" * 64, "platform": "ios"}).status_code == 422
+
+
 def test_absence_explanation_review_retry_and_child_ownership(client, db):
     child = _mk_student(db)
     other = _mk_student(db, "Other child", "+998900000002")
@@ -288,6 +315,38 @@ def test_apns_payload_contains_no_private_student_details(client, db, monkeypatc
     assert fake.payloads[0]["screen"] == "payments"
     assert fake.payloads[0]["child_id"] == child.id
     assert "Very Private Name" not in str(fake.payloads) and "700000" not in str(fake.payloads)
+
+
+def test_fcm_data_only_payload_contains_no_private_student_details(client, db, monkeypatch):
+    child = _mk_student(db, name="Very Private Name")
+    parent = _mk_parent(db, [child])
+    h = _h(client)
+    token = "fcm:AbCdEfGhIjKlMnOpQrStUvWxYz1234567890"
+    assert client.post("/parent/push-devices", headers=h, json={
+        "token": token, "platform": "android",
+    }).status_code == 204
+    db.add(ParentNotification(parent_id=parent.id, student_id=child.id, type="payment",
+                              title="Debt 700000", body="Very Private Name owes 700000"))
+    db.commit()
+    monkeypatch.setenv("PARENT_FCM_PROJECT_ID", "minar-academy")
+
+    class Client:
+        calls = []
+        def post(self, url, json, headers):
+            self.calls.append((url, json))
+            class Response:
+                status_code = 200
+            return Response()
+
+    fake = Client()
+    assert dispatch_batch(db, fake, {}, fcm_bearer="test-bearer") == 1
+    url, payload = fake.calls[0]
+    assert url == "https://fcm.googleapis.com/v1/projects/minar-academy/messages:send"
+    message = payload["message"]
+    assert message["token"] == token
+    assert message["data"] == {"screen": "payments", "type": "payment", "child_id": str(child.id)}
+    assert "notification" not in message
+    assert "Very Private Name" not in str(payload) and "700000" not in str(payload)
 
 
 def test_apns_transient_error_retries_with_backoff(client, db, monkeypatch):

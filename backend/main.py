@@ -616,7 +616,9 @@ def update_parent_release_config(
     response.headers["Cache-Control"] = "no-store"
     row = db.query(models.ParentReleaseConfig).filter(models.ParentReleaseConfig.id == 1).with_for_update().first()
     old_value = parent_release.admin_config(db)
-    new_value = payload.dict()
+    # Older CRM clients send only the iOS fields. Preserve Android controls when
+    # those fields are absent instead of writing Pydantic's None defaults.
+    new_value = payload.dict(exclude_unset=True)
     if {key: old_value[key] for key in new_value} == new_value:
         return old_value
     if row is None:

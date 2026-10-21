@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from .. import models, security, tz, uploads_sign
 from ..database import get_db
 from ..phone_utils import normalize_phone
-from . import apns, engagement, release_config, schemas, service
+from . import apns, engagement, fcm, release_config, schemas, service
 from .deps import get_current_parent, get_owned_child
 from .errors import api_error, request_id
 from .payments import config as pay_config
@@ -202,6 +202,7 @@ def parent_app_config(parent: models.Parent = Depends(get_current_parent)):
         account_deletion_enabled=ACCOUNT_DELETION_ENABLED,
         privacy_policy_url="https://crm.minaracademy.uz/api/parent/privacy.html",
         push_enabled=apns.configured(),
+        android_push_enabled=fcm.enabled(),
         absence_explanations_enabled=_feature_enabled("PARENT_ABSENCE_EXPLANATIONS_ENABLED"),
         weekly_summary_enabled=_feature_enabled("PARENT_WEEKLY_SUMMARY_ENABLED"),
         teacher_questions_enabled=_feature_enabled("PARENT_TEACHER_QUESTIONS_ENABLED"),
@@ -621,30 +622,33 @@ def _preferences_read(row: models.ParentNotificationPreference) -> schemas.Notif
 def register_push_device(payload: schemas.PushDeviceCreate,
                          parent: models.Parent = Depends(get_current_parent),
                          db: Session = Depends(get_db)):
-    token = payload.token.lower()
+    token = payload.token.lower() if payload.platform == "ios" else payload.token
     digest = hashlib.sha256(token.encode("ascii")).hexdigest()
     row = db.query(models.ParentPushDevice).filter(models.ParentPushDevice.token_hash == digest).first()
     now = datetime.utcnow()
     if row:
         row.parent_id = parent.id
-        row.environment = payload.environment
+        row.platform = payload.platform
+        row.environment = payload.environment or "fcm"
         row.updated_at = now
     else:
         db.add(models.ParentPushDevice(
             parent_id=parent.id, token_hash=digest, token=token,
-            platform="ios", environment=payload.environment,
+            platform=payload.platform, environment=payload.environment or "fcm",
             created_at=now, updated_at=now,
         ))
     db.commit()
     return Response(status_code=204)
 
 
-@router.delete("/push-devices/{token}", status_code=204, response_class=Response)
+@router.delete("/push-devices/{token:path}", status_code=204, response_class=Response)
 def unregister_push_device(token: str, parent: models.Parent = Depends(get_current_parent),
                            db: Session = Depends(get_db)):
-    if not re.fullmatch(r"[a-fA-F0-9]{64}", token):
+    if (not 20 <= len(token) <= 4096 or ".." in token
+            or any(not 33 <= ord(char) <= 126 for char in token)):
         raise api_error("validation_error", "Push token noto'g'ri", 422)
-    digest = hashlib.sha256(token.lower().encode("ascii")).hexdigest()
+    normalized = token.lower() if re.fullmatch(r"[a-fA-F0-9]{64}", token) else token
+    digest = hashlib.sha256(normalized.encode("ascii")).hexdigest()
     db.query(models.ParentPushDevice).filter(
         models.ParentPushDevice.token_hash == digest,
         models.ParentPushDevice.parent_id == parent.id,

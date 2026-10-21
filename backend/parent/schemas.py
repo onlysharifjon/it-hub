@@ -43,6 +43,7 @@ class ParentAppCapabilities(BaseModel):
     account_deletion_enabled: bool = True
     privacy_policy_url: str
     push_enabled: bool = False
+    android_push_enabled: bool = False
     absence_explanations_enabled: bool = False
     weekly_summary_enabled: bool = False
     teacher_questions_enabled: bool = False
@@ -56,6 +57,9 @@ class ParentReleaseConfigPublic(BaseModel):
     min_supported_build: int
     latest_build: int
     app_store_url: str
+    android_min_supported_build: int
+    android_latest_build: int
+    play_store_url: str
 
 
 class ParentReleaseConfigAdmin(ParentReleaseConfigPublic):
@@ -70,6 +74,9 @@ class ParentReleaseConfigUpdate(_Strict):
     min_supported_build: conint(strict=True, ge=1, le=999999999)
     latest_build: conint(strict=True, ge=1, le=999999999)
     app_store_url: str = Field(..., min_length=1, max_length=500)
+    android_min_supported_build: Optional[conint(strict=True, ge=1, le=999999999)] = None
+    android_latest_build: Optional[conint(strict=True, ge=1, le=999999999)] = None
+    play_store_url: Optional[str] = Field(None, max_length=500)
 
     @validator("maintenance_title", "maintenance_message")
     def nonblank_text(cls, value):
@@ -88,10 +95,32 @@ class ParentReleaseConfigUpdate(_Strict):
             raise ValueError("Faqat Minar Parents App Store havolasi qabul qilinadi")
         return value
 
+    @validator("play_store_url")
+    def google_play_link(cls, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return ""  # The Play listing does not exist until review is complete.
+        parsed = urlsplit(value)
+        if (parsed.scheme != "https" or parsed.netloc != "play.google.com"
+                or parsed.path != "/store/apps/details" or parsed.fragment
+                or parsed.query != "id=uz.minaracademy.parents"):
+            raise ValueError("Faqat Minar Parents Google Play havolasi qabul qilinadi")
+        return value
+
     @root_validator(skip_on_failure=True)
     def build_order(cls, values):
         if values["latest_build"] < values["min_supported_build"]:
             raise ValueError("latest_build min_supported_build dan kichik bo'lmasin")
+        android_min = values.get("android_min_supported_build")
+        android_latest = values.get("android_latest_build")
+        if (android_min is None) != (android_latest is None):
+            raise ValueError("Android build chegaralari birga yuborilsin")
+        if android_min is not None and android_latest < android_min:
+            raise ValueError("android_latest_build android_min_supported_build dan kichik bo'lmasin")
+        if android_min is not None and android_min > 1 and not values.get("play_store_url"):
+            raise ValueError("Majburiy Android yangilash uchun Google Play havolasi kerak")
         return values
 
 
@@ -219,9 +248,20 @@ class ParentNotificationRead(BaseModel):
 
 
 class PushDeviceCreate(_Strict):
-    token: str = Field(..., regex=r"^[a-fA-F0-9]{64}$")
-    platform: str = Field(..., regex="^ios$")
-    environment: str = Field(..., regex="^(sandbox|production)$")
+    token: str = Field(..., min_length=20, max_length=4096)
+    platform: str = Field(..., regex="^(ios|android)$")
+    environment: Optional[str] = Field(None, regex="^(sandbox|production)$")
+
+    @root_validator(skip_on_failure=True)
+    def validate_platform_token(cls, values):
+        token = values["token"]
+        if values["platform"] == "ios":
+            if not re.fullmatch(r"[a-fA-F0-9]{64}", token) or not values.get("environment"):
+                raise ValueError("iOS uchun 64 belgili APNs token va muhit kerak")
+        elif (values.get("environment") is not None or ".." in token
+              or any(not 33 <= ord(char) <= 126 for char in token)):
+            raise ValueError("Android FCM token noto'g'ri")
+        return values
 
 
 class NotificationPreferences(BaseModel):

@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..database import SessionLocal
+from . import fcm
 
 log = logging.getLogger("ithub.parent.apns")
 
@@ -76,10 +77,15 @@ def _enabled(db: Session, row: models.ParentNotification) -> bool:
     return prefs is None or bool(getattr(prefs, field))
 
 
-def dispatch_batch(db: Session, client, bearers: dict[str, str], *, limit: int = 100) -> int:
-    """Process committed notifications with bounded backoff for transient APNs errors."""
+def dispatch_batch(db: Session, client, bearers: dict[str, str], *, limit: int = 100,
+                   fcm_bearer: str | None = None, fcm_enabled: bool = False) -> int:
+    """Process committed notifications for APNs and FCM with bounded retries."""
     now = datetime.utcnow()
     not_before = activation_cutoff() or datetime.min
+    db.query(models.ParentPushDevice).filter(
+        models.ParentPushDevice.updated_at < now - timedelta(days=90),
+    ).delete(synchronize_session=False)
+    db.commit()
     rows = db.query(models.ParentNotification).join(
         models.Parent, models.Parent.id == models.ParentNotification.parent_id,
     ).filter(
@@ -100,6 +106,32 @@ def dispatch_batch(db: Session, client, bearers: dict[str, str], *, limit: int =
                 models.ParentPushDevice.updated_at >= now - timedelta(days=90),
             ).all()
             for device in devices:
+                if device.platform == "android":
+                    if not fcm_bearer:
+                        if fcm_enabled:
+                            error, retry = "fcm_auth_unavailable", True
+                        continue
+                    try:
+                        response = fcm.send(
+                            client, fcm_bearer, token=device.token,
+                            screen=SCREEN_BY_TYPE.get(row.type, "notifications"),
+                            kind=row.type, child_id=row.student_id,
+                        )
+                        if response.status_code == 200:
+                            sent += 1
+                        else:
+                            error = f"fcm_{response.status_code}"
+                            status = fcm.error_status(response)
+                            if status == "UNREGISTERED":
+                                db.delete(device)
+                            elif response.status_code in (401, 403, 429) or response.status_code >= 500:
+                                retry = True
+                    except Exception as exc:
+                        error = type(exc).__name__[:120]
+                        retry = True
+                    continue
+                if device.platform != "ios":
+                    continue
                 bearer = bearers.get(device.environment)
                 if not bearer:
                     # An optional sandbox device must not block production delivery.
@@ -149,8 +181,8 @@ def dispatch_batch(db: Session, client, bearers: dict[str, str], *, limit: int =
 
 
 def start_scheduler() -> threading.Thread | None:
-    if not configured():
-        log.info("Parent APNs disabled; configure key/team/topic to enable")
+    if not configured() and not fcm.configured():
+        log.info("Parent push disabled; configure APNs or FCM credentials to enable")
         return None
 
     def loop() -> None:
@@ -158,6 +190,8 @@ def start_scheduler() -> threading.Thread | None:
         with httpx.Client(http2=True, timeout=8) as client:
             bearers: dict[str, str] = {}
             issued: dict[str, float] = {}
+            fcm_bearer: str | None = None
+            fcm_expiry = 0.0
             while True:
                 try:
                     for environment in ("production", "sandbox"):
@@ -165,9 +199,17 @@ def start_scheduler() -> threading.Thread | None:
                                                             time.time() - issued[environment] > 40 * 60):
                             bearers[environment] = _auth_token(environment)
                             issued[environment] = time.time()
+                    android_enabled = fcm.configured()
+                    if android_enabled and time.time() >= fcm_expiry:
+                        try:
+                            fcm_bearer, fcm_expiry = fcm.authorization_token(client)
+                        except Exception:
+                            fcm_bearer, fcm_expiry = None, time.time() + 30
+                            log.exception("FCM OAuth refresh failed; retrying")
                     db = SessionLocal()
                     try:
-                        dispatch_batch(db, client, bearers)
+                        dispatch_batch(db, client, bearers, fcm_bearer=fcm_bearer,
+                                       fcm_enabled=android_enabled)
                     finally:
                         db.close()
                 except Exception:

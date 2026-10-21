@@ -1,4 +1,4 @@
-"""Parent iOS release status: public snapshot and server-side legacy client gate."""
+"""Parent iOS/Android release status with separate build gates per platform."""
 from __future__ import annotations
 
 import logging
@@ -20,6 +20,9 @@ DEFAULT_CONFIG = {
     "min_supported_build": 1,
     "latest_build": 5,
     "app_store_url": "https://apps.apple.com/uz/app/minar-parents/id6820518218",
+    "android_min_supported_build": 1,
+    "android_latest_build": 1,
+    "play_store_url": "",
 }
 LEGACY_BUILD = 5  # App Store'dagi eski mijoz build header yubormaydi.
 
@@ -47,12 +50,19 @@ def _snapshot():
         db.close()
 
 
-def _requested_build(scope):
+def _requested_platform(scope):
+    for key, value in scope.get("headers", ()):
+        if key.lower() == b"x-minar-app-platform":
+            return "android" if value.lower() == b"android" else "ios"
+    return "ios"  # Published iOS builds do not send a platform header.
+
+
+def _requested_build(scope, platform):
     for key, value in scope.get("headers", ()):
         if key.lower() == b"x-minar-app-build":
             raw = value.decode("ascii", errors="ignore")
             return int(raw) if raw.isdecimal() and 1 <= len(raw) <= 9 and int(raw) > 0 else 1
-    return LEGACY_BUILD
+    return 1 if platform == "android" else LEGACY_BUILD
 
 
 def _gate_error(scope, *, status, code, message, retry_after=None):
@@ -95,7 +105,10 @@ class ParentReleaseGateMiddleware:
                                    message="Xizmat vaqtincha ishlamayapti.", retry_after=30)
             return await response(scope, receive, send)
 
-        if _requested_build(scope) < config["min_supported_build"]:
+        platform = _requested_platform(scope)
+        minimum = (config["android_min_supported_build"] if platform == "android"
+                   else config["min_supported_build"])
+        if _requested_build(scope, platform) < minimum:
             response = _gate_error(scope, status=426, code="upgrade_required",
                                    message="Ilovadan foydalanish uchun uni yangilang.")
             return await response(scope, receive, send)

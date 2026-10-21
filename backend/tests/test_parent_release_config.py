@@ -23,6 +23,9 @@ def _payload(**changes):
         "min_supported_build": 1,
         "latest_build": 5,
         "app_store_url": "https://apps.apple.com/uz/app/minar-parents/id6820518218",
+        "android_min_supported_build": 1,
+        "android_latest_build": 1,
+        "play_store_url": "",
         **changes,
     }
 
@@ -65,10 +68,35 @@ def test_validation_rejects_bad_build_and_non_apple_links(client, db):
         _payload(app_store_url="http://apps.apple.com/uz/app/id6820518218"),
         _payload(app_store_url="https://apps.apple.com.evil.example/uz/app/id6820518218"),
         _payload(app_store_url="https://apps.apple.com/uz/app/id123456789"),
+        _payload(android_min_supported_build=3, android_latest_build=2),
+        _payload(android_min_supported_build=2, android_latest_build=2),
+        _payload(play_store_url="https://play.google.com.evil.example/store/apps/details?id=uz.minaracademy.parents"),
+        _payload(play_store_url="https://play.google.com/store/apps/details?id=another.app"),
         _payload(maintenance_title="   "),
     ):
         assert client.put("/admin/parent-release-config", headers=headers, json=bad).status_code == 422
     assert client.get("/parent/release-config").json()["min_supported_build"] == 1
+
+
+def test_android_build_gate_is_independent_and_old_crm_updates_preserve_it(client, db):
+    headers = _admin_headers(client, db)
+    play = "https://play.google.com/store/apps/details?id=uz.minaracademy.parents"
+    config = _payload(android_min_supported_build=2, android_latest_build=3,
+                      play_store_url=play)
+    assert client.put("/admin/parent-release-config", headers=headers, json=config).status_code == 200
+    android = {"X-Minar-App-Platform": "android", "X-Minar-App-Build": "1"}
+    assert client.post("/parent/auth/login", headers=android, json={}).status_code == 426
+    android["X-Minar-App-Build"] = "2"
+    assert client.post("/parent/auth/login", headers=android, json={}).status_code != 426
+    # Published iOS build 5 remains accepted with no platform header.
+    assert client.post("/parent/auth/login", headers={"X-Minar-App-Build": "5"}, json={}).status_code != 426
+    old_crm = {key: value for key, value in _payload(latest_build=6).items()
+               if not key.startswith("android_") and key != "play_store_url"}
+    assert client.put("/admin/parent-release-config", headers=headers, json=old_crm).status_code == 200
+    saved = client.get("/parent/release-config").json()
+    assert saved["android_min_supported_build"] == 2
+    assert saved["android_latest_build"] == 3
+    assert saved["play_store_url"] == play
 
 
 def test_maintenance_stops_parent_and_legacy_otp_not_crm_or_callbacks(client, db):
@@ -126,4 +154,40 @@ def test_migration_starts_with_access_open():
         assert connection.execute(text(
             "SELECT name FROM sqlite_master WHERE name='parent_release_config'"
         )).first() is None
+    engine.dispose()
+
+
+def test_android_migration_keeps_ios_row_and_adds_safe_defaults():
+    old_file = Path(__file__).parents[1] / "alembic/versions/20261013a_parent_release_config.py"
+    new_file = Path(__file__).parents[1] / "alembic/versions/20261022a_parent_android_parity.py"
+    old_spec = importlib.util.spec_from_file_location("old_parent_release", old_file)
+    new_spec = importlib.util.spec_from_file_location("new_parent_android", new_file)
+    old = importlib.util.module_from_spec(old_spec)
+    new = importlib.util.module_from_spec(new_spec)
+    old_spec.loader.exec_module(old)
+    new_spec.loader.exec_module(new)
+    engine = create_engine("sqlite:///:memory:")
+    with engine.begin() as connection:
+        operations = Operations(MigrationContext.configure(connection))
+        old.op = operations
+        new.op = operations
+        connection.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY)"))
+        old.upgrade()
+        connection.execute(text("CREATE TABLE parent_push_devices (id INTEGER PRIMARY KEY, token VARCHAR(200) NOT NULL)"))
+        new.upgrade()
+        row = connection.execute(text(
+            "SELECT min_supported_build, latest_build, android_min_supported_build, "
+            "android_latest_build, play_store_url FROM parent_release_config WHERE id = 1"
+        )).one()
+        assert (row.min_supported_build, row.latest_build) == (1, 5)
+        assert (row.android_min_supported_build, row.android_latest_build, row.play_store_url) == (1, 1, "")
+        token_type = connection.execute(text("PRAGMA table_info(parent_push_devices)")).all()
+        assert any(column[1] == "token" and column[2].upper() == "VARCHAR(4096)"
+                   for column in token_type)
+        new.downgrade()
+        ios = connection.execute(text(
+            "SELECT min_supported_build, latest_build FROM parent_release_config WHERE id = 1"
+        )).one()
+        assert (ios.min_supported_build, ios.latest_build) == (1, 5)
+        old.downgrade()
     engine.dispose()
