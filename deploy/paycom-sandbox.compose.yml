@@ -1,0 +1,35 @@
+# Add to the minar-stack compose invocation only for Paycom certification.
+# Keep PAYCOM_SANDBOX_TAG pinned to the reviewed backend image tag.
+services:
+  paycom-sandbox:
+    image: minar/ithub-api:${PAYCOM_SANDBOX_TAG:?set PAYCOM_SANDBOX_TAG}
+    # The image's normal entrypoint ignores `command` and starts backend.main.
+    # Override it so this container can never launch the live CRM application.
+    entrypoint: ["uvicorn", "backend.paycom_sandbox_app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    restart: unless-stopped
+    env_file:
+      - ./env/paycom-sandbox.env
+    # The pinned 8178fe0 image predates Paycom certification fixes. Copy these
+    # exact reviewed files into ./paycom-sandbox-code/ before starting; check
+    # that each mount source is a regular file before invoking Compose.
+    volumes:
+      - ./paycom-sandbox-code/payme.py:/app/backend/parent/payments/payme.py:ro
+      - ./paycom-sandbox-code/paycom_sandbox_app.py:/app/backend/paycom_sandbox_app.py:ro
+      - ./paycom-sandbox-code/init_paycom_sandbox_db.py:/app/backend/scripts/init_paycom_sandbox_db.py:ro
+      - ./paycom-sandbox-code/create_paycom_sandbox_invoices.py:/app/backend/scripts/create_paycom_sandbox_invoices.py:ro
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    ports:
+      - "127.0.0.1:8011:8000"
+    mem_limit: 256m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
