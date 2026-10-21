@@ -7,6 +7,7 @@ mock credential'lar bilan — haqiqiy pul ko'chirilmaydi).
 import base64
 import hashlib
 import json
+import time
 from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
@@ -608,6 +609,10 @@ def _payme(client, method, params, key=PAYME_KEY, rid=1):
                        json={"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
 
 
+def _payme_time():
+    return int(time.time() * 1000)
+
+
 def _new_invoice(client, db, s, g, amount=250000, provider="payme"):
     assert _pay(client, _h(client), s.id, g.id, amount=amount, provider=provider).status_code == 200
     return db.query(ParentInvoice).filter(ParentInvoice.provider == provider).order_by(ParentInvoice.id.desc()).first()
@@ -620,15 +625,29 @@ def test_payme_full_flow_and_idempotency(client, db, debtor, providers):
 
     assert _payme(client, "CheckPerformTransaction", {"amount": 60000000, "account": acc}, key="bad").json()["error"]["code"] == -32504
     assert _payme(client, "CheckPerformTransaction", {"amount": 100, "account": acc}).json()["error"]["code"] == -31001
+    assert _payme(client, "CheckPerformTransaction", {"amount": 60000000.5, "account": acc}).json()["error"]["code"] == -31001
+    assert _payme(client, "CreateTransaction", {"id": "pm-fractional", "time": _payme_time(),
+                                                   "amount": 60000000.5, "account": acc}).json()["error"]["code"] == -31001
     assert _payme(client, "CheckPerformTransaction", {"amount": 60000000, "account": {"invoice_id": "999"}}).json()["error"]["code"] == -31050
     assert _payme(client, "CheckPerformTransaction", {"amount": 60000000, "account": acc}).json()["result"] == {"allow": True}
 
-    created = _payme(client, "CreateTransaction", {"id": "pm-1", "time": 1, "amount": 60000000, "account": acc}).json()
+    provider_time = _payme_time() - 5_000
+    created = _payme(client, "CreateTransaction", {"id": "pm-1", "time": provider_time, "amount": 60000000, "account": acc}).json()
     assert created["result"]["state"] == 1
-    again = _payme(client, "CreateTransaction", {"id": "pm-1", "time": 1, "amount": 60000000, "account": acc}).json()
+    again = _payme(client, "CreateTransaction", {"id": "pm-1", "time": provider_time, "amount": 60000000, "account": acc}).json()
     assert again["result"]["transaction"] == created["result"]["transaction"]
-    busy = _payme(client, "CreateTransaction", {"id": "pm-2", "time": 1, "amount": 60000000, "account": acc}).json()
-    assert busy["error"]["code"] == -31099
+    changed_amount = _payme(client, "CreateTransaction", {
+        "id": "pm-1", "time": provider_time, "amount": 60000001, "account": acc,
+    }).json()
+    assert changed_amount["error"]["code"] == -31001
+    changed_account = _payme(client, "CreateTransaction", {
+        "id": "pm-1", "time": provider_time, "amount": 60000000,
+        "account": {"invoice_id": "999999"},
+    }).json()
+    assert changed_account["error"]["code"] == -31050
+    assert changed_account["error"]["data"] == "invoice_id"
+    busy = _payme(client, "CreateTransaction", {"id": "pm-2", "time": _payme_time(), "amount": 60000000, "account": acc}).json()
+    assert busy["error"]["code"] == -31008
 
     # Hali tasdiqlanmagan — tarixda yo'q
     h = _h(client)
@@ -653,12 +672,18 @@ def test_payme_full_flow_and_idempotency(client, db, debtor, providers):
 
     chk = _payme(client, "CheckTransaction", {"id": "pm-1"}).json()["result"]
     assert chk["state"] == 2 and chk["perform_time"] > 0
-    stmt = _payme(client, "GetStatement", {"from": 0, "to": 10 ** 14}).json()["result"]["transactions"]
+    stmt = _payme(client, "GetStatement", {"from": provider_time, "to": provider_time}).json()["result"]["transactions"]
     assert [t["id"] for t in stmt] == ["pm-1"] and stmt[0]["amount"] == 60000000
+    assert stmt[0]["time"] == provider_time
+    assert _payme(client, "GetStatement", {"from": provider_time + 1, "to": provider_time + 1}).json()["result"]["transactions"] == []
 
     # Refund: Payment qatorlari o'chadi
     cancel = _payme(client, "CancelTransaction", {"id": "pm-1", "reason": 5}).json()["result"]
     assert cancel["state"] == -2
+    assert _payme(client, "CancelTransaction", {"id": "pm-1", "reason": 5}).json()["result"] == cancel
+    after_cancel = _payme(client, "GetStatement", {"from": provider_time, "to": provider_time}).json()["result"]["transactions"]
+    assert len(after_cancel) == 1 and after_cancel[0]["state"] == -2
+    assert after_cancel[0]["reason"] == 5 and after_cancel[0]["cancel_time"] == cancel["cancel_time"]
     db.expire_all()
     assert db.query(Payment).filter(Payment.parent_invoice_id == inv.id).count() == 0
     assert db.query(ParentInvoice).get(inv.id).status == "refunded"
@@ -670,20 +695,48 @@ def test_payme_cancel_before_perform_and_timeout(client, db, debtor, providers):
     s, g = debtor
     inv = _new_invoice(client, db, s, g)
     acc = {"invoice_id": str(inv.id)}
-    _payme(client, "CreateTransaction", {"id": "pm-x", "time": 1, "amount": 25000000, "account": acc})
-    assert _payme(client, "CancelTransaction", {"id": "pm-x", "reason": 3}).json()["result"]["state"] == -1
+    created_time = _payme_time()
+    _payme(client, "CreateTransaction", {"id": "pm-x", "time": created_time, "amount": 25000000, "account": acc})
+    first_cancel = _payme(client, "CancelTransaction", {"id": "pm-x", "reason": 3}).json()["result"]
+    assert first_cancel["state"] == -1
+    assert _payme(client, "CancelTransaction", {"id": "pm-x", "reason": 3}).json()["result"] == first_cancel
+    cancelled_stmt = _payme(client, "GetStatement", {"from": created_time, "to": created_time}).json()["result"]["transactions"]
+    assert len(cancelled_stmt) == 1 and cancelled_stmt[0]["state"] == -1
+    assert cancelled_stmt[0]["reason"] == 3 and cancelled_stmt[0]["cancel_time"] == first_cancel["cancel_time"]
     assert _payme(client, "PerformTransaction", {"id": "pm-x"}).json()["error"]["code"] == -31008
     assert db.query(Payment).count() == 0
 
     inv2 = _new_invoice(client, db, s, g, amount=260000)
     acc2 = {"invoice_id": str(inv2.id)}
-    _payme(client, "CreateTransaction", {"id": "pm-y", "time": 1, "amount": 26000000, "account": acc2})
+    _payme(client, "CreateTransaction", {"id": "pm-y", "time": _payme_time(), "amount": 26000000, "account": acc2})
+    from backend.parent.payments.payme import TIMEOUT_MS
     db.query(PaymentTransaction).filter(PaymentTransaction.provider_txn_id == "pm-y").update(
-        {"create_time": 0})
+        {"provider_time": _payme_time() - TIMEOUT_MS - 1_000})
     db.commit()
     assert _payme(client, "PerformTransaction", {"id": "pm-y"}).json()["error"]["code"] == -31008
     assert _payme(client, "CheckTransaction", {"id": "pm-y"}).json()["result"]["reason"] == 4
     assert db.query(Payment).count() == 0
+
+    inv3 = _new_invoice(client, db, s, g, amount=270000)
+    stale = _payme(client, "CreateTransaction", {
+        "id": "pm-stale", "time": _payme_time() - TIMEOUT_MS - 1_000,
+        "amount": 27000000, "account": {"invoice_id": str(inv3.id)},
+    }).json()
+    assert stale["error"]["code"] == -31008
+    assert db.query(PaymentTransaction).filter_by(provider_txn_id="pm-stale").count() == 0
+
+
+def test_payme_account_field_follows_cashbox_configuration(client, db, debtor, providers, monkeypatch):
+    monkeypatch.setenv("PAYME_ACCOUNT_FIELD", "order_id")
+    s, g = debtor
+    inv = _new_invoice(client, db, s, g)
+    checkout = _pay(client, _h(client), s.id, g.id).json()["checkout_url"]
+    assert f"ac.order_id={inv.id}" in base64.b64decode(urlparse(checkout).path.strip("/")).decode()
+    bad_account = _payme(client, "CheckPerformTransaction", {
+        "amount": 25000000, "account": {"order_id": "999999"},
+    }).json()
+    assert bad_account["error"]["code"] == -31050
+    assert bad_account["error"]["data"] == "order_id"
 
 
 def test_payme_non_json_and_unknown_method(client, db, providers):
@@ -1010,7 +1063,7 @@ def test_review_account_seed_and_payme_flow(client, db, providers, monkeypatch):
     inv = db.query(ParentInvoice).filter_by(student_id=sid).one()
     acc = {"invoice_id": str(inv.id)}
     assert _payme(client, "CheckPerformTransaction", {"amount": 70000000, "account": acc}).json()["result"] == {"allow": True}
-    created = _payme(client, "CreateTransaction", {"id": "rv-1", "time": 1, "amount": 70000000, "account": acc}).json()
+    created = _payme(client, "CreateTransaction", {"id": "rv-1", "time": _payme_time(), "amount": 70000000, "account": acc}).json()
     assert created["result"]["state"] == 1
     assert _summary(client, h, sid).json()["debt"] == 700000      # callback'siz qarz o'zgarmaydi
     assert _payme(client, "PerformTransaction", {"id": "rv-1"}).json()["result"]["state"] == 2

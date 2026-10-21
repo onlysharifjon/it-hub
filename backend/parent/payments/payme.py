@@ -16,6 +16,7 @@ from typing import Optional
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -108,15 +109,20 @@ def _txn_json(t: models.PaymentTransaction) -> dict:
 
 
 def _amount_tiyin(params: dict) -> int:
-    try:
-        return int(params.get("amount"))
-    except (TypeError, ValueError):
+    amount = params.get("amount")
+    # Payme Amount is a positive integer number of tiyin. int(50000.5) would
+    # silently truncate and could turn an invalid amount into a valid payment.
+    if type(amount) is not int or amount <= 0:
         raise PaymeError(E_AMOUNT)
+    return amount
 
 
-def _payable_invoice(db: Session, params: dict, exclude_txn: Optional[str] = None) -> models.ParentInvoice:
+def _payable_invoice(db: Session, params: dict, exclude_txn: Optional[str] = None,
+                     busy_code: int = E_ACCOUNT_BUSY) -> models.ParentInvoice:
     field = config.payme_account_field()
-    account = params.get("account") or {}
+    account = params.get("account")
+    if not isinstance(account, dict):
+        raise PaymeError(E_ACCOUNT, field)
     inv = core.lock_invoice(db, account.get(field))
     if not inv or inv.provider != "payme":
         raise PaymeError(E_ACCOUNT, field)
@@ -126,7 +132,7 @@ def _payable_invoice(db: Session, params: dict, exclude_txn: Optional[str] = Non
         raise PaymeError(E_AMOUNT)
     busy = core.active_txn(inv, exclude_id=exclude_txn)
     if busy is not None:
-        raise PaymeError(E_ACCOUNT_BUSY, field)
+        raise PaymeError(busy_code, field if busy_code == E_ACCOUNT_BUSY else None)
     return inv
 
 
@@ -135,23 +141,42 @@ def _check_perform(db, params):
     return {"allow": True}
 
 
+def _timed_out(txn: models.PaymentTransaction) -> bool:
+    # Payme's 12-hour limit starts at the timestamp in CreateTransaction.time,
+    # not when our database happened to process the callback.
+    return core.now_ms() - (txn.provider_time or txn.create_time) >= TIMEOUT_MS
+
+
 def _create(db, params):
     pid = str(params.get("id") or "")
     if not pid:
         raise PaymeError(E_RPC)
+    provider_time = params.get("time")
+    if type(provider_time) is not int or provider_time <= 0:
+        raise PaymeError(E_RPC)
     txn = core.lock_txn(db, "payme", pid)
     if txn:
+        field = config.payme_account_field()
+        account = params.get("account")
+        if not isinstance(account, dict) or str(account.get(field)) != str(txn.invoice_id):
+            raise PaymeError(E_ACCOUNT, field)
+        if _amount_tiyin(params) != core.invoice_amount(txn.invoice) * 100:
+            raise PaymeError(E_AMOUNT)
+        if txn.provider_time is not None and provider_time != txn.provider_time:
+            raise PaymeError(E_CANNOT_PERFORM)
         if txn.state != "created":
             raise PaymeError(E_CANNOT_PERFORM)
-        if core.now_ms() - txn.create_time > TIMEOUT_MS:
+        if _timed_out(txn):
             core.cancel(db, txn.invoice, txn, reason=4)
             db.commit()
             raise PaymeError(E_CANNOT_PERFORM)
         return {"create_time": txn.create_time, "transaction": str(txn.id), "state": ST_CREATED}
-    inv = _payable_invoice(db, params, exclude_txn=pid)
+    if core.now_ms() - provider_time >= TIMEOUT_MS:
+        raise PaymeError(E_CANNOT_PERFORM)
+    inv = _payable_invoice(db, params, exclude_txn=pid, busy_code=E_CANNOT_PERFORM)
     txn = models.PaymentTransaction(
         invoice_id=inv.id, provider="payme", provider_txn_id=pid, state="created",
-        amount=inv.amount, provider_time=int(params.get("time") or 0) or None,
+        amount=inv.amount, provider_time=provider_time,
         create_time=core.now_ms(),
     )
     db.add(txn)
@@ -165,7 +190,7 @@ def _perform(db, params):
         raise PaymeError(E_TXN_NOT_FOUND)
     inv = core.lock_invoice(db, txn.invoice_id)
     if txn.state == "created":
-        if core.now_ms() - txn.create_time > TIMEOUT_MS:
+        if _timed_out(txn):
             core.cancel(db, inv, txn, reason=4)
             db.commit()
             raise PaymeError(E_CANNOT_PERFORM)
@@ -207,11 +232,13 @@ def _statement(db, params):
         t_from, t_to = int(params.get("from")), int(params.get("to"))
     except (TypeError, ValueError):
         raise PaymeError(E_RPC)
+    payme_time = func.coalesce(models.PaymentTransaction.provider_time,
+                              models.PaymentTransaction.create_time)
     rows = (db.query(models.PaymentTransaction)
             .filter(models.PaymentTransaction.provider == "payme",
-                    models.PaymentTransaction.create_time >= t_from,
-                    models.PaymentTransaction.create_time <= t_to)
-            .order_by(models.PaymentTransaction.create_time.asc())
+                    payme_time >= t_from,
+                    payme_time <= t_to)
+            .order_by(payme_time.asc(), models.PaymentTransaction.id.asc())
             .all())
     field = config.payme_account_field()
     out = []
