@@ -13,10 +13,10 @@ services:
     # exact reviewed files into ./paycom-sandbox-code/ before starting; check
     # that each mount source is a regular file before invoking Compose.
     volumes:
-      - ./paycom-sandbox-code/payme.py:/app/backend/parent/payments/payme.py:ro
-      - ./paycom-sandbox-code/paycom_sandbox_app.py:/app/backend/paycom_sandbox_app.py:ro
-      - ./paycom-sandbox-code/init_paycom_sandbox_db.py:/app/backend/scripts/init_paycom_sandbox_db.py:ro
-      - ./paycom-sandbox-code/create_paycom_sandbox_invoices.py:/app/backend/scripts/create_paycom_sandbox_invoices.py:ro
+      - ./paycom-sandbox-code/payme.py:/var/www/it-hub/backend/parent/payments/payme.py:ro
+      - ./paycom-sandbox-code/paycom_sandbox_app.py:/var/www/it-hub/backend/paycom_sandbox_app.py:ro
+      - ./paycom-sandbox-code/init_paycom_sandbox_db.py:/var/www/it-hub/backend/scripts/init_paycom_sandbox_db.py:ro
+      - ./paycom-sandbox-code/create_paycom_sandbox_invoices.py:/var/www/it-hub/backend/scripts/create_paycom_sandbox_invoices.py:ro
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
     ports:

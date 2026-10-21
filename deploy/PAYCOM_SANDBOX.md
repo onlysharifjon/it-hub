@@ -55,7 +55,9 @@ must retain its production endpoint and key.
    `backend/scripts/create_paycom_sandbox_invoices.py`. Match their SHA-256
    hashes on Mac and server before starting. This overlays the installed
    `8178fe0` image without rebuilding on the I/O-sensitive production VM.
-   Ensure every mount source exists as a **file** before invoking Compose.
+   The image's source tree is `/var/www/it-hub/backend`; the four read-only
+   bind targets in Compose use that path. Ensure every mount source exists as
+   a **file** before invoking Compose.
 3. Place `paycom-sandbox.compose.yml` beside the stack's existing compose file.
    With both Compose files, run the one-time sandbox database initializer and
    create fresh invoices, then start only `paycom-sandbox`. Its
