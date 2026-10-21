@@ -19,7 +19,7 @@ def test_provision_creates_private_sandbox_only(monkeypatch, tmp_path, capsys):
     merchant = tmp_path / "merchant-id"
     key = tmp_path / "test-key"
     merchant.write_text("sandbox-merchant\n")
-    key.write_text("sandbox-test-key\n")
+    key.write_text("sandbox%test&key\n")
     merchant.chmod(0o600)
     key.chmod(0o600)
     queries = []
@@ -35,13 +35,13 @@ def test_provision_creates_private_sandbox_only(monkeypatch, tmp_path, capsys):
     assert module.ENV_PATH.stat().st_mode & 0o777 == 0o600
     assert "DATABASE_URL=postgresql://paycom_sandbox_role:" in env_text
     assert "@db:5432/paycom_sandbox" in env_text
-    assert "PAYME_KEY=sandbox-test-key" in env_text
+    assert "PAYME_KEY=sandbox%test&key" in env_text
     assert "PAYCOM_SANDBOX_MODE=enabled" in env_text
     assert "PARENT_PAYMENTS_ENABLED=false" in env_text
     assert "CREATE ROLE paycom_sandbox_role" in queries[1]
     assert "CREATE DATABASE paycom_sandbox OWNER paycom_sandbox_role" in queries[2]
     assert "REVOKE CONNECT ON DATABASE paycom_sandbox FROM PUBLIC" in queries[3]
-    assert "sandbox-test-key" not in capsys.readouterr().out
+    assert "sandbox%test&key" not in capsys.readouterr().out
 
     with pytest.raises(module.ProvisionError, match="Refusing to overwrite"):
         module.provision("postgres-container", "postgres", "db", merchant, key)

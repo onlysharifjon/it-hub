@@ -23,6 +23,7 @@ DB_NAME = "paycom_sandbox"
 DB_ROLE = "paycom_sandbox_role"
 ENV_PATH = Path("/var/www/minar-stack/env/paycom-sandbox.env")
 SAFE_TOKEN = re.compile(r"[A-Za-z0-9_-]+\Z")
+SAFE_TEST_KEY = re.compile(r"[A-Za-z0-9_%&-]+\Z")
 SAFE_HOST = re.compile(r"[A-Za-z0-9_.-]+\Z")
 
 
@@ -30,14 +31,15 @@ class ProvisionError(Exception):
     pass
 
 
-def _private_token_file(path: Path, label: str) -> str:
+def _private_token_file(path: Path, label: str,
+                        pattern: re.Pattern[str] = SAFE_TOKEN) -> str:
     if not path.is_absolute() or path.is_symlink():
         raise ProvisionError(f"{label} must be an absolute, non-symlink file")
     info = path.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
         raise ProvisionError(f"{label} must be a regular file with mode 0600")
     value = path.read_text(encoding="utf-8").strip()
-    if not value or not SAFE_TOKEN.fullmatch(value):
+    if not value or not pattern.fullmatch(value):
         raise ProvisionError(f"{label} contains unsupported characters or is empty")
     return value
 
@@ -106,7 +108,7 @@ def provision(container: str, pg_user: str, db_host: str,
     if ENV_PATH.parent.is_symlink() or not ENV_PATH.parent.is_dir():
         raise ProvisionError(f"Private env directory is missing: {ENV_PATH.parent}")
     merchant_id = _private_token_file(merchant_id_file, "test merchant ID")
-    test_key = _private_token_file(test_key_file, "Paycom test_key")
+    test_key = _private_token_file(test_key_file, "Paycom test_key", SAFE_TEST_KEY)
     exists = _psql(container, pg_user,
                    f"SELECT (SELECT COUNT(*) FROM pg_roles WHERE rolname = '{DB_ROLE}'),"
                    f" (SELECT COUNT(*) FROM pg_database WHERE datname = '{DB_NAME}');")
