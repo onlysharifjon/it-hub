@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import time
+from datetime import datetime, timezone
 
 from jose import jwt
 
@@ -18,11 +19,23 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 
 
+def activation_cutoff() -> datetime | None:
+    raw = os.getenv("PARENT_ANDROID_PUSH_NOT_BEFORE_UTC", "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def enabled() -> bool:
     project = os.getenv("PARENT_FCM_PROJECT_ID", "")
-    # The cutoff also protects against replaying notifications created before
-    # Android push was activated. APNs uses the same activation window.
-    from .apns import activation_cutoff
+    # Android has its own activation window; enabling it must not alter the
+    # already active iOS APNs delivery cutoff.
     return (os.getenv("PARENT_PUSH_ENABLED", "false").lower() == "true"
             and os.getenv("PARENT_ANDROID_PUSH_ENABLED", "false").lower() == "true"
             and activation_cutoff() is not None

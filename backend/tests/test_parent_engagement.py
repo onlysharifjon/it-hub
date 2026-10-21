@@ -349,6 +349,39 @@ def test_fcm_data_only_payload_contains_no_private_student_details(client, db, m
     assert "Very Private Name" not in str(payload) and "700000" not in str(payload)
 
 
+def test_android_activation_cutoff_does_not_suppress_ios_push(client, db, monkeypatch):
+    child = _mk_student(db)
+    parent = _mk_parent(db, [child])
+    h = _h(client)
+    client.post("/parent/push-devices", headers=h, json={
+        "token": "e" * 64, "platform": "ios", "environment": "sandbox",
+    })
+    client.post("/parent/push-devices", headers=h, json={
+        "token": "fcm:AbCdEfGhIjKlMnOpQrStUvWxYz1234567890", "platform": "android",
+    })
+    row = ParentNotification(parent_id=parent.id, student_id=child.id,
+                             type="attendance", title="Old", body="Private",
+                             created_at=datetime.utcnow() - timedelta(minutes=5))
+    db.add(row); db.commit()
+    cutoff = datetime.utcnow() - timedelta(minutes=1)
+    monkeypatch.setenv("PARENT_ANDROID_PUSH_NOT_BEFORE_UTC", cutoff.isoformat() + "Z")
+    monkeypatch.setenv("PARENT_FCM_PROJECT_ID", "minar-academy")
+    monkeypatch.setenv("PARENT_APNS_TOPIC", "uz.minar.parents")
+
+    class Client:
+        urls = []
+        def post(self, url, json, headers):
+            self.urls.append(url)
+            class Response:
+                status_code = 200
+            return Response()
+
+    fake = Client()
+    assert dispatch_batch(db, fake, {"sandbox": "apns-bearer"},
+                          fcm_bearer="fcm-bearer", fcm_enabled=True) == 1
+    assert len(fake.urls) == 1 and "api.sandbox.push.apple.com" in fake.urls[0]
+
+
 def test_apns_transient_error_retries_with_backoff(client, db, monkeypatch):
     child = _mk_student(db)
     parent = _mk_parent(db, [child])

@@ -107,6 +107,9 @@ def dispatch_batch(db: Session, client, bearers: dict[str, str], *, limit: int =
             ).all()
             for device in devices:
                 if device.platform == "android":
+                    android_cutoff = fcm.activation_cutoff()
+                    if android_cutoff is not None and row.created_at < android_cutoff:
+                        continue
                     if not fcm_bearer:
                         if fcm_enabled:
                             error, retry = "fcm_auth_unavailable", True
