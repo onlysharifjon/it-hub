@@ -19,18 +19,31 @@ def setup(app, *, student: bool | None = None, admin: bool = True) -> None:
     import os
 
     from .errors import MinarError, minar_error_handler
+    from . import academy_models
     from . import models  # noqa: F401  (jadvallar Base.metadata ga qo'shilsin)
 
     if student is None:
         student = os.getenv("MINAR_STUDENT_API", "true").lower() != "false"
 
     app.add_exception_handler(MinarError, minar_error_handler)
+    @app.middleware("http")
+    async def academy_private_responses(request, call_next):
+        response = await call_next(request)
+        if '/academy' in request.url.path:
+            response.headers['Cache-Control'] = 'no-store'
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+        return response
+
     if student:
+        from .academy import router as academy_router
+        app.include_router(academy_router, prefix="/space", tags=["academy"])
         from .router import router as student_router
         app.include_router(student_router, prefix="/space", tags=["space"])
         from .study_router import router as study_router
         app.include_router(study_router, prefix="/space", tags=["study"])
     if admin:
+        from .academy import staff as academy_staff
+        app.include_router(academy_staff, prefix="/space/admin", tags=["academy-staff"])
         from .admin import router as admin_router
         app.include_router(admin_router, prefix="/space/admin", tags=["space-admin"])
         from .guides import router as guides_router

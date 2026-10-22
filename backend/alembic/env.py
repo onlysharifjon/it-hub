@@ -15,6 +15,7 @@ load_dotenv(os.path.join(project_root, ".env"))
 
 from backend.database import SQLALCHEMY_DATABASE_URL  # noqa: E402
 from backend.models import Base  # noqa: E402
+from backend.minar import models as minar_models, academy_models  # noqa: E402,F401
 
 config = context.config
 

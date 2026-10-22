@@ -1,6 +1,7 @@
 import {useEffect,useState} from 'react'
 import {spaceStaff} from '../api'
 import './SpaceWorkflows.css'
+import SpaceAcademy from './SpaceAcademy'
 const api=spaceStaff
 const courseNames=['Foundation','HTML','CSS','JavaScript','Scratch','AI Creator']
 function useList(path){
@@ -44,8 +45,8 @@ function Enrollments(){
 }
 export default function SpaceWorkflows({currentUser}){
  const teacher=currentUser?.role==='teacher', [tab,setTab]=useState(teacher?'reviews':'content')
- const tabs=[...(!teacher?[['content','Dars materiallari']]:[]),['reviews','Uy vazifalari'],['portfolio','Loyihalar'],['help','Ustozga savollar'],...(!teacher?[['groups','Guruhlar va nazorat']]:[])]
- return <div className="space-workspace"><header><h1>SPACE ta’lim</h1><p>O‘quvchi materiallari, ishlar va ustoz bilan muloqot.</p></header><nav className="sp-tabs" aria-label="SPACE ta’lim bo‘limlari">{tabs.map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</nav>{tab==='content'&&!teacher&&<Content/>}{tab==='reviews'&&<Reviews/>}{tab==='portfolio'&&<PortfolioReview/>}{tab==='help'&&<Help/>}{tab==='groups'&&!teacher&&<Enrollments/>}</div>
+ const tabs=[['academy','Testlar va kutubxona'],...(!teacher?[['content','Dars materiallari']]:[]),['reviews','Uy vazifalari'],['portfolio','Loyihalar'],['help','Ustozga savollar'],...(!teacher?[['groups','Guruhlar va nazorat']]:[])]
+ return <div className="space-workspace"><header><h1>SPACE ta’lim</h1><p>O‘quvchi materiallari, ishlar va ustoz bilan muloqot.</p></header><nav className="sp-tabs" aria-label="SPACE ta’lim bo‘limlari">{tabs.map(([id,label])=><button key={id} className={tab===id?'active':''} onClick={()=>setTab(id)}>{label}</button>)}</nav>{tab==='academy'&&<SpaceAcademy teacher={teacher}/ >}{tab==='content'&&!teacher&&<Content/>}{tab==='reviews'&&<Reviews/>}{tab==='portfolio'&&<PortfolioReview/>}{tab==='help'&&<Help/>}{tab==='groups'&&!teacher&&<Enrollments/>}</div>
 }
 export function SpaceOrders(){
  const [status,setStatus]=useState('pending'),{data,error,load,setError}=useList('/orders?status='+status),stock=useList('/stock'),[quantities,setQuantities]=useState({}),[busy,setBusy]=useState(false)

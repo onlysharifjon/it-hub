@@ -7087,6 +7087,8 @@ def _reminder_scheduler_loop() -> None:
     global _notif_prune_last
     while True:
         _reminders_due_tick()
+        from .minar.academy import scheduled_tick
+        scheduled_tick()
         if _notif_prune_last is None or (datetime.utcnow() - _notif_prune_last) > timedelta(hours=24):
             _prune_notifications()
             _notif_prune_last = datetime.utcnow()

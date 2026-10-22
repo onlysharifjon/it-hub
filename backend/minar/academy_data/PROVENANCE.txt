@@ -1,0 +1,11 @@
+Source: /home/ubuntu/MyWebsite/academy/school_data (2026-10-22)
+Generated with tools/export_mywebsite_library.py.
+Contains only course definitions, exercises, quiz banks and UZ/RU study materials.
+No student data, account records, environment settings, sessions or secrets.
+
+Starter: 19 topics. Python: 34 topics. AI Creator: 24 topics.
+Total: 77 topics and 924 questions. Russian study materials: 77.
+AI Creator slide decks: 24. Other topics can use the lesson-material slide fallback.
+
+Import uses stable mywebsite-* slugs and skips existing rows, preserving staff edits.
+Question IDs remain stable; issued tests keep independent immutable snapshots.
