@@ -24,7 +24,7 @@ class AcademyAssignment(Base):
     minutes = Column(Integer, nullable=False, default=15)
     max_attempts = Column(Integer, nullable=False, default=2)
     starts_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    due_at = Column(DateTime, nullable=False)
+    due_at = Column(DateTime, nullable=True)
     public_token = Column(String(100), unique=True)
     active = Column(Boolean, nullable=False, default=True)
 

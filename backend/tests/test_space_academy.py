@@ -188,3 +188,103 @@ def test_archived_group_cannot_start_new_assessments(client,db,acct,admin_token)
     group=db.get(models.Group,a['groupId']);group.is_active=False;db.commit()
     assert post(client,f'/academy/assignments/{a["id"]}/start',{}).status_code==404
     assert client.get('/space/academy').json()['topics']==[]
+
+
+@pytest.mark.parametrize('due', [None, ''])
+def test_open_ended_assignment_appears_and_can_be_started(client,db,acct,admin_token,due):
+    _,a=provision(client,db,admin_token,dueAt=due)
+    assert a['dueAt'] is None
+    assert client.get('/space/academy/summary').json()['pending']==1
+    assert db.query(AcademyNotice).filter_by(kind='assigned').count()==1
+    row=start(client,a)
+    seconds=(datetime.fromisoformat(row['deadline'])-datetime.fromisoformat(row['serverTime'])).total_seconds()
+    assert 590<=seconds<=600
+    assert client.get('/space/academy').json()['assignments'][0]['dueAt'] is None
+
+
+def test_support_teacher_manually_finishes_all_saved_attempts(client,db,acct,admin_token,
+                                                             metodist_token,teacher_user,teacher_token):
+    topic,_=provision(client,db,admin_token,dueAt=None)
+    group=db.query(models.Group).first();group.teacher_id=teacher_user.id;db.commit()
+    r=client.post('/space/admin/academy/assignments',headers=H(teacher_token),json={
+        'topicId':topic.id,'groupId':group.id,'count':5,'minutes':15,'maxAttempts':2})
+    assert r.status_code==200,r.text
+    a=r.json();assert a['dueAt'] is None
+    first=start(client,a);answers=correct_answers(db,first['id'])
+    saved=dict(list(answers.items())[:4])
+    assert post(client,'/academy/attempts/'+first['id'],{'answers':saved}).status_code==200
+    _,second_credentials=new_account(client,db,metodist_token,name='Other group member',group=group)
+    login(client,second_credentials);second=start(client,a)
+    r=client.post(f'/space/admin/academy/assignments/{a["id"]}/status',headers=H(metodist_token),json={'active':False})
+    assert r.status_code==200,r.text
+    assert not r.json()['active'] and r.json()['finishedAttempts']==2
+    assert client.get('/space/academy/attempts/'+second['id']).json()['score']==0
+    login(client,acct[1])
+    finished=client.get('/space/academy/attempts/'+first['id']).json()
+    assert finished['score']==80 and finished['finishedAt']
+    assert finished['answers']==saved
+    assert post(client,'/academy/attempts/'+first['id'],{'answers':answers,'submit':True}).json()['score']==80
+    assert post(client,f'/academy/assignments/{a["id"]}/start',{}).status_code==404
+    closed=next(row for row in client.get('/space/academy').json()['assignments'] if row['id']==a['id'])
+    assert closed['active'] is False and closed['attempts'][0]['score']==80
+    assert client.get('/space/academy/topics/'+str(topic.id)).status_code==200
+    repeated=client.post(f'/space/admin/academy/assignments/{a["id"]}/status',headers=H(metodist_token),json={'active':False})
+    assert repeated.json()['finishedAttempts']==0
+    assert db.query(MinarLedger).filter(MinarLedger.ref_key.like('academy-pass:%')).count()==1
+    report=client.get('/space/admin/academy/report',params={'assignmentId':a['id']},headers=H(teacher_token)).json()
+    assert sorted(row['score'] for row in report['attempts'])==[0,80]
+
+
+def test_public_result_remains_accessible_to_owner_after_staff_closes(client,db,acct,admin_token,metodist_token):
+    _,a=provision(client,db,admin_token,dueAt=None,public=True,count=5)
+    path='/space/academy/public/'+a['publicToken'];guest=TestClient(app)
+    r=guest.post(path+'/start',json={'name':'Public test guest','phone':'+998000000000','consent':True})
+    assert r.status_code==200,r.text
+    row=r.json();answers=correct_answers(db,row['id']);saved=dict(list(answers.items())[:3])
+    assert guest.post(path+'/attempts/'+row['id'],json={'answers':saved}).status_code==200
+    close=client.post(f'/space/admin/academy/assignments/{a["id"]}/status',headers=H(metodist_token),json={'active':False})
+    assert close.status_code==200 and close.json()['finishedAttempts']==1
+    result=guest.post(path+'/attempts/'+row['id'],json={'answers':answers,'submit':True})
+    assert result.status_code==200 and result.json()['score']==60
+    assert result.json()['answers']==saved
+    assert guest.get(path).status_code==404
+    assert guest.post(path+'/start',json={}).status_code==404
+    assert TestClient(app).post(path+'/attempts/'+row['id'],json={}).status_code==404
+
+
+def test_manual_reopening_removes_old_deadline_without_changing_results(client,db,acct,admin_token,teacher_token):
+    _,a=provision(client,db,admin_token)
+    row=start(client,a);post(client,'/academy/attempts/'+row['id'],{'submit':True})
+    denied=client.post(f'/space/admin/academy/assignments/{a["id"]}/status',headers=H(teacher_token),json={'active':False})
+    assert denied.status_code==404
+    client.post(f'/space/admin/academy/assignments/{a["id"]}/status',headers=H(admin_token),json={'active':False})
+    assignment=db.get(AcademyAssignment,a['id']);assignment.due_at=datetime.utcnow()-timedelta(days=1);db.commit()
+    reopened=client.post(f'/space/admin/academy/assignments/{a["id"]}/status',headers=H(admin_token),json={'active':True})
+    assert reopened.status_code==200 and reopened.json()['dueAt'] is None
+    assert start(client,a)['id']!=row['id']
+    assert client.get('/space/academy/attempts/'+row['id']).json()['score']==0
+
+
+def test_open_ended_migration_preserves_old_records_and_guards_downgrade(tmp_path):
+    import importlib.util
+    from pathlib import Path
+    from sqlalchemy import create_engine,inspect,text
+    from alembic.runtime.migration import MigrationContext
+    from alembic.operations import Operations
+    engine=create_engine('sqlite:///'+str(tmp_path/'manual-close.db'))
+    path=Path(__file__).parents[1]/'alembic/versions/20261024a_manual_test_close.py'
+    spec=importlib.util.spec_from_file_location('manual_close_migration',path)
+    migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
+    with engine.begin() as conn:
+        conn.execute(text('CREATE TABLE minar_academy_assignments (id INTEGER PRIMARY KEY, title TEXT NOT NULL, due_at DATETIME NOT NULL)'))
+        conn.execute(text("INSERT INTO minar_academy_assignments VALUES (1,'Existing test','2026-12-01 10:00:00')"))
+        with Operations.context(MigrationContext.configure(conn)):
+            migration.upgrade()
+            assert next(c for c in inspect(conn).get_columns('minar_academy_assignments') if c['name']=='due_at')['nullable']
+            conn.execute(text("INSERT INTO minar_academy_assignments VALUES (2,'Open-ended test',NULL)"))
+            with pytest.raises(RuntimeError,match='Open-ended tests exist'):migration.downgrade()
+            conn.execute(text("UPDATE minar_academy_assignments SET due_at='2027-01-01 10:00:00' WHERE id=2"))
+            migration.downgrade()
+            assert not next(c for c in inspect(conn).get_columns('minar_academy_assignments') if c['name']=='due_at')['nullable']
+        assert conn.execute(text('SELECT title,due_at FROM minar_academy_assignments WHERE id=1')).one()==('Existing test','2026-12-01 10:00:00')
+    engine.dispose()

@@ -50,6 +50,15 @@ to 10 daily bonus answers at +1 coin each. Bonus questions come from topics with
 completed test. Tab visibility warnings are advisory and never deduct points.
 
 Public test URL: `https://space.minaracademy.uz/?entry=TOKEN`.
+
+Assessment updates (2026-10-24): new tests can omit `dueAt` and stay open until
+admin, Support Teacher, or the assigned teacher chooses “Yakunlash”. Each attempt
+still has its own time limit. Closure grades saved answers for all running attempts
+and preserves results for students and staff. Reopening keeps earlier results and
+removes any legacy assignment deadline. Existing explicitly dated tests retain
+their dates until reopened. Apply migration `20261024a_manual_test_close` first.
+An older backend must not be restored while assignments with NULL `due_at` exist;
+both the schema downgrade and release rollback script guard against this.
 `VITE_SPACE_URL` optionally changes this origin in the CRM frontend build. All public
 attempt credentials are HttpOnly cookies; contact details and answers are never cached.
 The source bundle is imported through the CRM interface after deployment; existing

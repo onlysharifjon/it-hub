@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 from fastapi import APIRouter, Depends, Body, Request, Response
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case
+from sqlalchemy import func, case, or_
 from .. import models, tz, security
 from ..database import get_db
 from ..wallet import account_transaction
@@ -39,21 +39,26 @@ def date(v):
 def groups(db, acc):
     return db.query(models.GroupStudent.group_id).join(models.Group,models.Group.id==models.GroupStudent.group_id).filter(models.GroupStudent.student_id==acc.student_id, models.GroupStudent.left_at.is_(None),models.Group.is_active.is_(True))
 
-def assignments(db, acc):
-    return db.query(Assignment).filter(Assignment.group_id.in_(groups(db,acc)),Assignment.active.is_(True))
+def assignments(db, acc, include_closed=False):
+    query=db.query(Assignment).filter(Assignment.group_id.in_(groups(db,acc)))
+    return query if include_closed else query.filter(Assignment.active.is_(True))
 
 def staff_assignments(db,user):
     q=db.query(Assignment)
     if user.role=='teacher': q=q.filter((Assignment.created_by==user.id) | Assignment.group_id.in_(db.query(models.Group.id).filter_by(teacher_id=user.id)))
     return q
 
-def permitted_assignment(db,user,aid):
-    a=staff_assignments(db,user).filter(Assignment.id==aid).first()
+def permitted_assignment(db,user,aid,lock=False):
+    query=staff_assignments(db,user).filter(Assignment.id==aid)
+    # NO KEY UPDATE serializes start/close while allowing notification inserts
+    # to check their foreign key without reversing the wallet lock order.
+    if lock:query=query.populate_existing().with_for_update(key_share=True)
+    a=query.first()
     if not a: raise MinarError(404,'Test topilmadi.')
     return a
 
 def visible_topics(db,acc):
-    return db.query(Topic).filter(Topic.published.is_(True),Topic.id.in_(assignments(db,acc).with_entities(Assignment.topic_id)))
+    return db.query(Topic).filter(Topic.published.is_(True),Topic.id.in_(assignments(db,acc,include_closed=True).with_entities(Assignment.topic_id)))
 
 def topic_dict(t,language='uz',full=False):
     d=json.loads(t.data)
@@ -104,7 +109,7 @@ def finish(db,a):
 
 def new_attempt(db,a,acc=None,language='uz',guest=None):
     now=datetime.utcnow()
-    if not a.active or not a.starts_at<=now<a.due_at: raise MinarError(409,'Test hali boshlanmagan yoki muddati tugagan.')
+    if not a.active or a.starts_at>now or (a.due_at is not None and now>=a.due_at): raise MinarError(409,'Test hali boshlanmagan yoki yakunlangan.')
     topic=db.get(Topic,a.topic_id)
     if not topic or not topic.published: raise MinarError(404,'Mavzu hali nashr qilinmagan.')
     q=db.query(Attempt).filter_by(assignment_id=a.id)
@@ -126,13 +131,15 @@ def new_attempt(db,a,acc=None,language='uz',guest=None):
         missed=[x for x in pool if x['id'] in wrong]
     rng=random.SystemRandom();selected=rng.sample(missed,min(len(missed),a.count//2))
     chosen={x['id'] for x in selected};selected+=rng.sample([x for x in pool if x['id'] not in chosen],min(a.count,len(pool))-len(selected));rng.shuffle(selected)
-    row=Attempt(id=str(uuid4()),assignment_id=a.id,account_id=acc.id if acc else None,language='ru' if language=='ru' else 'uz',snapshot=pack([shuffled(x) for x in selected]),deadline=min(now+timedelta(minutes=a.minutes),a.due_at),answers='{}')
+    deadline=now+timedelta(minutes=a.minutes)
+    if a.due_at is not None:deadline=min(deadline,a.due_at)
+    row=Attempt(id=str(uuid4()),assignment_id=a.id,account_id=acc.id if acc else None,language='ru' if language=='ru' else 'uz',snapshot=pack([shuffled(x) for x in selected]),deadline=deadline,answers='{}')
     if guest: row.guest_name=guest['name'];row.guest_phone=guest['phone'];row.guest_key=guest['key']
     db.add(row);db.flush();return row
 
 def save_answers(db,a,payload,submit=False):
     if a.finished_at: return attempt_dict(a)
-    if datetime.utcnow()>=a.deadline:
+    if datetime.utcnow()>=a.deadline or not db.get(Assignment,a.assignment_id).active:
         finish(db,a);db.commit();return attempt_dict(a)
     qs={q['id']:q for q in json.loads(a.snapshot)};incoming=payload.get('answers',{})
     if not isinstance(incoming,dict) or len(incoming)>len(qs): raise MinarError(400,'Javoblar noto‘g‘ri.')
@@ -147,7 +154,7 @@ def save_answers(db,a,payload,submit=False):
 @router.get('/academy')
 def dashboard(db:Session=Depends(get_db),acc:MinarAccount=Account):
     tick(db,acc)
-    rows=assignments(db,acc).order_by(Assignment.due_at.desc()).limit(200).all()
+    rows=assignments(db,acc,include_closed=True).order_by(Assignment.id.desc()).limit(200).all()
     attempts=db.query(Attempt).filter_by(account_id=acc.id).order_by(Attempt.started_at.desc()).limit(300).all()
     return {'assignments':[{**assignment_dict(a),'attempts':[{'id':x.id,'score':x.score,'finishedAt':stamp(x.finished_at)} for x in attempts if x.assignment_id==a.id]} for a in rows], 'topics':[topic_dict(t) for t in visible_topics(db,acc).all()], 'mistakes':db.query(Practice).filter_by(account_id=acc.id,resolved_at=None).count()}
 
@@ -159,9 +166,11 @@ def topic_read(tid:int,language:str='uz',db:Session=Depends(get_db),acc:MinarAcc
 
 @router.post('/academy/assignments/{aid}/start')
 def start(aid:int,payload:dict=Body(...),db:Session=Depends(get_db),acc:MinarAccount=Account):
+    # Starting and staff closure lock the assignment before any wallet rows.
+    # A concurrent start cannot slip in after the staff member closes the test.
+    a=assignments(db,acc).filter(Assignment.id==aid).populate_existing().with_for_update(key_share=True).first()
+    if not a: raise MinarError(404,'Test topilmadi.')
     with account_transaction(db,acc):
-        a=assignments(db,acc).filter(Assignment.id==aid).first()
-        if not a: raise MinarError(404,'Test topilmadi.')
         row=new_attempt(db,a,acc,payload.get('language'));db.commit();return attempt_dict(row)
 
 def own_attempt(db,acc,key):
@@ -173,7 +182,7 @@ def own_attempt(db,acc,key):
 def resume(key:str,db:Session=Depends(get_db),acc:MinarAccount=Account):
     with account_transaction(db,acc):
         a=own_attempt(db,acc,key)
-        if not a.finished_at and a.deadline<=datetime.utcnow(): finish(db,a);db.commit()
+        if not a.finished_at and (a.deadline<=datetime.utcnow() or not db.get(Assignment,a.assignment_id).active): finish(db,a);db.commit()
         return attempt_dict(a)
 
 @router.post('/academy/attempts/{key}')
@@ -229,13 +238,14 @@ def tick(db,acc):
     """Idempotent scheduled-release notices and once-only overdue reminders."""
     with account_transaction(db,acc):
         now=datetime.utcnow()
-        for a in assignments(db,acc).filter(Assignment.starts_at<=now,Assignment.due_at>now).all():
+        for a in assignments(db,acc).filter(Assignment.starts_at<=now,or_(Assignment.due_at.is_(None),Assignment.due_at>now)).all():
             done=db.query(Attempt.id).filter_by(assignment_id=a.id,account_id=acc.id).first()
             for kind,ready in [('assigned',True),('reminder',not done and now>=a.starts_at+timedelta(hours=3))]:
                 if ready and not db.query(Notice.id).filter_by(assignment_id=a.id,account_id=acc.id,kind=kind).first():
                     db.add(Notice(assignment_id=a.id,account_id=acc.id,kind=kind))
                     notify.to_account(db,acc.id,'system','Yangi test' if kind=='assigned' else 'Testni bajarishni unutmang',a.title,'academy')
-        for a in db.query(Attempt).filter(Attempt.account_id==acc.id,Attempt.finished_at.is_(None),Attempt.deadline<=now).all():finish(db,a)
+        closed=db.query(Assignment.id).filter(Assignment.active.is_(False))
+        for a in db.query(Attempt).filter(Attempt.account_id==acc.id,Attempt.finished_at.is_(None),or_(Attempt.deadline<=now,Attempt.assignment_id.in_(closed))).all():finish(db,a)
         db.commit()
 
 @staff.get('/academy/library')
@@ -304,14 +314,35 @@ def assign(payload:dict=Body(...),db:Session=Depends(get_db),user=Depends(educat
     if gid:
         g=db.query(models.Group).filter_by(id=gid,is_active=True).first()
         if not g or (user.role=='teacher' and g.teacher_id!=user.id):raise MinarError(403,'Bu guruh sizga biriktirilmagan.')
-    start=date(payload['startsAt']) if payload.get('startsAt') else datetime.utcnow();due=date(payload.get('dueAt'))
-    if due<=max(start,datetime.utcnow()) or due>datetime.utcnow()+timedelta(days=366):raise MinarError(400,'Test muddatini tekshiring.')
+    start=date(payload['startsAt']) if payload.get('startsAt') else datetime.utcnow()
+    due=date(payload['dueAt']) if payload.get('dueAt') else None
+    if due is not None and (due<=max(start,datetime.utcnow()) or due>datetime.utcnow()+timedelta(days=366)):raise MinarError(400,'Test muddatini tekshiring.')
     row=Assignment(topic_id=t.id,group_id=gid,created_by=user.id,title=support.text(payload.get('title') or t.title,250),count=integer(payload.get('count',10),1,min(100,len(json.loads(t.data)['questions']))),minutes=integer(payload.get('minutes',15),1,180),max_attempts=integer(payload.get('maxAttempts',2),1,5),starts_at=start,due_at=due,public_token=secrets.token_urlsafe(24) if public else None)
     db.add(row);db.flush();_audit(db,user,'academy_assign',None,{'assignment_id':row.id});db.commit();return assignment_dict(row)
 
 @staff.post('/academy/assignments/{aid}/status')
 def assignment_status(aid:int,payload:dict=Body(...),db:Session=Depends(get_db),user=Depends(educator)):
-    a=permitted_assignment(db,user,aid);a.active=payload.get('active') is True;_audit(db,user,'academy_assignment_status',None,{'assignment_id':aid,'active':a.active});db.commit();return assignment_dict(a)
+    if type(payload.get('active')) is not bool:raise MinarError(400,'Test holatini tanlang.')
+    a=permitted_assignment(db,user,aid,lock=True)
+    a.active=payload['active'];finished=0
+    if a.active:
+        # Reopening an older scheduled test makes it manually controlled too.
+        a.due_at=None
+    else:
+        # Lock wallets in a stable order. Answers submitted before a wallet is
+        # locked are included; later submissions receive the immutable result.
+        rows=db.query(Attempt.id,Attempt.account_id).filter_by(assignment_id=a.id,finished_at=None).order_by(Attempt.account_id,Attempt.id).all()
+        for key,account_id in rows:
+            if account_id is not None:
+                acc=db.get(MinarAccount,account_id)
+                with account_transaction(db,acc):
+                    attempt=db.query(Attempt).filter_by(id=key).populate_existing().with_for_update().one()
+                    if not attempt.finished_at:finish(db,attempt);finished+=1
+            else:
+                attempt=db.query(Attempt).filter_by(id=key).populate_existing().with_for_update().one()
+                if not attempt.finished_at:finish(db,attempt);finished+=1
+    _audit(db,user,'academy_assignment_status',None,{'assignment_id':aid,'active':a.active,'finished_attempts':finished})
+    db.commit();return {**assignment_dict(a),'finishedAttempts':finished}
 
 @staff.get('/academy/report')
 def report(assignmentId:int=0,db:Session=Depends(get_db),user=Depends(educator)):
@@ -357,8 +388,11 @@ def staff_attempt(key:str,db:Session=Depends(get_db),user=Depends(educator)):
 
 
 # Public entry tests carry a separate, opaque browser credential; never an account session.
-def public_assignment(db,token):
-    a=db.query(Assignment).filter_by(public_token=token,active=True).first()
+def public_assignment(db,token,include_closed=False,lock=False):
+    query=db.query(Assignment).filter_by(public_token=token)
+    if not include_closed:query=query.filter_by(active=True)
+    if lock:query=query.populate_existing().with_for_update(key_share=True)
+    a=query.first()
     if not a:raise MinarError(404,'Havola topilmadi yoki yopilgan.')
     return a
 
@@ -373,9 +407,7 @@ def public_info(token:str,db:Session=Depends(get_db)):
 
 @router.post('/academy/public/{token}/start')
 def public_start(token:str,request:Request,response:Response,payload:dict=Body(...),db:Session=Depends(get_db)):
-    public_rate(request);a=public_assignment(db,token)
-    # Lock assignment to serialize anonymous attempts for the same contact.
-    db.query(Assignment).filter_by(id=a.id).with_for_update().one()
+    public_rate(request);a=public_assignment(db,token,lock=True)
     name=support.text(payload.get('name'),120);phone=''.join(c for c in str(payload.get('phone','')) if c.isdigit())
     if not 9<=len(phone)<=15 or len(name)<3 or payload.get('consent') is not True:raise MinarError(400,'Ism, telefon va rozilikni kiriting.')
     raw=request.cookies.get('academy_guest_'+str(a.id)) or secrets.token_urlsafe(32)
@@ -387,7 +419,7 @@ def public_start(token:str,request:Request,response:Response,payload:dict=Body(.
 @router.post('/academy/public/{token}/attempts/{key}')
 def public_answer(token:str,key:str,request:Request,payload:dict=Body(...),db:Session=Depends(get_db)):
     auth.check_origin(request)
-    a=public_assignment(db,token)
+    a=public_assignment(db,token,include_closed=True)
     raw=request.cookies.get('academy_guest_'+str(a.id),'')
     row=db.query(Attempt).filter_by(id=key,assignment_id=a.id,guest_key=hashlib.sha256(raw.encode()).hexdigest()).with_for_update().first()
     if not raw or not row:raise MinarError(404,'Test shu brauzerda boshlanmagan.')
@@ -417,7 +449,8 @@ def scheduled_tick():
         for aid in ids:
             tick(db,db.get(MinarAccount,aid))
         now=tz.to_local(datetime.utcnow())
-        for guest in db.query(Attempt).filter(Attempt.account_id.is_(None),Attempt.finished_at.is_(None),Attempt.deadline<=datetime.utcnow()).with_for_update().all():
+        closed=db.query(Assignment.id).filter(Assignment.active.is_(False))
+        for guest in db.query(Attempt).filter(Attempt.account_id.is_(None),Attempt.finished_at.is_(None),or_(Attempt.deadline<=datetime.utcnow(),Attempt.assignment_id.in_(closed))).with_for_update().all():
             finish(db,guest)
         db.commit()
         if now.hour>=20:
@@ -453,6 +486,6 @@ def summary(db:Session=Depends(get_db),acc:MinarAccount=Account):
     tick(db,acc)
     now=datetime.utcnow()
     completed=db.query(Attempt.assignment_id).filter(Attempt.account_id==acc.id,Attempt.finished_at.isnot(None))
-    pending=assignments(db,acc).filter(Assignment.starts_at<=now,Assignment.due_at>now,~Assignment.id.in_(completed)).order_by(Assignment.due_at).all()
+    pending=assignments(db,acc).filter(Assignment.starts_at<=now,or_(Assignment.due_at.is_(None),Assignment.due_at>now),~Assignment.id.in_(completed)).order_by(Assignment.starts_at,Assignment.id).all()
     results=db.query(Attempt.score).filter(Attempt.account_id==acc.id,Attempt.finished_at.isnot(None)).order_by(Attempt.finished_at.desc()).limit(10).all()
     return {'pending':len(pending),'next':assignment_dict(pending[0]) if pending else None,'mistakes':db.query(Practice.id).filter_by(account_id=acc.id,resolved_at=None).count(),'recentAverage':round(sum(x[0] for x in results)/len(results)) if results else None}

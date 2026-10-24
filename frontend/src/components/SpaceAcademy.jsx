@@ -217,13 +217,14 @@ function Assignments() {
       minutes: 15,
       maxAttempts: 2,
       startsAt: '',
-      dueAt: '',
       public: false,
       title: ''
     }),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
-    [link, setLink] = useState('');
+    [link, setLink] = useState(''),
+    [closing, setClosing] = useState(null),
+    [message, setMessage] = useState('');
   const set = (k, v) => setForm({
     ...form,
     [k]: v
@@ -237,8 +238,7 @@ function Assignments() {
           ...form,
           topicId: Number(form.topicId),
           groupId: Number(form.groupId),
-          startsAt: form.startsAt ? new Date(form.startsAt).toISOString() : null,
-          dueAt: new Date(form.dueAt).toISOString()
+          startsAt: form.startsAt ? new Date(form.startsAt).toISOString() : null
         };
         const r = await api.save('/academy/assignments', payload);
         setLink(r.publicToken ? url(r.publicToken) : '');
@@ -249,19 +249,30 @@ function Assignments() {
       } finally {
         setBusy(false);
       }
-    }}><div className="sa-heading"><div><h2>Yangi test</h2><p>Guruhga topshiriq bering yoki kirish testi uchun ochiq havola yarating.</p></div></div><div className="sa-grid"><label>Mavzu<select required value={form.topicId} onChange={e => set('topicId', e.target.value)}><option value="">Nashr qilingan mavzuni tanlang</option>{library.data?.filter(t => t.published).map(t => <option key={t.id} value={t.id}>{t.course} · {t.title}</option>)}</select></label><label>Test nomi (ixtiyoriy)<input maxLength={250} value={form.title} onChange={e => set('title', e.target.value)} /></label><label>Test turi<select value={form.public ? 'public' : 'group'} onChange={e => set('public', e.target.value === 'public')}><option value="group">Guruh testi</option><option value="public">Ochiq kirish testi</option></select></label>{!form.public && <label>Guruh<select required value={form.groupId} onChange={e => set('groupId', e.target.value)}><option value="">Guruhni tanlang</option>{groups.data?.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>}{[['count', 'Savollar soni', 1, 100], ['minutes', 'Vaqt (daqiqa)', 1, 180], ['maxAttempts', 'Urinishlar soni', 1, 5]].map(([k, label, min, max]) => <label key={k}>{label}<input type="number" min={min} max={max} required value={form[k]} onChange={e => set(k, Number(e.target.value))} /></label>)}<label>Boshlanish (bo‘sh — hozir)<input type="datetime-local" value={form.startsAt} onChange={e => set('startsAt', e.target.value)} /></label><label>Yakuniy muddat<input type="datetime-local" required value={form.dueAt} onChange={e => set('dueAt', e.target.value)} /></label></div><p className="sa-muted">Vaqt brauzeringiz mintaqasida. Rejalashtirilgan test boshlanishida bildirishnoma beriladi; 3 soatdan keyin bajarilmagan test uchun eslatma chiqadi.</p><ErrorBox text={error || library.error || groups.error} /><button className="btn btn-primary" disabled={busy}>{busy ? 'Yaratilmoqda…' : 'Testni yaratish'}</button>{link && <label>Ulashish havolasi<input readOnly value={link} onFocus={e => e.target.select()} /></label>}</form>{!list.data ? <Loading error={list.error} load={list.load} /> : <div className="sa-card"><h2>Berilgan testlar</h2>{!list.data.length && <p>Hozircha testlar yo‘q.</p>}<div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>Test</th><th>Format</th><th>Muddat</th><th>Holat</th><th>Amal</th></tr></thead><tbody>{list.data.map(a => <tr key={a.id}><td><strong>{a.title}</strong><small>{a.count} savol · {a.minutes} daqiqa</small>{a.publicToken && <a href={url(a.publicToken)} target="_blank" rel="noreferrer">Kirish testi havolasi ↗</a>}</td><td>{a.publicToken ? 'Ochiq test' : groups.data?.find(g => g.id === a.groupId)?.name || 'Guruh'}</td><td>{date(a.dueAt)}</td><td>{a.active ? 'Faol' : 'Yopilgan'}</td><td><button className="btn btn-secondary" disabled={busy} onClick={async () => {
+    }}><div className="sa-heading"><div><h2>Yangi test</h2><p>Guruhga topshiriq bering yoki kirish testi uchun ochiq havola yarating.</p></div></div><div className="sa-grid"><label>Mavzu<select required value={form.topicId} onChange={e => set('topicId', e.target.value)}><option value="">Nashr qilingan mavzuni tanlang</option>{library.data?.filter(t => t.published).map(t => <option key={t.id} value={t.id}>{t.course} · {t.title}</option>)}</select></label><label>Test nomi (ixtiyoriy)<input maxLength={250} value={form.title} onChange={e => set('title', e.target.value)} /></label><label>Test turi<select value={form.public ? 'public' : 'group'} onChange={e => set('public', e.target.value === 'public')}><option value="group">Guruh testi</option><option value="public">Ochiq kirish testi</option></select></label>{!form.public && <label>Guruh<select required value={form.groupId} onChange={e => set('groupId', e.target.value)}><option value="">Guruhni tanlang</option>{groups.data?.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>}{[['count', 'Savollar soni', 1, 100], ['minutes', 'Har urinish vaqti (daqiqa)', 1, 180], ['maxAttempts', 'Urinishlar soni', 1, 5]].map(([k, label, min, max]) => <label key={k}>{label}<input type="number" min={min} max={max} required value={form[k]} onChange={e => set(k, Number(e.target.value))} /></label>)}<label>Boshlanish (bo‘sh — hozir)<input type="datetime-local" value={form.startsAt} onChange={e => set('startsAt', e.target.value)} /></label></div><p className="sa-message">Test qo‘lda yakunlanguncha ochiq turadi. Support Teacher yoki guruh o‘qituvchisi pastdagi ro‘yxatdan “Yakunlash”ni bosadi.</p><p className="sa-muted">Boshlanish vaqti brauzeringiz mintaqasida. Har bir urinish uchun alohida taymer ishlaydi.</p><ErrorBox text={error || library.error || groups.error} /><button className="btn btn-primary" disabled={busy}>{busy ? 'Yaratilmoqda…' : 'Testni yaratish'}</button>{link && <label>Ulashish havolasi<input readOnly value={link} onFocus={e => e.target.select()} /></label>}</form>{!list.data ? <Loading error={list.error} load={list.load} /> : <div className="sa-card"><h2>Berilgan testlar</h2>{message && <p className="sa-message" role="status">{message}</p>}{!list.data.length && <p>Hozircha testlar yo‘q.</p>}<div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>Test</th><th>Format</th><th>Yakunlash</th><th>Holat</th><th>Amal</th></tr></thead><tbody>{list.data.map(a => <tr key={a.id}><td><strong>{a.title}</strong><small>{a.count} savol · {a.minutes} daqiqa</small>{a.publicToken && <a href={url(a.publicToken)} target="_blank" rel="noreferrer">Kirish testi havolasi ↗</a>}</td><td>{a.publicToken ? 'Ochiq test' : groups.data?.find(g => g.id === a.groupId)?.name || 'Guruh'}</td><td>{a.dueAt ? date(a.dueAt) : 'Qo‘lda yakunlanadi'}</td><td>{a.active ? 'Faol' : 'Yakunlangan'}</td><td><button className="btn btn-secondary" disabled={busy} onClick={async () => {
+                  if (a.active) { setClosing(a); setError(''); return; }
                   setBusy(true);
                   try {
                     await api.save(`/academy/assignments/${a.id}/status`, {
-                      active: !a.active
+                      active: true
                     });
+                    setMessage('Test qayta ochildi. Avvalgi natijalar saqlanadi.');
+                    setError('');
                     list.load();
                   } catch (e) {
                     setError(e.message);
                   } finally {
                     setBusy(false);
                   }
-                }}>{a.active ? 'Yopish' : 'Yoqish'}</button></td></tr>)}</tbody></table></div></div>}</>;
+                }}>{a.active ? 'Yakunlash' : 'Qayta ochish'}</button></td></tr>)}</tbody></table></div>{closing && <section className="sa-close-confirm" role="alertdialog" aria-label="Testni yakunlashni tasdiqlash"><h3>“{closing.title}” testini yakunlaysizmi?</h3><p>Yangi urinishlar to‘xtatiladi. Davom etayotgan urinishlar hozirgacha saqlangan javoblar asosida baholanadi.</p><ErrorBox text={error} /><div className="sa-row"><button className="btn btn-secondary" disabled={busy} onClick={() => setClosing(null)}>Bekor qilish</button><button className="btn btn-primary" disabled={busy} onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const result = await api.save(`/academy/assignments/${closing.id}/status`, { active: false });
+                    setMessage(`Test yakunlandi. ${result.finishedAttempts} ta davom etayotgan urinish baholandi.`);
+                    setClosing(null); setError(''); list.load();
+                  } catch (e) { setError(e.message); }
+                  finally { setBusy(false); }
+                }}>{busy ? 'Yakunlanmoqda…' : 'Ha, testni yakunlash'}</button></div></section>}</div>}</>;
 }
 function Analytics({
   teacher
