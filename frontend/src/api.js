@@ -690,6 +690,10 @@ export async function gradeHomeworkSubmission(homeworkId, studentId, p) {
 
 // ── Minar Space (space.minaracademy.uz o'quvchi ilovasi) hisoblari ──────────
 
+export async function fetchMinarAccountGroups() {
+  // SPACE staff selector returns all active groups, without CRM list pagination.
+  return request('/space/admin/account-groups')
+}
 export async function fetchMinarAccounts(params = {}) {
   const q = new URLSearchParams()
   if (params.group_id) q.set('group_id', params.group_id)

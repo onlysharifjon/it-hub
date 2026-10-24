@@ -2,6 +2,25 @@ import { useEffect, useState } from 'react';
 import { spaceStaff as api } from '../api';
 import './SpaceAcademy.css';
 const date = d => new Date(d).toLocaleString('uz-UZ');
+const warningLabels = {
+  window_leave: 'Oynadan chiqish', fullscreen_exit: 'To‘liq ekrandan chiqish',
+  copy: 'Nusxalashga urinish', cut: 'Kesib olishga urinish', paste: 'Joylashtirishga urinish',
+  context_menu: 'O‘ng tugma menyusi', print: 'Chop etishga urinish',
+  page_leave: 'Yopish yoki yangilashga urinish', navigation_attempt: 'Boshqa bo‘limga o‘tishga urinish'
+};
+function warningSummary(attempt) {
+  const parts = Object.entries(attempt.integrity?.counts || {}).map(([kind, count]) => `${warningLabels[kind] || kind}: ${count}`);
+  const legacy = attempt.integrity?.legacyWarnings ?? (parts.length ? 0 : attempt.warnings);
+  if (legacy) parts.push(`Oldingi oynadan chiqish qaydlari: ${legacy}`);
+  return parts.join(' · ');
+}
+function WarningHistory({attempt}) {
+  return <section className="sa-warning-history" aria-label="Testdagi ogohlantirishlar"><h3>Testdagi ogohlantirishlar · {attempt.warnings || 0}</h3>
+    <p className="sa-muted">{warningSummary(attempt) || 'Ogohlantirish qayd etilmagan.'}</p>
+    {!!attempt.integrityEvents?.length && <details open><summary>Hodisalar tarixi</summary><p className="sa-muted">Vaqt — server qaydni qabul qilgan payt. Internet uzilganida qayd keyinroq kelishi mumkin.</p><ol>{attempt.integrityEvents.map(e => <li key={e.id}><span>{warningLabels[e.type] || e.type}</span><time dateTime={e.recordedAt}>{date(e.recordedAt)}</time></li>)}</ol></details>}
+    {attempt.integrity?.limitReached && <p className="sa-muted">Dastlabki 200 ta hodisa saqlangan; qo‘shimcha holatlar ro‘yxatga kiritilmaydi.</p>}
+  </section>;
+}
 function useLoad(path) {
   const [data, setData] = useState(null),
     [error, setError] = useState('');
@@ -289,7 +308,7 @@ function Analytics({
     [busy, setBusy] = useState(false);
   const exportCSV = () => {
     const cell = x => '"' + String(x ?? '').replace(/^[=+@-]/, "'$&").replaceAll('"', '""') + '"';
-    const rows = [['O‘quvchi', 'Natija %', 'Yakunlangan', 'Oynadan chiqish'], ...data.attempts.map(a => [a.student, a.score, a.finishedAt || '', a.warnings])];
+    const rows = [['O‘quvchi', 'Natija %', 'Yakunlangan', 'Ogohlantirishlar', 'Holatlar'], ...data.attempts.map(a => [a.student, a.score, a.finishedAt || '', a.warnings, warningSummary(a)])];
     const blob = new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], {
       type: 'text/csv;charset=utf-8'
     });
@@ -303,7 +322,7 @@ function Analytics({
   return <><div className="sa-row"><label>Test bo‘yicha filtr<select value={aid} onChange={e => {
           setAid(e.target.value);
           setSelected(null);
-        }}><option value="">Barcha testlar</option>{list.data?.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></label><button className="btn btn-secondary" onClick={load}>Yangilash</button>{data && <button className="btn btn-secondary" onClick={exportCSV}>CSV eksport</button>}</div>{!data ? <Loading error={error} load={load} /> : <><div className="sa-metrics">{[['Bugun yakunlangan', data.daily.completed], ['O‘rtacha natija', data.daily.average === null ? '—' : data.daily.average + '%'], ['50% dan past', data.daily.below50], ['Yordam kerak', data.atRisk.length]].map(([label, v]) => <div className="sa-card" key={label}><span>{label}</span><strong>{v}</strong></div>)}</div><section className="sa-card"><h2>E’tibor talab qiladigan o‘quvchilar</h2>{data.atRisk.length ? data.atRisk.map(s => <div key={s.accountId} className="sa-risk"><strong>{s.student}</strong><span>{s.average}% · {s.reason}</span></div>) : <p className="sa-muted">Past natijali o‘quvchilar hozircha qayd etilmagan.</p>}</section><section className="sa-card"><h2>Natijalar va javoblar</h2><p className="sa-muted">{data.total} ta urinish. Tahlilda oxirgi {data.analysisLimit} tagacha urinish ko‘rsatiladi. Kunlik ko‘rsatkichlar bugungi barcha natijalarni qamraydi.</p><ErrorBox text={message} /><div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>O‘quvchi</th><th>Natija</th><th>Yakunlangan</th><th>Qaydlar</th><th>Amal</th></tr></thead><tbody>{data.attempts.map(a => <tr key={a.id}><td>{a.student}{a.phone && <small>{a.phone}</small>}</td><td>{a.score === null ? 'Jarayonda' : a.score + '%'}</td><td>{a.finishedAt ? date(a.finishedAt) : '—'}</td><td>{a.warnings ? `${a.warnings} marta oynadan chiqqan` : '—'}</td><td><button className="btn btn-secondary" onClick={async () => {
+        }}><option value="">Barcha testlar</option>{list.data?.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></label><button className="btn btn-secondary" onClick={load}>Yangilash</button>{data && <button className="btn btn-secondary" onClick={exportCSV}>CSV eksport</button>}</div>{!data ? <Loading error={error} load={load} /> : <><div className="sa-metrics">{[['Bugun yakunlangan', data.daily.completed], ['O‘rtacha natija', data.daily.average === null ? '—' : data.daily.average + '%'], ['50% dan past', data.daily.below50], ['Yordam kerak', data.atRisk.length]].map(([label, v]) => <div className="sa-card" key={label}><span>{label}</span><strong>{v}</strong></div>)}</div><section className="sa-card"><h2>E’tibor talab qiladigan o‘quvchilar</h2>{data.atRisk.length ? data.atRisk.map(s => <div key={s.accountId} className="sa-risk"><strong>{s.student}</strong><span>{s.average}% · {s.reason}</span></div>) : <p className="sa-muted">Past natijali o‘quvchilar hozircha qayd etilmagan.</p>}</section><section className="sa-card"><h2>Natijalar va javoblar</h2><p className="sa-muted">{data.total} ta urinish. Tahlilda oxirgi {data.analysisLimit} tagacha urinish ko‘rsatiladi. Kunlik ko‘rsatkichlar bugungi barcha natijalarni qamraydi.</p><ErrorBox text={message} /><div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>O‘quvchi</th><th>Natija</th><th>Yakunlangan</th><th>Qaydlar</th><th>Amal</th></tr></thead><tbody>{data.attempts.map(a => <tr key={a.id}><td>{a.student}{a.phone && <small>{a.phone}</small>}</td><td>{a.score === null ? 'Jarayonda' : a.score + '%'}</td><td>{a.finishedAt ? date(a.finishedAt) : '—'}</td><td>{a.warnings ? <><strong>{a.warnings} ta ogohlantirish</strong><small>{warningSummary(a)}</small></> : '—'}</td><td><button className="btn btn-secondary" onClick={async () => {
                     setBusy(true);
                     try {
                       setSelected(await api.get('/academy/attempts/' + a.id));
@@ -312,7 +331,7 @@ function Analytics({
                     } finally {
                       setBusy(false);
                     }
-                  }} disabled={busy}>Javoblar</button>{!teacher && !a.accountId && a.finishedAt && <button className="btn btn-secondary" disabled={busy || a.leadId} onClick={async () => {
+                  }} disabled={busy}>Javoblar va qaydlar</button>{!teacher && !a.accountId && a.finishedAt && <button className="btn btn-secondary" disabled={busy || a.leadId} onClick={async () => {
                     setBusy(true);
                     try {
                       const r = await api.save('/academy/attempts/' + a.id + '/lead', {});
@@ -323,7 +342,7 @@ function Analytics({
                     } finally {
                       setBusy(false);
                     }
-                  }}>{a.leadId ? 'CRM’da mavjud' : 'CRM arizasiga olish'}</button>}</td></tr>)}</tbody></table></div><p className="sa-muted">Oynadan chiqish qaydi ko‘chirishni isbotlamaydi. Natijani suhbat va amaliy ish bilan birga baholang.</p></section>{selected && <section className="sa-card"><div className="sa-row"><h2>{selected.student} · javoblar</h2><button className="btn btn-secondary" onClick={() => setSelected(null)}>Yopish</button></div>{selected.questions.map((q, i) => <div className="sa-answer" key={q.id}><strong>{i + 1}. {q.q}</strong><p>Tanlagan: {q.options[selected.answers[q.id]] || 'Javobsiz'}</p>{selected.review && <p className={selected.review[i].correct ? 'sa-success' : 'sa-danger'}>To‘g‘ri javob: {q.options[selected.review[i].answer]}</p>}</div>)}</section>}<section className="sa-card"><h2>Savollar sifati</h2><p className="sa-muted">Kamida 5 javobdan keyin: 30% dan past — qiyin; 95% va undan yuqori — oson.</p>{data.questions.map(q => <div className="sa-answer" key={q.id}><div className="sa-row"><strong>{q.q}</strong><span className="sa-badge">{q.percent}% · {q.total} javob{q.quality === 'normal' ? '' : ' · ' + q.quality}</span></div><div className="sa-bar"><i style={{
+                  }}>{a.leadId ? 'CRM’da mavjud' : 'CRM arizasiga olish'}</button>}</td></tr>)}</tbody></table></div><p className="sa-muted">Brauzer qaydlari ko‘chirishni isbotlamaydi va bahoni avtomatik o‘zgartirmaydi. Boshqa qurilma, skrinshot yoki barcha tashqi dasturlarni aniqlash imkoni yo‘q. Holatni o‘quvchi bilan aniqlashtiring.</p></section>{selected && <section className="sa-card"><div className="sa-row"><h2>{selected.student} · javoblar</h2><button className="btn btn-secondary" onClick={() => setSelected(null)}>Yopish</button></div><WarningHistory attempt={selected} />{selected.questions.map((q, i) => <div className="sa-answer" key={q.id}><strong>{i + 1}. {q.q}</strong><p>Tanlagan: {q.options[selected.answers[q.id]] || 'Javobsiz'}</p>{selected.review && <p className={selected.review[i].correct ? 'sa-success' : 'sa-danger'}>To‘g‘ri javob: {q.options[selected.review[i].answer]}</p>}</div>)}</section>}<section className="sa-card"><h2>Savollar sifati</h2><p className="sa-muted">Kamida 5 javobdan keyin: 30% dan past — qiyin; 95% va undan yuqori — oson.</p>{data.questions.map(q => <div className="sa-answer" key={q.id}><div className="sa-row"><strong>{q.q}</strong><span className="sa-badge">{q.percent}% · {q.total} javob{q.quality === 'normal' ? '' : ' · ' + q.quality}</span></div><div className="sa-bar"><i style={{
               width: q.percent + '%'
             }} /></div>{Object.keys(q.wrongOptions).length > 0 && <p>Ko‘p tanlangan xato: {Object.entries(q.wrongOptions).sort((a, b) => b[1] - a[1])[0].join(' — ')}</p>}</div>)}</section></>}</>;
 }

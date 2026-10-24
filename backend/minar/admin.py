@@ -1,6 +1,8 @@
 """Xodimlar API'si (CRM tomoni): o'quvchi akkauntlari va Minar shop buyurtmalari.
 
-Bearer JWT (mavjud CRM login). Rollar: admin, support_teacher. Bu router space domenida OCHILMAYDI —
+Bearer JWT (mavjud CRM login). Admin/support_teacher boshqaradi; teacher faqat o'z
+faol guruhlarini, ularning hisoblarini ko'radi va guruh bo'yicha hisob ochadi.
+Bu router space domenida OCHILMAYDI —
 nginx `space.minaracademy.uz/api/admin/` ga 404 qaytaradi.
 """
 from __future__ import annotations
@@ -39,6 +41,22 @@ def staff_user(credentials: HTTPAuthorizationCredentials = Depends(_bearer),
     return user
 
 
+def account_creator(credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+                    db: Session = Depends(get_db)) -> models.User:
+    from .. import main
+    user = main.require_auth(credentials, db)
+    if user.role not in (UserRole.admin.value, UserRole.metodist.value, UserRole.teacher.value):
+        raise HTTPException(status_code=403, detail="SPACE hisobi ochishga ruxsat yo'q")
+    return user
+
+
+def _account_groups(db: Session, user: models.User):
+    query = db.query(models.Group).filter(models.Group.is_active.is_(True))
+    if user.role == UserRole.teacher.value:
+        query = query.filter(models.Group.teacher_id == user.id)
+    return query
+
+
 def _audit(db: Session, user: models.User, action: str, account_id: int, data: dict) -> None:
     from .. import main
     main.write_audit(db, entity_type="minar_account", entity_id=account_id, action=action,
@@ -53,15 +71,16 @@ def _login_id(student_id: int) -> str:
     return f"MA{student_id:04d}"
 
 
-def _active_group(db: Session, student_id: int) -> Optional[models.Group]:
-    return (
+def _active_group(db: Session, student_id: int, teacher_id: Optional[int] = None) -> Optional[models.Group]:
+    query = (
         db.query(models.Group)
         .join(models.GroupStudent, models.GroupStudent.group_id == models.Group.id)
         .filter(models.GroupStudent.student_id == student_id, models.Group.is_active.is_(True),
                 models.GroupStudent.left_at.is_(None))
-        .order_by(models.GroupStudent.joined_at.desc())
-        .first()
     )
+    if teacher_id is not None:
+        query = query.filter(models.Group.teacher_id == teacher_id)
+    return query.order_by(models.GroupStudent.joined_at.desc()).first()
 
 
 def _create(db: Session, student: models.Student, user: models.User, course: Optional[str],
@@ -107,11 +126,26 @@ def _check_course(course: Optional[str]) -> None:
         raise HTTPException(status_code=400, detail="Kurs HTML, CSS yoki JavaScript bo'lishi kerak")
 
 
+@router.get("/account-groups")
+def account_groups(db: Session = Depends(get_db), user: models.User = Depends(account_creator)):
+    # A compact selector, not the paginated CRM directory. Teachers see only their groups.
+    return [{"id": group.id, "name": group.name}
+            for group in _account_groups(db, user).order_by(models.Group.name, models.Group.id).all()]
+
+
 @router.get("/accounts")
 def list_accounts(group_id: Optional[int] = Query(None), q: Optional[str] = Query(None),
                   active: Optional[bool] = Query(None),
-                  db: Session = Depends(get_db), _: models.User = Depends(staff_user)):
+                  db: Session = Depends(get_db), user: models.User = Depends(account_creator)):
     query = db.query(MinarAccount, models.Student).join(models.Student, models.Student.id == MinarAccount.student_id)
+    if user.role == UserRole.teacher.value:
+        allowed = _account_groups(db, user)
+        if group_id and not allowed.filter(models.Group.id == group_id).first():
+            raise HTTPException(status_code=403, detail="Faqat o'z guruhingiz hisoblarini ko'ra olasiz")
+        members = db.query(models.GroupStudent.student_id).filter(
+            models.GroupStudent.group_id.in_(allowed.with_entities(models.Group.id)),
+            models.GroupStudent.left_at.is_(None))
+        query = query.filter(MinarAccount.student_id.in_(members))
     if group_id:
         query = query.join(models.GroupStudent, models.GroupStudent.student_id == models.Student.id) \
                      .filter(models.GroupStudent.group_id == group_id,
@@ -124,7 +158,7 @@ def list_accounts(group_id: Optional[int] = Query(None), q: Optional[str] = Quer
     now = datetime.utcnow()
     out = []
     for acc, st in query.order_by(models.Student.full_name).limit(500).all():
-        g = _active_group(db, st.id)
+        g = _active_group(db, st.id, user.id if user.role == UserRole.teacher.value else None)
         out.append({
             "student_id": st.id, "full_name": st.full_name, "group": g.name if g else None,
             "login_id": acc.login_id, "course": acc.course, "course_override":acc.course_override, "age_band":acc.age_band, "is_active": acc.is_active,
@@ -155,11 +189,15 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db), user: 
 
 
 @router.post("/accounts/bulk", status_code=201)
-def create_accounts_bulk(payload: BulkCreate, db: Session = Depends(get_db), user: models.User = Depends(staff_user)):
+def create_accounts_bulk(payload: BulkCreate, db: Session = Depends(get_db), user: models.User = Depends(account_creator)):
     _check_course(payload.course)
     group = db.query(models.Group).filter(models.Group.id == payload.group_id).first()
     if not group:
         raise HTTPException(status_code=404, detail="Guruh topilmadi")
+    if user.role == UserRole.teacher.value and group.teacher_id != user.id:
+        raise HTTPException(status_code=403, detail="Faqat o'z guruhingizga SPACE hisobi ocha olasiz")
+    if not group.is_active:
+        raise HTTPException(status_code=400, detail="Guruh faol emas")
     students = (
         db.query(models.Student)
         .join(models.GroupStudent, models.GroupStudent.student_id == models.Student.id)

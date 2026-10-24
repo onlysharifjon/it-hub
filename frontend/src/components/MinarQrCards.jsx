@@ -8,7 +8,7 @@ import { issueMinarQrCards } from '../api'
 
 // Minar Space QR kirish kartalari: guruh yoki bitta talaba uchun. Har yangi QR oldingisini bekor qiladi.
 // `studentIds` berilsa — darhol shu talabalar uchun, aks holda guruh tanlanadi.
-export default function MinarQrCards({ groups = [], studentIds = null, onClose }) {
+export default function MinarQrCards({ groups = [], groupsLoading = false, groupsError = '', onRetryGroups, studentIds = null, onClose }) {
   const [groupId, setGroupId] = useState('')
   const [data, setData] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -55,17 +55,22 @@ export default function MinarQrCards({ groups = [], studentIds = null, onClose }
               Har QR <strong>bir marta</strong> ishlaydi va {data?.expires_days || 14} kun amal qiladi; yangisi chiqarilsa eskisi bekor bo'ladi.
             </p>
             {!studentIds && (
+              <>
               <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                 <label style={{ flex: 1 }}>Guruh
-                  <select className="field" value={groupId} onChange={e => setGroupId(e.target.value)}>
-                    <option value="">Tanlang...</option>
+                  <select className="field" value={groupId} disabled={groupsLoading || !!groupsError || busy} onChange={e => setGroupId(e.target.value)}>
+                    <option value="">{groupsLoading ? 'Guruhlar yuklanmoqda...' : 'Guruhni tanlang...'}</option>
                     {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                   </select>
                 </label>
-                <button className="button" disabled={!groupId || busy} onClick={() => issue({ group_id: Number(groupId) })}>
+                <button className="button" disabled={!groups.some(g => String(g.id) === groupId) || busy || groupsLoading || !!groupsError} onClick={() => issue({ group_id: Number(groupId) })}>
                   {busy ? 'Yaratilmoqda...' : 'QR yaratish'}
                 </button>
               </div>
+              {groupsLoading && <p className="text-muted" role="status">Guruhlar yuklanmoqda...</p>}
+              {groupsError && <div role="alert"><p>{groupsError}</p><button className="button secondary" onClick={onRetryGroups}>Qayta urinish</button></div>}
+              {!groupsLoading && !groupsError && groups.length === 0 && <p className="text-muted" role="status">Faol guruh topilmadi.</p>}
+              </>
             )}
             {busy && studentIds && <div className="text-muted">Yaratilmoqda...</div>}
             {cards.length > 0 && (

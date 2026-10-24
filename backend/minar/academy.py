@@ -78,9 +78,48 @@ def shuffled(q):
 def assignment_dict(a):
     return {'id':a.id,'topicId':a.topic_id,'title':a.title,'groupId':a.group_id,'count':a.count,'minutes':a.minutes,'maxAttempts':a.max_attempts,'startsAt':stamp(a.starts_at),'dueAt':stamp(a.due_at),'active':a.active,'publicToken':a.public_token}
 
+INTEGRITY_TYPES = frozenset({'window_leave', 'fullscreen_exit', 'copy', 'cut', 'paste',
+                            'context_menu', 'print', 'page_leave', 'navigation_attempt'})
+INTEGRITY_LIMIT = 200
+
+
+def integrity_summary(a):
+    events = json.loads(a.integrity_events or '[]')
+    counts = {}
+    for event in events:
+        counts[event['type']] = counts.get(event['type'], 0) + 1
+    return {'counts': counts, 'legacyWarnings': max(0, a.warnings - len(events)),
+            'limitReached': len(events) >= INTEGRITY_LIMIT}
+
+
+def record_integrity(a, payload):
+    incoming = payload.get('integrityEvents', [])
+    if not isinstance(incoming, list) or len(incoming) > INTEGRITY_LIMIT:
+        raise MinarError(400, 'Ogohlantirishlar ro‘yxati noto‘g‘ri.')
+    # Validate before mutating. Never accept clipboard contents, URLs, or client timestamps.
+    for event in incoming:
+        if (not isinstance(event, dict) or set(event) != {'id', 'type'}
+                or not isinstance(event['id'], str) or not 8 <= len(event['id']) <= 64
+                or not all(c.isascii() and (c.isalnum() or c in '-_') for c in event['id'])
+                or not isinstance(event['type'], str) or event['type'] not in INTEGRITY_TYPES):
+            raise MinarError(400, 'Ogohlantirish turi noto‘g‘ri.')
+    events = json.loads(a.integrity_events or '[]')
+    known = {event['id'] for event in events}
+    added = 0
+    for event in incoming:
+        if event['id'] in known or len(events) >= INTEGRITY_LIMIT:
+            continue
+        events.append({**event, 'recordedAt': stamp(datetime.utcnow())})
+        known.add(event['id']); added += 1
+    # Keep compatibility with tabs opened before this release. Retries cannot inflate counts.
+    a.warnings = min(10000, max(a.warnings, integer(payload.get('warnings', a.warnings), 0, 10000)) + added)
+    a.integrity_events = pack(events)
+
+
 def attempt_dict(a,teacher=False):
     qs=json.loads(a.snapshot);answers=json.loads(a.answers)
     result={'id':a.id,'assignmentId':a.assignment_id,'deadline':stamp(a.deadline),'serverTime':stamp(datetime.utcnow()),'finishedAt':stamp(a.finished_at),'score':a.score,'language':a.language,'answers':answers,'warnings':a.warnings,'questions':[question_public(q,a.language) for q in qs]}
+    result.update(integrityEvents=json.loads(a.integrity_events or '[]'), integrity=integrity_summary(a))
     if a.finished_at:
         result['review']=[{'id':q['id'],'picked':answers.get(q['id']),'correct':answers.get(q['id'])==q['answer'],**({'answer':q['answer']} if teacher else {})} for q in qs]
     if teacher: result.update(student=a.guest_name,phone=a.guest_phone,accountId=a.account_id,leadId=a.lead_id)
@@ -146,8 +185,8 @@ def save_answers(db,a,payload,submit=False):
     for key,value in incoming.items():
         if key not in qs: raise MinarError(400,'Savol topilmadi.')
         integer(value,0,len(qs[key]['options'])-1)
+    record_integrity(a, payload)
     a.answers=pack({**json.loads(a.answers),**incoming})
-    a.warnings=max(a.warnings,integer(payload.get('warnings',a.warnings),0,10000))
     if submit: finish(db,a)
     db.commit();return attempt_dict(a)
 
@@ -371,7 +410,7 @@ def report(assignmentId:int=0,db:Session=Depends(get_db),user=Depends(educator))
         avg=round(sum(scores[:3])/len(scores[:3]))
         if avg<60:risk.append({'accountId':aid,'student':names.get(aid,'O‘quvchi'),'average':avg,'reason':'Oxirgi testlarda 60% dan past natija'})
     # Compact list; full immutable answer snapshots load only when requested.
-    return {'attempts':[{'id':a.id,'assignmentId':a.assignment_id,'student':names.get(a.account_id,a.guest_name or 'O‘quvchi'),'phone':a.guest_phone,'accountId':a.account_id,'leadId':a.lead_id,'score':a.score,'finishedAt':stamp(a.finished_at),'warnings':a.warnings} for a in rows],
+    return {'attempts':[{'id':a.id,'assignmentId':a.assignment_id,'student':names.get(a.account_id,a.guest_name or 'O‘quvchi'),'phone':a.guest_phone,'accountId':a.account_id,'leadId':a.lead_id,'score':a.score,'finishedAt':stamp(a.finished_at),'warnings':a.warnings,'integrity':integrity_summary(a)} for a in rows],
             'questions':sorted(questions.values(),key=lambda x:x['percent']), 'atRisk':risk,
             'total':q.count(),'analysisLimit':1000,
             'daily':{'date':today.isoformat(),'completed':completed,'average':round(average) if average is not None else None,'below50':below or 0}}

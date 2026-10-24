@@ -1,7 +1,7 @@
 import { PageIntro, Initials, SummaryRow } from './ui/Workspace'
 import Overlay from './ui/Overlay'
 import PersonName from './ui/PersonName'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -10,7 +10,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchMinarAccounts, createMinarAccount, createMinarAccountsBulk,
-  resetMinarPassword, patchMinarAccount, fetchStudents, fetchGroups,
+  resetMinarPassword, patchMinarAccount, fetchStudents, fetchMinarAccountGroups,
 } from '../api'
 import useConfirm from './ui/useConfirm'
 import DataTable, { RowActions } from './ui/DataTable'
@@ -21,6 +21,8 @@ const COURSES = ['HTML', 'CSS', 'JavaScript']
 export default function MinarAccounts({ currentUser }) {
   const [confirmUI, ask] = useConfirm()
   const canManage = currentUser?.role === 'admin' || currentUser?.role === 'support_teacher'
+  const isTeacher = currentUser?.role === 'teacher'
+  const canCreate = canManage || isTeacher
 
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
@@ -39,6 +41,9 @@ export default function MinarAccounts({ currentUser }) {
   const [bulkModal, setBulkModal] = useState(false)
   const [qr, setQr] = useState(null)   // null | { studentIds } | { studentIds: null } (guruh tanlash)
   const [groups, setGroups] = useState([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [groupsError, setGroupsError] = useState('')
+  const groupsRequest = useRef(0)
   const [bulkGroupId, setBulkGroupId] = useState('')
   const [bulkCourse, setBulkCourse] = useState('')
   const [bulkSaving, setBulkSaving] = useState(false)
@@ -98,17 +103,31 @@ export default function MinarAccounts({ currentUser }) {
     finally { setSaving(false) }
   }
 
+  async function loadGroups() {
+    const request = ++groupsRequest.current
+    setGroupsLoading(true)
+    setGroupsError('')
+    setGroups([])
+    try {
+      const result = await fetchMinarAccountGroups()
+      if (request === groupsRequest.current) setGroups(result)
+    } catch (e) {
+      if (request === groupsRequest.current) setGroupsError(e.message || "Guruhlarni yuklab bo'lmadi")
+    } finally {
+      if (request === groupsRequest.current) setGroupsLoading(false)
+    }
+  }
+
   function openBulkModal() {
     setBulkGroupId('')
     setBulkCourse('')
-    if (groups.length === 0) {
-      fetchGroups({ is_active: true, page_size: 200 }).then(r => setGroups(r.items || [])).catch(() => {})
-    }
+    loadGroups()
     setBulkModal(true)
   }
 
   async function handleBulkCreate() {
-    if (!bulkGroupId) return toast.error("Guruhni tanlang")
+    if (bulkSaving || groupsLoading || groupsError) return
+    if (!groups.some(g => String(g.id) === bulkGroupId)) return toast.error("Guruhni tanlang")
     setBulkSaving(true)
     try {
       const res = await createMinarAccountsBulk({ group_id: Number(bulkGroupId), course: bulkCourse || null })
@@ -168,8 +187,8 @@ export default function MinarAccounts({ currentUser }) {
         </span>
       ),
     },
-    { key: 'course', header: 'Kurs', sortable: true,render:r=><select aria-label={r.full_name+' kursi'} value={r.course} onChange={async e=>{try{await patchMinarAccount(r.student_id,{course:e.target.value});toast.success('Kurs yangilandi');load()}catch(e){toast.error(e.message)}}}>{COURSES.map(c=><option key={c}>{c}</option>)}</select> },
-    {key:'age_band',header:'Yosh toifasi',render:r=><select aria-label={r.full_name+' yosh toifasi'} value={r.age_band||''} onChange={async e=>{try{await patchMinarAccount(r.student_id,{age_band:e.target.value||null});load()}catch(e){toast.error(e.message)}}}><option value="">Kiritilmagan</option>{['7-9','10-12','13-16','17+'].map(a=><option key={a}>{a}</option>)}</select>},
+    { key: 'course', header: 'Kurs', sortable: true,render:r=>!canManage ? r.course : <select aria-label={r.full_name+' kursi'} value={r.course} onChange={async e=>{try{await patchMinarAccount(r.student_id,{course:e.target.value});toast.success('Kurs yangilandi');load()}catch(e){toast.error(e.message)}}}>{COURSES.map(c=><option key={c}>{c}</option>)}</select> },
+    {key:'age_band',header:'Yosh toifasi',render:r=>!canManage ? (r.age_band || '—') : <select aria-label={r.full_name+' yosh toifasi'} value={r.age_band||''} onChange={async e=>{try{await patchMinarAccount(r.student_id,{age_band:e.target.value||null});load()}catch(e){toast.error(e.message)}}}><option value="">Kiritilmagan</option>{['7-9','10-12','13-16','17+'].map(a=><option key={a}>{a}</option>)}</select>},
     { key: 'xp', header: 'XP', sortable: true, align: 'right' },
     { key: 'streak', header: 'Streak', sortable: true, align: 'right' },
     {
@@ -210,13 +229,13 @@ export default function MinarAccounts({ currentUser }) {
       {confirmUI}
       <PageIntro
         title={<>Minar Space</>}
-        description={<><FontAwesomeIcon icon={faRocket} /> space.minaracademy.uz o'quvchi kabineti hisoblari. Parol faqat yaratilganda/tiklanganda bir marta ko'rsatiladi.</>}
-        actions={canManage && <div className="header-actions">
+        description={<><FontAwesomeIcon icon={faRocket} /> {isTeacher ? "O'z guruhlaringizdagi o'quvchilar uchun SPACE hisoblari." : "space.minaracademy.uz o'quvchi kabineti hisoblari."} Parol faqat yaratilganda/tiklanganda bir marta ko'rsatiladi.</>}
+        actions={canCreate && <div className="header-actions">
           <button className="button secondary" onClick={openBulkModal}>
             <FontAwesomeIcon icon={faLayerGroup} /> Guruh bo'yicha ochish
           </button>
-          <button className="button secondary" onClick={() => {
-            if (groups.length === 0) fetchGroups({ is_active: true, page_size: 200 }).then(r => setGroups(r.items || [])).catch(() => {})
+          {canManage && <><button className="button secondary" onClick={() => {
+            loadGroups()
             setQr({ studentIds: null })
           }}>
             <FontAwesomeIcon icon={faQrcode} /> QR kartalar
@@ -224,6 +243,7 @@ export default function MinarAccounts({ currentUser }) {
           <button className="button" onClick={openCreateModal}>
             <FontAwesomeIcon icon={faPlus} /> Hisob ochish
           </button>
+          </>}
         </div>}
       />
 
@@ -318,34 +338,39 @@ export default function MinarAccounts({ currentUser }) {
       )}
 
       {/* Guruh bo'yicha ommaviy ochish modali */}
-      {qr && <MinarQrCards groups={groups} studentIds={qr.studentIds} onClose={() => setQr(null)} />}
+      {qr && <MinarQrCards groups={groups} groupsLoading={groupsLoading} groupsError={groupsError} onRetryGroups={loadGroups} studentIds={qr.studentIds} onClose={() => setQr(null)} />}
 
       {bulkModal && (
-        <Overlay className="modal-overlay" onClick={() => setBulkModal(false)}>
+        <Overlay className="modal-overlay" onClick={() => { if (!bulkSaving) setBulkModal(false) }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faLayerGroup} /> Guruh bo'yicha ommaviy ochish</h3>
-              <button className="modal-close" onClick={() => setBulkModal(false)}>✕</button>
+              <button className="modal-close" disabled={bulkSaving} onClick={() => setBulkModal(false)}>✕</button>
             </div>
             <div className="modal-body">
               <p className="text-muted" style={{ fontSize: 13, marginTop: 0 }}>
                 Guruhdagi hisobi hali yo'q barcha faol talabalarga hisob ochiladi.
+                {' '}Mavjud hisoblarning login va parollari o'zgarmaydi.
+                {isTeacher && <> Faqat sizga biriktirilgan faol guruhlar ko'rsatiladi.</>}
               </p>
-              <label>Guruh *</label>
-              <select className="field" value={bulkGroupId} onChange={e => setBulkGroupId(e.target.value)}>
-                <option value="">Tanlang...</option>
+              <label htmlFor="minar-bulk-group">Guruh *</label>
+              <select id="minar-bulk-group" className="field" value={bulkGroupId} disabled={groupsLoading || bulkSaving || !!groupsError} onChange={e => setBulkGroupId(e.target.value)}>
+                <option value="">{groupsLoading ? 'Guruhlar yuklanmoqda...' : 'Guruhni tanlang...'}</option>
                 {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
+              {groupsLoading && <p className="text-muted" role="status">Guruhlar yuklanmoqda...</p>}
+              {groupsError && <div role="alert"><p>{groupsError}</p><button className="button secondary" onClick={loadGroups}>Qayta urinish</button></div>}
+              {!groupsLoading && !groupsError && groups.length === 0 && <p className="text-muted" role="status">Faol guruh topilmadi.</p>}
 
               <label style={{ marginTop: 10 }}>Kurs</label>
-              <select className="field" value={bulkCourse} onChange={e => setBulkCourse(e.target.value)}>
+              <select className="field" value={bulkCourse} disabled={bulkSaving} onChange={e => setBulkCourse(e.target.value)}>
                 <option value="">Avtomatik (guruh bosqichidan)</option>
                 {COURSES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div className="modal-footer">
-              <button className="button secondary" onClick={() => setBulkModal(false)}>Bekor</button>
-              <button className="button" onClick={handleBulkCreate} disabled={bulkSaving}>
+              <button className="button secondary" disabled={bulkSaving} onClick={() => setBulkModal(false)}>Bekor</button>
+              <button className="button" onClick={handleBulkCreate} disabled={bulkSaving || groupsLoading || !!groupsError || !groups.some(g => String(g.id) === bulkGroupId)}>
                 {bulkSaving ? 'Yaratilmoqda...' : 'Yaratish'}
               </button>
             </div>

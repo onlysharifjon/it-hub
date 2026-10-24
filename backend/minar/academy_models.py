@@ -44,6 +44,7 @@ class AcademyAttempt(Base):
     finished_at = Column(DateTime)
     score = Column(Integer)
     warnings = Column(Integer, nullable=False, default=0)
+    integrity_events = Column(Text, nullable=False, default='[]', server_default='[]')
     lead_id = Column(Integer)
 
 class AcademyPractice(Base):

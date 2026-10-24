@@ -63,3 +63,23 @@ both the schema downgrade and release rollback script guard against this.
 attempt credentials are HttpOnly cookies; contact details and answers are never cached.
 The source bundle is imported through the CRM interface after deployment; existing
 courses and live group assignments are not silently replaced.
+
+The exam warning update requires additive migration `20261024b_exam_warnings`.
+It records up to 200 typed browser signals per attempt with stable event IDs and
+server receipt timestamps. Retry requests are idempotent and cannot erase history;
+old scalar warning counts remain readable. Staff reports and CSV show categories,
+and scoped attempt review shows the timeline. Warnings never change scores or
+finish attempts. Clipboard contents and browsing URLs are not collected.
+The application can roll back to the manual-close release while retaining this
+column. Schema downgrade refuses to discard populated warning history.
+
+The 2026-10-29 account update uses `GET /space/admin/account-groups` for the
+SPACE account and QR selectors. It returns all active groups for admin/support
+teacher and only the current teacher's active groups for teachers. Loading,
+empty and retry states are visible; the old invalid `page_size=200` request is
+removed. CRM route permissions and navigation now expose Minar Space to teachers.
+Teachers may list their current group members' existing accounts and create
+missing accounts through `POST /space/admin/accounts/bulk`. Group ownership is
+checked on the server; transfers and teacher reassignment revoke access. Existing
+passwords are never reset by bulk creation. Single-account administration, password
+reset, course changes, account blocking and QR issuance retain staff permissions.

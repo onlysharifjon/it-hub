@@ -98,7 +98,7 @@ const PAGE_ACCESS = {
   chatbot:          ['admin', 'hunter'],
   parents:          ['admin', 'hunter'],
   parent_engagement: ['admin', 'support_teacher', 'teacher', 'hunter'],
-  minar_accounts:   ['admin', 'support_teacher'],
+  minar_accounts:   ['admin', 'support_teacher', 'teacher'],
   computers:        ['admin', 'hunter'],
   feedbacks:        ['admin', 'call_center'],
   academic:         ['admin', 'support_teacher', 'teacher'],
