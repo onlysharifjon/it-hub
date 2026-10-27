@@ -276,6 +276,25 @@ def _member_covering(members: list, student_id: int, month: Optional[int], year:
     return next((m for m in candidates if bills_month(m, month, year)), None)
 
 
+def month_billed_group_ids(student: models.Student, month: int, year: int) -> set:
+    """Talabadan berilgan (month, year) uchun to'lov olinadigan guruhlar ID'lari.
+
+    Chegirmaning "asosiy guruhi" va "eskirgan" bog'lanishi shu to'plamga qarab
+    aniqlanadi — hozirgi faol guruhlarga qarab emas. Aks holda boshqa guruhga
+    o'tkazilgan talabaning eski guruhdagi o'tgan oylariga global/doimiy chegirma
+    qo'llanmay qoladi (asosiy guruh endi yangi guruh bo'lgani uchun) va soxta
+    qarz paydo bo'ladi."""
+    ids = set()
+    for m in student.group_memberships:
+        g = m.group
+        if not g or not group_billable_in(g, month, year) or not bills_month(m, month, year):
+            continue
+        if g.start_date and (g.start_date.year, g.start_date.month) > (year, month):
+            continue
+        ids.add(g.id)
+    return ids
+
+
 def _primary_group_id(db: Session, student_id: int) -> Optional[int]:
     """Talabaning global (group_id=NULL) yoki eskirgan (guruhi endi mos
     kelmaydigan) chegirmasi faqat BITTA guruhga qo'llanishi uchun — eng
@@ -328,7 +347,11 @@ def student_month_owed(db: Session, student_id: int, group_id: int,
         price = vacation_adjusted_price(db, student_id, group_id, month, year, price)
     else:
         price = apply_vacations_to_price(db, student_id, g, month, year, price, vacations)
-    if active_group_ids is None:
+    month_ids = (month_billed_group_ids(member.student, month, year)
+                 if month is not None and year is not None and member.student is not None else None)
+    if month_ids:
+        active_group_ids = month_ids   # o'sha oydagi guruhlar (ko'ring: month_billed_group_ids)
+    elif active_group_ids is None:
         active_group_ids = _active_group_ids(db, student_id)
     primary_group_id = min(active_group_ids) if active_group_ids else None
     apply_global = primary_group_id is None or primary_group_id == group_id

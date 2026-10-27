@@ -1181,8 +1181,11 @@ def _student_owed_total(db: Session, s: models.Student, month: int = None, year:
     """Talabaning oylik to'liq summasi — faol guruhlar bo'yicha (tarif yoki guruh narxi).
     _student_month_owed bilan bir xil mantiq — ta'til va Special chegirmalar qo'llanadi."""
     total = Decimal(0)
-    active_group_ids = {m.group.id for m in s.group_memberships
-                        if m.group and m.group.is_active and m.left_at is None}
+    active_group_ids = (core_calc.month_billed_group_ids(s, month, year)
+                        if month is not None and year is not None else None)
+    if not active_group_ids:
+        active_group_ids = {m.group.id for m in s.group_memberships
+                            if m.group and m.group.is_active and m.left_at is None}
     primary_group_id = min(active_group_ids) if active_group_ids else None
     for m in s.group_memberships:
         g = m.group
@@ -3848,7 +3851,8 @@ def _finance_month(db: Session, month: int, year: int, *, with_students: bool = 
 
             if price > 0:
                 price = core_calc.vacation_adjusted_price(db, m.student_id, g.id, month, year, price)
-                m_active_group_ids = core_calc._active_group_ids(db, m.student_id)
+                m_active_group_ids = (core_calc.month_billed_group_ids(m.student, month, year)
+                                      or core_calc._active_group_ids(db, m.student_id))
                 apply_global = not m_active_group_ids or min(m_active_group_ids) == g.id
                 price = core_calc.apply_special_discounts(
                     price, core_calc.active_special_discounts(db, m.student_id),
