@@ -125,6 +125,7 @@ def _unlocked(db: Session, acc: MinarAccount) -> dict[str, datetime]:
 
 def _values(db: Session, acc: MinarAccount, metrics: set[str]) -> dict[str, int]:
     from .models import MinarProgress
+    from ..coin_launch import scope
     from .service import _positive
     count = lambda cls, *conditions: db.query(func.count(cls.id)).filter(*conditions).scalar_subquery()
     fields = {
@@ -136,7 +137,7 @@ def _values(db: Session, acc: MinarAccount, metrics: set[str]) -> dict[str, int]
         "homework_excellent": count(models.HomeworkSubmission,models.HomeworkSubmission.student_id==acc.student_id,models.HomeworkSubmission.status=="graded",models.HomeworkSubmission.grade>=90),
         "tournament_podium": count(MinarTournamentAward,MinarTournamentAward.account_id==acc.id),
         "tournament_wins": count(MinarTournamentAward,MinarTournamentAward.account_id==acc.id,MinarTournamentAward.place==1),
-        "earned": db.query(_positive(models.CoinTransaction.amount)).filter(models.CoinTransaction.student_id==acc.student_id).scalar_subquery()+db.query(_positive(MinarLedger.amount)).filter(MinarLedger.account_id==acc.id).scalar_subquery(),
+        "earned": scope(db, db.query(_positive(models.CoinTransaction.amount)).filter(models.CoinTransaction.student_id==acc.student_id), models.CoinTransaction).scalar_subquery()+scope(db, db.query(_positive(MinarLedger.amount)).filter(MinarLedger.account_id==acc.id), MinarLedger).scalar_subquery(),
     }
     wanted=[m for m in fields if m in metrics]
     values=dict(zip(wanted,db.query(*(fields[m] for m in wanted)).one())) if wanted else {}

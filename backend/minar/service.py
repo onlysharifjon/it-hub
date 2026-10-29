@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, tz
+from ..coin_launch import scope as coin_scope, phase as coin_phase, active_since
 from ..wallet import account_transaction
 from . import achievements, learning, notify, playground
 from . import catalog as C
@@ -65,19 +66,19 @@ def _positive(col):
 
 def balance_and_earned(db: Session, acc: MinarAccount) -> tuple[int, int]:
     """(balans, jami yig'ilgan). Balans = CRM (o'qituvchi) coinlari + ilova ledgeri."""
-    ct, ce = db.query(func.coalesce(func.sum(CT.amount), 0), _positive(CT.amount)) \
-        .filter(CT.student_id == acc.student_id).one()
-    lt, le = db.query(func.coalesce(func.sum(MinarLedger.amount), 0), _positive(MinarLedger.amount)) \
-        .filter(MinarLedger.account_id == acc.id).one()
+    ct, ce = coin_scope(db, db.query(func.coalesce(func.sum(CT.amount), 0), _positive(CT.amount))
+        .filter(CT.student_id == acc.student_id), CT).one()
+    lt, le = coin_scope(db, db.query(func.coalesce(func.sum(MinarLedger.amount), 0), _positive(MinarLedger.amount))
+        .filter(MinarLedger.account_id == acc.id), MinarLedger).one()
     return int(ct) + int(lt), int(ce) + int(le)
 
 
 def earned_today(db: Session, acc: MinarAccount) -> int:
     start, end = tz.day_bounds(tz.today())
-    crm = db.query(_positive(CT.amount)).filter(CT.student_id == acc.student_id,
-        CT.created_at >= start, CT.created_at < end).scalar()
-    space = db.query(_positive(MinarLedger.amount)).filter(MinarLedger.account_id == acc.id,
-        MinarLedger.local_date == today_key()).scalar()
+    crm = coin_scope(db, db.query(_positive(CT.amount)).filter(CT.student_id == acc.student_id,
+        CT.created_at >= start, CT.created_at < end), CT).scalar()
+    space = coin_scope(db, db.query(_positive(MinarLedger.amount)).filter(MinarLedger.account_id == acc.id,
+        MinarLedger.local_date == today_key()), MinarLedger).scalar()
     return int(crm) + int(space)
 
 
@@ -123,14 +124,14 @@ def _group_label(db: Session, student_id: int) -> str:
 
 def _history(db: Session, acc: MinarAccount, limit: int = 30) -> list[dict]:
     items: list[tuple[datetime, dict]] = []
-    for t in db.query(CT).filter(CT.student_id == acc.student_id).order_by(CT.created_at.desc()).limit(limit).all():
+    for t in coin_scope(db, db.query(CT).filter(CT.student_id == acc.student_id), CT).order_by(CT.created_at.desc()).limit(limit).all():
         reason = (t.reason or "").strip()
         title = reason or ("O‘qituvchi mukofoti" if t.amount > 0 else "Coin yechildi")
         items.append((t.created_at, {
             "id": f"crm-{t.id}", "title": title, "amount": int(t.amount),
             "date": _local_date(t.created_at), "time": tz.isoformat(t.created_at), "kind": "reward",
         }))
-    for l in db.query(MinarLedger).filter(MinarLedger.account_id == acc.id) \
+    for l in coin_scope(db, db.query(MinarLedger).filter(MinarLedger.account_id == acc.id), MinarLedger) \
             .order_by(MinarLedger.created_at.desc()).limit(limit).all():
         items.append((l.created_at, {
             "id": f"led-{l.id}", "title": l.title, "amount": int(l.amount),
@@ -196,14 +197,15 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
     checkins = [k[0].split(":", 1)[1] for k in db.query(MinarLedger.ref_key).filter(
         MinarLedger.account_id == acc.id, MinarLedger.kind == "checkin", MinarLedger.local_date >= (tz.today()-timedelta(days=90)).isoformat()).order_by(MinarLedger.local_date).all()]
 
-    game_rewards = {g: int(n) for g, n in db.query(MinarResult.game, func.count(MinarResult.id)).filter(
+    game_rewards = {g: int(n) for g, n in coin_scope(db, db.query(MinarResult.game, func.count(MinarResult.id)).filter(
         MinarResult.account_id == acc.id, MinarResult.local_date == today_key(), MinarResult.award > 0,
-    ).group_by(MinarResult.game).all()}
+    ), MinarResult).group_by(MinarResult.game).all()}
 
     today = today_key()
     daily_games = [g for g, in db.query(MinarResult.game).filter(MinarResult.account_id==acc.id,MinarResult.local_date==today).distinct()]
     daily_lesson = db.query(MinarLedger.id).filter(MinarLedger.account_id==acc.id,MinarLedger.kind=="lesson",MinarLedger.local_date==today).first() is not None
     return {
+        "coinPhase": coin_phase(db),
         "dailyProgress": {"typing":"typing" in daily_games,"games":len(daily_games),"lesson":daily_lesson},
         "version": 1,
         "enrollments": enrollment_rows,
@@ -241,6 +243,8 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
 # ── Amallar ─────────────────────────────────────────────────────────────────
 
 def _credit(db: Session, acc: MinarAccount, amount: int, title: str, kind: str, ref_key: str) -> None:
+    if amount > 0 and coin_phase(db)["testMode"]:
+        title = "Test coinlari — dushanbagacha: " + title
     db.add(MinarLedger(
         account_id=acc.id, ref_key=ref_key, kind=kind, title=title, amount=amount,
         local_date=today_key(), created_at=datetime.utcnow(),
@@ -315,6 +319,8 @@ def act_purchase(db: Session, acc: MinarAccount, product_id: Any, request_id: An
         if existing.product_id != product_id:
             raise MinarError(409, "Bu so‘rov boshqa buyum uchun ishlatilgan.")
         return 0, "Xarid allaqachon amalga oshirilgan."
+    if coin_phase(db)['testMode']:
+        raise MinarError(409, "Test coinlari bilan xarid qilinmaydi. Do‘kon 2-noyabr dushanba 00:00 da ochiladi (Toshkent).")
     product = C.PRODUCTS.get(product_id) if isinstance(product_id, str) else None
     if not product:
         raise MinarError(404, "Bu mahsulot topilmadi.")
@@ -483,12 +489,12 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
     payload["eligible"] = eligible
 
     today = today_key()
-    played = db.query(func.count(MinarResult.id)).filter(
+    played = coin_scope(db, db.query(func.count(MinarResult.id)).filter(
         MinarResult.account_id == acc.id, MinarResult.local_date == today,
-        MinarResult.game == game, MinarResult.award > 0).scalar() or 0
+        MinarResult.game == game, MinarResult.award > 0), MinarResult).scalar() or 0
     award = C.GAME_BASE[game] if eligible and played < C.DAILY_REWARDED_GAMES else 0
-    attempts = db.query(func.count(MinarResult.id)).filter(MinarResult.account_id == acc.id,
-        MinarResult.local_date == today, MinarResult.game == game).scalar() or 0
+    attempts = coin_scope(db, db.query(func.count(MinarResult.id)).filter(MinarResult.account_id == acc.id,
+        MinarResult.local_date == today, MinarResult.game == game), MinarResult).scalar() or 0
     xp = (C.XP_WIN if eligible else C.XP_TRY) if attempts < 10 else 0
 
     db.add(MinarResult(
@@ -518,13 +524,13 @@ def leaderboard(db: Session, me: MinarAccount, metric: str, period: str, course:
 
     week_start = tz.today() - timedelta(days=6)
     week_utc = tz.day_bounds(week_start)[0]
-    crm_all = {sid: int(v) for sid, v in db.query(CT.student_id, _positive(CT.amount)).group_by(CT.student_id).all()}
-    crm_week = {sid: int(v) for sid, v in db.query(CT.student_id, _positive(CT.amount))
-                .filter(CT.created_at >= week_utc).group_by(CT.student_id).all()}
-    led_all = {aid: int(v) for aid, v in db.query(MinarLedger.account_id, _positive(MinarLedger.amount))
+    crm_all = {sid: int(v) for sid, v in coin_scope(db, db.query(CT.student_id, _positive(CT.amount)), CT).group_by(CT.student_id).all()}
+    crm_week = {sid: int(v) for sid, v in coin_scope(db, db.query(CT.student_id, _positive(CT.amount))
+                .filter(CT.created_at >= week_utc), CT).group_by(CT.student_id).all()}
+    led_all = {aid: int(v) for aid, v in coin_scope(db, db.query(MinarLedger.account_id, _positive(MinarLedger.amount)), MinarLedger)
                .group_by(MinarLedger.account_id).all()}
-    led_week = {aid: int(v) for aid, v in db.query(MinarLedger.account_id, _positive(MinarLedger.amount))
-                .filter(MinarLedger.local_date >= week_start.isoformat()).group_by(MinarLedger.account_id).all()}
+    led_week = {aid: int(v) for aid, v in coin_scope(db, db.query(MinarLedger.account_id, _positive(MinarLedger.amount))
+                .filter(MinarLedger.local_date >= week_start.isoformat()), MinarLedger).group_by(MinarLedger.account_id).all()}
 
     rows = []
     q = (

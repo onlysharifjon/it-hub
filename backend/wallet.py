@@ -11,11 +11,12 @@ def lock(db, student_id):
 
 def balance(db, student_id):
     from .minar.models import MinarAccount, MinarLedger
-    crm = db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0)).filter(
-        models.CoinTransaction.student_id == student_id).scalar()
-    space = db.query(func.coalesce(func.sum(MinarLedger.amount), 0)).join(
+    from .coin_launch import scope
+    crm = scope(db, db.query(func.coalesce(func.sum(models.CoinTransaction.amount), 0)).filter(
+        models.CoinTransaction.student_id == student_id), models.CoinTransaction).scalar()
+    space = scope(db, db.query(func.coalesce(func.sum(MinarLedger.amount), 0)).join(
         MinarAccount, MinarAccount.id == MinarLedger.account_id).filter(
-        MinarAccount.student_id == student_id).scalar()
+        MinarAccount.student_id == student_id), MinarLedger).scalar()
     return int(crm) + int(space)
 
 

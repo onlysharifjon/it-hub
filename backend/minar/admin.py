@@ -343,10 +343,13 @@ def update_order(order_id: str, payload: OrderPatch, db: Session = Depends(get_d
     if payload.status not in transitions.get(old, set()):
         raise HTTPException(409, detail="Bu holatga o‘tkazish mumkin emas")
     if payload.status == "cancelled":
-        db.add(MinarLedger(account_id=acc.id,ref_key=f"refund:{p.id}",kind="refund",title=f"Qaytarildi: {p.name}",amount=p.price,local_date=tz.today().isoformat()))
+        from ..coin_launch import active_since
+        cutoff = active_since(db)
+        refund = p.price if cutoff is None or p.created_at >= cutoff else 0
+        db.add(MinarLedger(account_id=acc.id,ref_key=f"refund:{p.id}",kind="refund",title=f"Qaytarildi: {p.name}" if refund else f"Oldingi coin davri buyurtmasi bekor qilindi: {p.name}",amount=refund,local_date=tz.today().isoformat()))
         stock=db.query(MinarStock).filter_by(product_id=p.product_id).with_for_update().first()
         if stock:stock.quantity+=1
-        notify.to_account(db,acc.id,"order","Buyurtma bekor qilindi",f"{p.price} coin hamyoningizga qaytarildi.","shop")
+        notify.to_account(db,acc.id,"order","Buyurtma bekor qilindi",f"{refund} coin hamyoningizga qaytarildi." if refund else "Bu buyurtma oldingi coin davriga tegishli; eski coinlar yangi balansga qo‘shilmaydi.","shop")
     p.status, p.updated_at, p.updated_by_id = payload.status, datetime.utcnow(), user.id
     _audit(db, user, "order_status", acc.id, {"order_id": p.id, "from": old, "to": payload.status})
     if payload.status == "ready" and old != "ready":

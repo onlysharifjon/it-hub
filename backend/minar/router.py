@@ -18,6 +18,13 @@ router = APIRouter()
 Account = Depends(auth.current_account)
 
 
+@router.get('/coins/status')
+def coin_status(response: Response, db: Session = Depends(get_db)):
+    from ..coin_launch import phase
+    response.headers['Cache-Control'] = 'no-store'
+    return phase(db)
+
+
 # ── Auth ────────────────────────────────────────────────────────────────────
 
 @router.post("/auth/login")

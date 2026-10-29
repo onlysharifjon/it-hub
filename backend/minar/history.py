@@ -12,6 +12,8 @@ def listing(db, acc, offset=0, month=None):
             ct.amount, ct.created_at.label('created_at')).where(ct.student_id == acc.student_id),
         select(ml.id, literal('space'), ml.title, ml.amount, ml.created_at).where(ml.account_id == acc.id)).subquery()
     filters=[]
+    from ..coin_launch import active_since
+    cutoff = active_since(db)
     if month:
         try:
             lo = date.fromisoformat(month+'-01')
@@ -19,6 +21,8 @@ def listing(db, acc, offset=0, month=None):
             filters = [q.c.created_at >= tz.day_bounds(lo)[0], q.c.created_at < tz.day_bounds(hi)[0]]
         except ValueError:
             raise MinarError(400, 'Oy YYYY-MM shaklida bo‘lsin.')
+    if cutoff:
+        filters.append(q.c.created_at >= cutoff)
     total, earned, spent = db.query(func.count(), func.coalesce(func.sum(case((q.c.amount>0,q.c.amount),else_=0)),0),
         func.coalesce(func.sum(case((q.c.amount<0,-q.c.amount),else_=0)),0)).select_from(q).filter(*filters).one()
     rows=db.query(q).filter(*filters).order_by(q.c.created_at.desc(),q.c.source,q.c.id.desc()).offset(max(0,offset)).limit(50).all()

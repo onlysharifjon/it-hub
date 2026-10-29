@@ -5858,6 +5858,10 @@ def cancel_coin_transaction(
 
     write_audit(db, entity_type="coin", entity_id=t.id, action="cancel", changed_by_id=actor.id,
                 old_value={"student_id": t.student_id, "amount": t.amount, "reason": t.reason})
+    from .coin_launch import active_since
+    cutoff = active_since(db)
+    if cutoff and t.created_at < cutoff:
+        raise HTTPException(status_code=409, detail="Bu yozuv oldingi coin davriga tegishli. Yangi balansni o‘zgartirish uchun uni bekor qilib bo‘lmaydi.")
     student_id = t.student_id
     amount = t.amount
     from .wallet import lock, balance
@@ -5901,8 +5905,9 @@ def list_coin_transactions(
 def coin_totals(db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
     """Talabalar bo'yicha umumiy coin reytingi (teacher — faqat o'z guruhlari talabalari)."""
     from .minar.models import MinarAccount, MinarLedger
-    ct = db.query(models.CoinTransaction.student_id.label("sid"), func.sum(models.CoinTransaction.amount).label("n")).group_by(models.CoinTransaction.student_id).subquery()
-    lt = db.query(MinarAccount.student_id.label("sid"), func.sum(MinarLedger.amount).label("n")).join(MinarLedger, MinarLedger.account_id == MinarAccount.id).group_by(MinarAccount.student_id).subquery()
+    from .coin_launch import scope
+    ct = scope(db, db.query(models.CoinTransaction.student_id.label("sid"), func.sum(models.CoinTransaction.amount).label("n")), models.CoinTransaction).group_by(models.CoinTransaction.student_id).subquery()
+    lt = scope(db, db.query(MinarAccount.student_id.label("sid"), func.sum(MinarLedger.amount).label("n")).join(MinarLedger, MinarLedger.account_id == MinarAccount.id), MinarLedger).group_by(MinarAccount.student_id).subquery()
     total = func.coalesce(ct.c.n, 0) + func.coalesce(lt.c.n, 0)
     q = db.query(models.Student.id, models.Student.full_name, total).outerjoin(ct, ct.c.sid == models.Student.id).outerjoin(lt, lt.c.sid == models.Student.id)
     if actor.role == UserRole.teacher.value:

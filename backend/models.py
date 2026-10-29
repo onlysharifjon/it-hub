@@ -1027,6 +1027,17 @@ class Certificate(Base):
     created_by = relationship("User", foreign_keys=[created_by_id])
 
 
+class CoinLaunch(Base):
+    """Audited one-time wallet restart; old transactions remain immutable."""
+    __tablename__ = "coin_launch"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_coin_launch_singleton"),)
+    id = Column(Integer, primary_key=True, default=1)
+    reset_at = Column(DateTime, nullable=False)
+    launch_at = Column(DateTime, nullable=False)
+    keep_test_coins = Column(Boolean, nullable=False)
+    balance_snapshot = Column(Text, nullable=False)
+
+
 class CoinTransaction(Base):
     """Coin berish yozuvi — o'qituvchi talabaga rag'bat sifatida coin beradi.
 
