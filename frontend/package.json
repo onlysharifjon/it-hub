@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:space": "node --test --experimental-test-isolation=none tests/space-enterprise.test.mjs"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^7.2.0",

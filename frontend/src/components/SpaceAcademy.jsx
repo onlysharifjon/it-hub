@@ -1,7 +1,9 @@
+
+import {t as uiText, useI18n as useInterfaceLanguage, localeTag as uiLocaleTag} from '../space-design/i18n';
 import { useEffect, useState } from 'react';
 import { spaceStaff as api } from '../api';
 import './SpaceAcademy.css';
-const date = d => new Date(d).toLocaleString('uz-UZ');
+const date = d => new Date(d).toLocaleString(uiLocaleTag());
 const warningLabels = {
   window_leave: 'Oynadan chiqish', fullscreen_exit: 'To‘liq ekrandan chiqish',
   copy: 'Nusxalashga urinish', cut: 'Kesib olishga urinish', paste: 'Joylashtirishga urinish',
@@ -15,10 +17,11 @@ function warningSummary(attempt) {
   return parts.join(' · ');
 }
 function WarningHistory({attempt}) {
-  return <section className="sa-warning-history" aria-label="Testdagi ogohlantirishlar"><h3>Testdagi ogohlantirishlar · {attempt.warnings || 0}</h3>
-    <p className="sa-muted">{warningSummary(attempt) || 'Ogohlantirish qayd etilmagan.'}</p>
-    {!!attempt.integrityEvents?.length && <details open><summary>Hodisalar tarixi</summary><p className="sa-muted">Vaqt — server qaydni qabul qilgan payt. Internet uzilganida qayd keyinroq kelishi mumkin.</p><ol>{attempt.integrityEvents.map(e => <li key={e.id}><span>{warningLabels[e.type] || e.type}</span><time dateTime={e.recordedAt}>{date(e.recordedAt)}</time></li>)}</ol></details>}
-    {attempt.integrity?.limitReached && <p className="sa-muted">Dastlabki 200 ta hodisa saqlangan; qo‘shimcha holatlar ro‘yxatga kiritilmaydi.</p>}
+  useInterfaceLanguage();
+  return <section className="sa-warning-history" aria-label={uiText("Testdagi ogohlantirishlar")}><h3>{uiText("Testdagi ogohlantirishlar ·")} {attempt.warnings || 0}</h3>
+    <p className="sa-muted">{warningSummary(attempt) || uiText("Ogohlantirish qayd etilmagan.")}</p>
+    {!!attempt.integrityEvents?.length && <details open><summary>{uiText("Hodisalar tarixi")}</summary><p className="sa-muted">{uiText("Vaqt — server qaydni qabul qilgan payt. Internet uzilganida qayd keyinroq kelishi mumkin.")}</p><ol>{attempt.integrityEvents.map(e => <li key={e.id}><span>{warningLabels[e.type] || e.type}</span><time dateTime={e.recordedAt}>{date(e.recordedAt)}</time></li>)}</ol></details>}
+    {attempt.integrity?.limitReached && <p className="sa-muted">{uiText("Dastlabki 200 ta hodisa saqlangan; qo‘shimcha holatlar ro‘yxatga kiritilmaydi.")}</p>}
   </section>;
 }
 function useLoad(path) {
@@ -50,23 +53,27 @@ function useLoad(path) {
 function ErrorBox({
   text
 }) {
+  useInterfaceLanguage();
   return text ? <p role="alert" className="sa-error">{text}</p> : null;
 }
 function Loading({
   error,
   load
 }) {
-  return <div className="sa-card" role="status">{error || 'Yuklanmoqda…'}{error && <button className="btn btn-secondary" onClick={load}>Qayta urinish</button>}</div>;
+  useInterfaceLanguage();
+  return <div className="sa-card" role="status">{error || uiText("Yuklanmoqda…")}{error && <button className="btn btn-secondary" onClick={load}>{uiText("Qayta urinish")}</button>}</div>;
 }
 function Text({
   text = ''
 }) {
+  useInterfaceLanguage();
   return <div className="sa-reading">{text.split(/```/).map((b, i) => i % 2 ? <pre key={i}>{b}</pre> : b.split('\n').map((line, j) => line.startsWith('#') ? <h3 key={j}>{line.replace(/^#+\s*/, '')}</h3> : line.startsWith(':: timer') ? null : line.startsWith('!! ') ? <blockquote key={j}>{line.slice(3)}</blockquote> : <p key={j}>{line.split(/(\*\*.*?\*\*|`[^`]+`)/).map((x, k) => x.startsWith('**') ? <strong key={k}>{x.slice(2, -2)}</strong> : x.startsWith('`') ? <code key={k}>{x.slice(1, -1)}</code> : x)}</p>))}</div>;
 }
 function Slides({
   data,
   onClose
 }) {
+  useInterfaceLanguage();
   const slides = (data.slides || `# ${data.title}\n---\n${data.body}\n---\n## Mustaqil mashq\n${data.exercise || ''}`).split(/\n---\n/),
     [index, setIndex] = useState(0),
     [seconds, setSeconds] = useState(0),
@@ -99,16 +106,17 @@ function Slides({
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, [slides.length, onClose]);
-  return <section className="sa-slides"><header><span>MINAR SPACE • DARS</span><button className="btn btn-secondary" onClick={onClose}>Yopish (Esc)</button></header><article key={index}><Text text={slides[index]} /></article>{/:: timer/.test(slides[index]) && <div className="sa-timer"><strong>{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</strong><button className="btn btn-primary" disabled={!seconds} onClick={() => setRunning(!running)}>{running ? 'Pauza' : 'Taymerni boshlash'}</button><button className="btn btn-secondary" onClick={() => {
+  return <section className="sa-slides"><header><span>{uiText("MINAR SPACE • DARS")}</span><button className="btn btn-secondary" onClick={onClose}>{uiText("Yopish (Esc)")}</button></header><article key={index}><Text text={slides[index]} /></article>{/:: timer/.test(slides[index]) && <div className="sa-timer"><strong>{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</strong><button className="btn btn-primary" disabled={!seconds} onClick={() => setRunning(!running)}>{running ? 'Pauza' : uiText("Taymerni boshlash")}</button><button className="btn btn-secondary" onClick={() => {
         setRunning(false);
         setSeconds(Number(slides[index].match(/:: timer (\d+)/)[1]) * 60);
-      }}>Qayta</button></div>}<footer><button className="btn btn-secondary" disabled={!index} onClick={() => setIndex(index - 1)}>← Oldingi</button><span>{index + 1} / {slides.length}</span><button className="btn btn-primary" disabled={index === slides.length - 1} onClick={() => setIndex(index + 1)}>Keyingi →</button></footer></section>;
+      }}>{uiText("Qayta")}</button></div>}<footer><button className="btn btn-secondary" disabled={!index} onClick={() => setIndex(index - 1)}>{uiText("← Oldingi")}</button><span>{index + 1} / {slides.length}</span><button className="btn btn-primary" disabled={index === slides.length - 1} onClick={() => setIndex(index + 1)}>{uiText("Keyingi →")}</button></footer></section>;
 }
 function Editor({
   id,
   onBack,
   teacher
 }) {
+  useInterfaceLanguage();
   const {
       data,
       error,
@@ -145,28 +153,29 @@ function Editor({
         data: form,
         published
       });
-      setMessage('Saqlandi. Oldingi test natijalari o‘zgarmaydi.');
+      setMessage(uiText("Saqlandi. Oldingi test natijalari o‘zgarmaydi."));
     } catch (e) {
       setMessage(e.message);
     } finally {
       setBusy(false);
     }
-  }}><div className="sa-row"><button type="button" className="btn btn-secondary" onClick={onBack}>← Kutubxona</button><button type="button" className="btn btn-secondary" onClick={() => setSlide(true)}>Dars slaydlari</button></div><div className="sa-row"><h2>{data.title}</h2><label>Kontent tili<select value={lang} onChange={e => setLang(e.target.value)}><option value="uz">O‘zbekcha</option><option value="ru">Русский</option></select></label></div><fieldset disabled={teacher || busy} className="sa-fields"><label>Sarlavha<input value={form[key('title')] || ''} maxLength={250} required={lang === 'uz'} onChange={e => set(key('title'), e.target.value)} /></label><label>Dars materiali<textarea className="sa-long" required={lang === 'uz'} maxLength={60000} value={form[key('body')] || ''} onChange={e => set(key('body'), e.target.value)} /></label><label>Mustaqil mashq<textarea maxLength={10000} value={form.exercise || ''} onChange={e => set('exercise', e.target.value)} /></label><details><summary>Slayd matnlari va manbalar</summary><label>Slaydlar (ajratish: alohida qatorda ---; taymer: :: timer 25)<textarea className="sa-long" maxLength={60000} value={form.slides || ''} onChange={e => set('slides', e.target.value)} /></label><label>Manbalar<textarea value={form.resources || ''} maxLength={10000} onChange={e => set('resources', e.target.value)} /></label></details><h3>Savollar banki · {form.questions.length}</h3>{form.questions.map((q, i) => <details className="sa-question" key={q.id}><summary>{i + 1}. {q[key('q')] || q.q}</summary><label>Savol<textarea required maxLength={5000} value={q[key('q')] || ''} onChange={e => question(i, key('q'), e.target.value)} /></label>{q.options.map((_, j) => <label className="sa-option" key={j}><input type="radio" name={'answer-' + q.id} checked={q.answer === j} onChange={() => question(i, 'answer', j)} /><input aria-label={`Variant ${j + 1}`} required value={(q[key('options')] || [])[j] || ''} maxLength={2000} onChange={e => {
+  }}><div className="sa-row"><button type="button" className="btn btn-secondary" onClick={onBack}>{uiText("← Kutubxona")}</button><button type="button" className="btn btn-secondary" onClick={() => setSlide(true)}>{uiText("Dars slaydlari")}</button></div><div className="sa-row"><h2>{data.title}</h2><label>{uiText("Kontent tili")}<select value={lang} onChange={e => setLang(e.target.value)}><option value="uz">O‘zbekcha</option><option value="ru">Русский</option></select></label></div><fieldset disabled={teacher || busy} className="sa-fields"><label>{uiText("Sarlavha")}<input value={form[key('title')] || ''} maxLength={250} required={lang === 'uz'} onChange={e => set(key('title'), e.target.value)} /></label><label>{uiText("Dars materiali")}<textarea className="sa-long" required={lang === 'uz'} maxLength={60000} value={form[key('body')] || ''} onChange={e => set(key('body'), e.target.value)} /></label><label>{uiText("Mustaqil mashq")}<textarea maxLength={10000} value={form.exercise || ''} onChange={e => set('exercise', e.target.value)} /></label><details><summary>{uiText("Slayd matnlari va manbalar")}</summary><label>{uiText("Slaydlar (ajratish: alohida qatorda ---; taymer: :: timer 25)")}<textarea className="sa-long" maxLength={60000} value={form.slides || ''} onChange={e => set('slides', e.target.value)} /></label><label>{uiText("Manbalar")}<textarea value={form.resources || ''} maxLength={10000} onChange={e => set('resources', e.target.value)} /></label></details><h3>{uiText("Savollar banki ·")} {form.questions.length}</h3>{form.questions.map((q, i) => <details className="sa-question" key={q.id}><summary>{i + 1}. {q[key('q')] || q.q}</summary><label>{uiText("Savol")}<textarea required maxLength={5000} value={q[key('q')] || ''} onChange={e => question(i, key('q'), e.target.value)} /></label>{q.options.map((_, j) => <label className="sa-option" key={j}><input type="radio" name={'answer-' + q.id} checked={q.answer === j} onChange={() => question(i, 'answer', j)} /><input aria-label={`Variant ${j + 1}`} required value={(q[key('options')] || [])[j] || ''} maxLength={2000} onChange={e => {
             const opts = [...(q[key('options')] || q.options.map(() => ''))];
             opts[j] = e.target.value;
             question(i, key('options'), opts);
-          }} /></label>)}<label>Rasm havolasi (ixtiyoriy)<input type="url" maxLength={2000} value={q.image || ''} onChange={e => question(i, 'image', e.target.value)} /></label><button type="button" className="btn btn-secondary" disabled={form.questions.length <= 1} onClick={() => set('questions', form.questions.filter((_, j) => j !== i))}>Savolni olib tashlash</button></details>)}<button type="button" className="btn btn-secondary" disabled={form.questions.length >= 200} onClick={() => set('questions', [...form.questions, {
+          }} /></label>)}<label>{uiText("Rasm havolasi (ixtiyoriy)")}<input type="url" maxLength={2000} value={q.image || ''} onChange={e => question(i, 'image', e.target.value)} /></label><button type="button" className="btn btn-secondary" disabled={form.questions.length <= 1} onClick={() => set('questions', form.questions.filter((_, j) => j !== i))}>{uiText("Savolni olib tashlash")}</button></details>)}<button type="button" className="btn btn-secondary" disabled={form.questions.length >= 200} onClick={() => set('questions', [...form.questions, {
         id: crypto.randomUUID(),
         q: '',
         q_ru: '',
         options: ['', '', '', ''],
         options_ru: [],
         answer: 0
-      }])}>+ Savol qo‘shish</button><label className="sa-check"><input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} />Nashr qilingan — guruhga test berish mumkin</label></fieldset>{message && <p role="status">{message}</p>}{!teacher && <button className="btn btn-primary" disabled={busy}>{busy ? 'Saqlanmoqda…' : 'O‘zgarishlarni saqlash'}</button>}</form>;
+      }])}>{uiText("+ Savol qo‘shish")}</button><label className="sa-check"><input type="checkbox" checked={published} onChange={e => setPublished(e.target.checked)} />{uiText("Nashr qilingan — guruhga test berish mumkin")}</label></fieldset>{message && <p role="status">{message}</p>}{!teacher && <button className="btn btn-primary" disabled={busy}>{busy ? uiText("Saqlanmoqda…") : uiText("O‘zgarishlarni saqlash")}</button>}</form>;
 }
 function Library({
   teacher
 }) {
+  useInterfaceLanguage();
   const {
       data,
       error,
@@ -195,7 +204,7 @@ function Library({
       setBusy(false);
     }
   };
-  return <><div className="sa-card"><div className="sa-heading"><div><h2>O‘quv kutubxonasi</h2><p>Materiallarni ko‘rib chiqing, import qiling va tayyor bo‘lgach nashr qiling.</p></div><span className="sa-badge">77 mavzu · 924 savol</span></div><div className="sa-row"><input aria-label="Mavzu qidirish" placeholder="Mavzuni qidirish…" value={query} onChange={e => setQuery(e.target.value)} /><select aria-label="Kurs" value={course} onChange={e => setCourse(e.target.value)}><option value="">Barcha kurslar</option>{[...new Set(data?.map(x => x.course))].map(c => <option key={c}>{c}</option>)}</select>{!teacher && <><button className="btn btn-secondary" onClick={() => setSelected(filtered.filter(x => !x.id).map(x => x.slug))}>Ko‘rsatilganlarni belgilash</button><button className="btn btn-primary" disabled={busy || !selected.length} onClick={async () => {
+  return <><div className="sa-card"><div className="sa-heading"><div><h2>{uiText("O‘quv kutubxonasi")}</h2><p>{uiText("Materiallarni ko‘rib chiqing, import qiling va tayyor bo‘lgach nashr qiling.")}</p></div><span className="sa-badge">{uiText("77 mavzu · 924 savol")}</span></div><div className="sa-row"><input aria-label={uiText("Mavzu qidirish")} placeholder={uiText("Mavzuni qidirish…")} value={query} onChange={e => setQuery(e.target.value)} /><select aria-label={uiText("Kurs")} value={course} onChange={e => setCourse(e.target.value)}><option value="">{uiText("Barcha kurslar")}</option>{[...new Set(data?.map(x => x.course))].map(c => <option key={c}>{c}</option>)}</select>{!teacher && <><button className="btn btn-secondary" onClick={() => setSelected(filtered.filter(x => !x.id).map(x => x.slug))}>{uiText("Ko‘rsatilganlarni belgilash")}</button><button className="btn btn-primary" disabled={busy || !selected.length} onClick={async () => {
             setBusy(true);
             try {
               const r = await api.save('/academy/import', {
@@ -209,7 +218,7 @@ function Library({
             } finally {
               setBusy(false);
             }
-          }}>Import ({selected.length})</button></>}</div>{!teacher && <form className="sa-row sa-new" onSubmit={async e => {
+          }}>{uiText("Import (")}{selected.length})</button></>}</div>{!teacher && <form className="sa-row sa-new" onSubmit={async e => {
         e.preventDefault();
         setBusy(true);
         try {
@@ -223,9 +232,10 @@ function Library({
         } finally {
           setBusy(false);
         }
-      }}><input aria-label="Yangi mavzu nomi" value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Yangi mavzu nomi" required maxLength={250} /><button className="btn btn-secondary" disabled={busy}>+ Yangi mavzu</button></form>}{message && <p role="status" className="sa-message">{message}</p>}</div>{preview && <section className="sa-card sa-preview"><div className="sa-row"><h2>{preview.title}</h2><button className="btn btn-secondary" onClick={() => setPreview(null)}>Yopish</button></div><Text text={preview.body} /><h3>Savol namunasi</h3><Text text={preview.questions[0]?.q} /></section>}{!data ? <Loading error={error} load={load} /> : <div className="sa-library-grid">{filtered.map(x => <article className="sa-card" key={x.slug}><div className="sa-row"><span className="sa-kicker">{x.course}</span>{!teacher && !x.id && <input type="checkbox" aria-label={x.title + ' ni belgilash'} checked={selected.includes(x.slug)} onChange={e => setSelected(e.target.checked ? [...selected, x.slug] : selected.filter(s => s !== x.slug))} />}<span className="sa-badge">{x.id ? x.published ? 'Nashr qilingan' : 'Qoralama' : 'Import qilinmagan'}</span></div><h3>{x.title}</h3><p>{x.questionCount} savol · {x.hasRussian ? 'UZ / RU' : 'UZ'}{x.hasSlides ? ' · Slaydlar' : ''}</p><button disabled={busy} className="btn btn-secondary" onClick={() => x.id ? setEdit(x.id) : previewItem(x)}>{x.id ? 'Ochish va tahrirlash' : 'Oldindan ko‘rish'}</button></article>)}</div>}</>;
+      }}><input aria-label={uiText("Yangi mavzu nomi")} value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder={uiText("Yangi mavzu nomi")} required maxLength={250} /><button className="btn btn-secondary" disabled={busy}>{uiText("+ Yangi mavzu")}</button></form>}{message && <p role="status" className="sa-message">{message}</p>}</div>{preview && <section className="sa-card sa-preview"><div className="sa-row"><h2>{preview.title}</h2><button className="btn btn-secondary" onClick={() => setPreview(null)}>{uiText("Yopish")}</button></div><Text text={preview.body} /><h3>{uiText("Savol namunasi")}</h3><Text text={preview.questions[0]?.q} /></section>}{!data ? <Loading error={error} load={load} /> : <div className="sa-library-grid">{filtered.map(x => <article className="sa-card" key={x.slug}><div className="sa-row"><span className="sa-kicker">{x.course}</span>{!teacher && !x.id && <input type="checkbox" aria-label={x.title + uiText(" ni belgilash")} checked={selected.includes(x.slug)} onChange={e => setSelected(e.target.checked ? [...selected, x.slug] : selected.filter(s => s !== x.slug))} />}<span className="sa-badge">{x.id ? x.published ? uiText("Nashr qilingan") : uiText("Qoralama") : uiText("Import qilinmagan")}</span></div><h3>{x.title}</h3><p>{x.questionCount} {uiText("savol ·")} {x.hasRussian ? 'UZ / RU' : 'UZ'}{x.hasSlides ? ' · Slaydlar' : ''}</p><button disabled={busy} className="btn btn-secondary" onClick={() => x.id ? setEdit(x.id) : previewItem(x)}>{x.id ? uiText("Ochish va tahrirlash") : uiText("Oldindan ko‘rish")}</button></article>)}</div>}</>;
 }
 function Assignments() {
+  useInterfaceLanguage();
   const list = useLoad('/academy/assignments'),
     library = useLoad('/academy/library'),
     groups = useLoad('/academy/groups');
@@ -268,14 +278,14 @@ function Assignments() {
       } finally {
         setBusy(false);
       }
-    }}><div className="sa-heading"><div><h2>Yangi test</h2><p>Guruhga topshiriq bering yoki kirish testi uchun ochiq havola yarating.</p></div></div><div className="sa-grid"><label>Mavzu<select required value={form.topicId} onChange={e => set('topicId', e.target.value)}><option value="">Nashr qilingan mavzuni tanlang</option>{library.data?.filter(t => t.published).map(t => <option key={t.id} value={t.id}>{t.course} · {t.title}</option>)}</select></label><label>Test nomi (ixtiyoriy)<input maxLength={250} value={form.title} onChange={e => set('title', e.target.value)} /></label><label>Test turi<select value={form.public ? 'public' : 'group'} onChange={e => set('public', e.target.value === 'public')}><option value="group">Guruh testi</option><option value="public">Ochiq kirish testi</option></select></label>{!form.public && <label>Guruh<select required value={form.groupId} onChange={e => set('groupId', e.target.value)}><option value="">Guruhni tanlang</option>{groups.data?.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>}{[['count', 'Savollar soni', 1, 100], ['minutes', 'Har urinish vaqti (daqiqa)', 1, 180], ['maxAttempts', 'Urinishlar soni', 1, 5]].map(([k, label, min, max]) => <label key={k}>{label}<input type="number" min={min} max={max} required value={form[k]} onChange={e => set(k, Number(e.target.value))} /></label>)}<label>Boshlanish (bo‘sh — hozir)<input type="datetime-local" value={form.startsAt} onChange={e => set('startsAt', e.target.value)} /></label></div><p className="sa-message">Test qo‘lda yakunlanguncha ochiq turadi. Support Teacher yoki guruh o‘qituvchisi pastdagi ro‘yxatdan “Yakunlash”ni bosadi.</p><p className="sa-muted">Boshlanish vaqti brauzeringiz mintaqasida. Har bir urinish uchun alohida taymer ishlaydi.</p><ErrorBox text={error || library.error || groups.error} /><button className="btn btn-primary" disabled={busy}>{busy ? 'Yaratilmoqda…' : 'Testni yaratish'}</button>{link && <label>Ulashish havolasi<input readOnly value={link} onFocus={e => e.target.select()} /></label>}</form>{!list.data ? <Loading error={list.error} load={list.load} /> : <div className="sa-card"><h2>Berilgan testlar</h2>{message && <p className="sa-message" role="status">{message}</p>}{!list.data.length && <p>Hozircha testlar yo‘q.</p>}<div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>Test</th><th>Format</th><th>Yakunlash</th><th>Holat</th><th>Amal</th></tr></thead><tbody>{list.data.map(a => <tr key={a.id}><td><strong>{a.title}</strong><small>{a.count} savol · {a.minutes} daqiqa</small>{a.publicToken && <a href={url(a.publicToken)} target="_blank" rel="noreferrer">Kirish testi havolasi ↗</a>}</td><td>{a.publicToken ? 'Ochiq test' : groups.data?.find(g => g.id === a.groupId)?.name || 'Guruh'}</td><td>{a.dueAt ? date(a.dueAt) : 'Qo‘lda yakunlanadi'}</td><td>{a.active ? 'Faol' : 'Yakunlangan'}</td><td><button className="btn btn-secondary" disabled={busy} onClick={async () => {
+    }}><div className="sa-heading"><div><h2>{uiText("Yangi test")}</h2><p>{uiText("Guruhga topshiriq bering yoki kirish testi uchun ochiq havola yarating.")}</p></div></div><div className="sa-grid"><label>{uiText("Mavzu")}<select required value={form.topicId} onChange={e => set('topicId', e.target.value)}><option value="">{uiText("Nashr qilingan mavzuni tanlang")}</option>{library.data?.filter(t => t.published).map(t => <option key={t.id} value={t.id}>{t.course} · {t.title}</option>)}</select></label><label>{uiText("Test nomi (ixtiyoriy)")}<input maxLength={250} value={form.title} onChange={e => set('title', e.target.value)} /></label><label>{uiText("Test turi")}<select value={form.public ? 'public' : 'group'} onChange={e => set('public', e.target.value === 'public')}><option value="group">{uiText("Guruh testi")}</option><option value="public">{uiText("Ochiq kirish testi")}</option></select></label>{!form.public && <label>{uiText("Guruh")}<select required value={form.groupId} onChange={e => set('groupId', e.target.value)}><option value="">{uiText("Guruhni tanlang")}</option>{groups.data?.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>}{[['count', uiText("Savollar soni"), 1, 100], ['minutes', uiText("Har urinish vaqti (daqiqa)"), 1, 180], ['maxAttempts', uiText("Urinishlar soni"), 1, 5]].map(([k, label, min, max]) => <label key={k}>{label}<input type="number" min={min} max={max} required value={form[k]} onChange={e => set(k, Number(e.target.value))} /></label>)}<label>{uiText("Boshlanish (bo‘sh — hozir)")}<input type="datetime-local" value={form.startsAt} onChange={e => set('startsAt', e.target.value)} /></label></div><p className="sa-message">{uiText("Test qo‘lda yakunlanguncha ochiq turadi. Support Teacher yoki guruh o‘qituvchisi pastdagi ro‘yxatdan “Yakunlash”ni bosadi.")}</p><p className="sa-muted">{uiText("Boshlanish vaqti brauzeringiz mintaqasida. Har bir urinish uchun alohida taymer ishlaydi.")}</p><ErrorBox text={error || library.error || groups.error} /><button className="btn btn-primary" disabled={busy}>{busy ? 'Yaratilmoqda…' : uiText("Testni yaratish")}</button>{link && <label>{uiText("Ulashish havolasi")}<input readOnly value={link} onFocus={e => e.target.select()} /></label>}</form>{!list.data ? <Loading error={list.error} load={list.load} /> : <div className="sa-card"><h2>{uiText("Berilgan testlar")}</h2>{message && <p className="sa-message" role="status">{message}</p>}{!list.data.length && <p>{uiText("Hozircha testlar yo‘q.")}</p>}<div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>{uiText("Test")}</th><th>{uiText("Format")}</th><th>{uiText("Yakunlash")}</th><th>{uiText("Holat")}</th><th>{uiText("Amal")}</th></tr></thead><tbody>{list.data.map(a => <tr key={a.id}><td><strong>{a.title}</strong><small>{a.count} {uiText("savol ·")} {a.minutes} {uiText("daqiqa")}</small>{a.publicToken && <a href={url(a.publicToken)} target="_blank" rel="noreferrer">{uiText("Kirish testi havolasi ↗")}</a>}</td><td>{a.publicToken ? uiText("Ochiq test") : groups.data?.find(g => g.id === a.groupId)?.name || uiText("Guruh")}</td><td>{a.dueAt ? date(a.dueAt) : uiText("Qo‘lda yakunlanadi")}</td><td>{a.active ? uiText("Faol") : uiText("Yakunlangan")}</td><td><button className="btn btn-secondary" disabled={busy} onClick={async () => {
                   if (a.active) { setClosing(a); setError(''); return; }
                   setBusy(true);
                   try {
                     await api.save(`/academy/assignments/${a.id}/status`, {
                       active: true
                     });
-                    setMessage('Test qayta ochildi. Avvalgi natijalar saqlanadi.');
+                    setMessage(uiText("Test qayta ochildi. Avvalgi natijalar saqlanadi."));
                     setError('');
                     list.load();
                   } catch (e) {
@@ -283,7 +293,7 @@ function Assignments() {
                   } finally {
                     setBusy(false);
                   }
-                }}>{a.active ? 'Yakunlash' : 'Qayta ochish'}</button></td></tr>)}</tbody></table></div>{closing && <section className="sa-close-confirm" role="alertdialog" aria-label="Testni yakunlashni tasdiqlash"><h3>“{closing.title}” testini yakunlaysizmi?</h3><p>Yangi urinishlar to‘xtatiladi. Davom etayotgan urinishlar hozirgacha saqlangan javoblar asosida baholanadi.</p><ErrorBox text={error} /><div className="sa-row"><button className="btn btn-secondary" disabled={busy} onClick={() => setClosing(null)}>Bekor qilish</button><button className="btn btn-primary" disabled={busy} onClick={async () => {
+                }}>{a.active ? uiText("Yakunlash") : uiText("Qayta ochish")}</button></td></tr>)}</tbody></table></div>{closing && <section className="sa-close-confirm" role="alertdialog" aria-label={uiText("Testni yakunlashni tasdiqlash")}><h3>“{closing.title}{uiText("” testini yakunlaysizmi?")}</h3><p>{uiText("Yangi urinishlar to‘xtatiladi. Davom etayotgan urinishlar hozirgacha saqlangan javoblar asosida baholanadi.")}</p><ErrorBox text={error} /><div className="sa-row"><button className="btn btn-secondary" disabled={busy} onClick={() => setClosing(null)}>{uiText("Bekor qilish")}</button><button className="btn btn-primary" disabled={busy} onClick={async () => {
                   setBusy(true);
                   try {
                     const result = await api.save(`/academy/assignments/${closing.id}/status`, { active: false });
@@ -291,11 +301,12 @@ function Assignments() {
                     setClosing(null); setError(''); list.load();
                   } catch (e) { setError(e.message); }
                   finally { setBusy(false); }
-                }}>{busy ? 'Yakunlanmoqda…' : 'Ha, testni yakunlash'}</button></div></section>}</div>}</>;
+                }}>{busy ? 'Yakunlanmoqda…' : uiText("Ha, testni yakunlash")}</button></div></section>}</div>}</>;
 }
 function Analytics({
   teacher
 }) {
+  useInterfaceLanguage();
   const [aid, setAid] = useState(''),
     list = useLoad('/academy/assignments'),
     {
@@ -308,7 +319,7 @@ function Analytics({
     [busy, setBusy] = useState(false);
   const exportCSV = () => {
     const cell = x => '"' + String(x ?? '').replace(/^[=+@-]/, "'$&").replaceAll('"', '""') + '"';
-    const rows = [['O‘quvchi', 'Natija %', 'Yakunlangan', 'Ogohlantirishlar', 'Holatlar'], ...data.attempts.map(a => [a.student, a.score, a.finishedAt || '', a.warnings, warningSummary(a)])];
+    const rows = [[uiText("O‘quvchi"), 'Natija %', uiText("Yakunlangan"), 'Ogohlantirishlar', 'Holatlar'], ...data.attempts.map(a => [a.student, a.score, a.finishedAt || '', a.warnings, warningSummary(a)])];
     const blob = new Blob(['\ufeff' + rows.map(r => r.map(cell).join(',')).join('\r\n')], {
       type: 'text/csv;charset=utf-8'
     });
@@ -319,10 +330,10 @@ function Analytics({
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  return <><div className="sa-row"><label>Test bo‘yicha filtr<select value={aid} onChange={e => {
+  return <><div className="sa-row"><label>{uiText("Test bo‘yicha filtr")}<select value={aid} onChange={e => {
           setAid(e.target.value);
           setSelected(null);
-        }}><option value="">Barcha testlar</option>{list.data?.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></label><button className="btn btn-secondary" onClick={load}>Yangilash</button>{data && <button className="btn btn-secondary" onClick={exportCSV}>CSV eksport</button>}</div>{!data ? <Loading error={error} load={load} /> : <><div className="sa-metrics">{[['Bugun yakunlangan', data.daily.completed], ['O‘rtacha natija', data.daily.average === null ? '—' : data.daily.average + '%'], ['50% dan past', data.daily.below50], ['Yordam kerak', data.atRisk.length]].map(([label, v]) => <div className="sa-card" key={label}><span>{label}</span><strong>{v}</strong></div>)}</div><section className="sa-card"><h2>E’tibor talab qiladigan o‘quvchilar</h2>{data.atRisk.length ? data.atRisk.map(s => <div key={s.accountId} className="sa-risk"><strong>{s.student}</strong><span>{s.average}% · {s.reason}</span></div>) : <p className="sa-muted">Past natijali o‘quvchilar hozircha qayd etilmagan.</p>}</section><section className="sa-card"><h2>Natijalar va javoblar</h2><p className="sa-muted">{data.total} ta urinish. Tahlilda oxirgi {data.analysisLimit} tagacha urinish ko‘rsatiladi. Kunlik ko‘rsatkichlar bugungi barcha natijalarni qamraydi.</p><ErrorBox text={message} /><div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>O‘quvchi</th><th>Natija</th><th>Yakunlangan</th><th>Qaydlar</th><th>Amal</th></tr></thead><tbody>{data.attempts.map(a => <tr key={a.id}><td>{a.student}{a.phone && <small>{a.phone}</small>}</td><td>{a.score === null ? 'Jarayonda' : a.score + '%'}</td><td>{a.finishedAt ? date(a.finishedAt) : '—'}</td><td>{a.warnings ? <><strong>{a.warnings} ta ogohlantirish</strong><small>{warningSummary(a)}</small></> : '—'}</td><td><button className="btn btn-secondary" onClick={async () => {
+        }}><option value="">{uiText("Barcha testlar")}</option>{list.data?.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}</select></label><button className="btn btn-secondary" onClick={load}>{uiText("Yangilash")}</button>{data && <button className="btn btn-secondary" onClick={exportCSV}>{uiText("CSV eksport")}</button>}</div>{!data ? <Loading error={error} load={load} /> : <><div className="sa-metrics">{[[uiText("Bugun yakunlangan"), data.daily.completed], [uiText("O‘rtacha natija"), data.daily.average === null ? '—' : data.daily.average + '%'], [uiText("50% dan past"), data.daily.below50], [uiText("Yordam kerak"), data.atRisk.length]].map(([label, v]) => <div className="sa-card" key={label}><span>{label}</span><strong>{v}</strong></div>)}</div><section className="sa-card"><h2>{uiText("E’tibor talab qiladigan o‘quvchilar")}</h2>{data.atRisk.length ? data.atRisk.map(s => <div key={s.accountId} className="sa-risk"><strong>{s.student}</strong><span>{s.average}% · {s.reason}</span></div>) : <p className="sa-muted">{uiText("Past natijali o‘quvchilar hozircha qayd etilmagan.")}</p>}</section><section className="sa-card"><h2>{uiText("Natijalar va javoblar")}</h2><p className="sa-muted">{data.total} {uiText("ta urinish. Tahlilda oxirgi")} {data.analysisLimit} {uiText("tagacha urinish ko‘rsatiladi. Kunlik ko‘rsatkichlar bugungi barcha natijalarni qamraydi.")}</p><ErrorBox text={message} /><div className="sa-table-wrap"><table className="sa-table"><thead><tr><th>{uiText("O‘quvchi")}</th><th>{uiText("Natija")}</th><th>{uiText("Yakunlangan")}</th><th>{uiText("Qaydlar")}</th><th>{uiText("Amal")}</th></tr></thead><tbody>{data.attempts.map(a => <tr key={a.id}><td>{a.student}{a.phone && <small>{a.phone}</small>}</td><td>{a.score === null ? uiText("Jarayonda") : a.score + '%'}</td><td>{a.finishedAt ? date(a.finishedAt) : '—'}</td><td>{a.warnings ? <><strong>{a.warnings} {uiText("ta ogohlantirish")}</strong><small>{warningSummary(a)}</small></> : '—'}</td><td><button className="btn btn-secondary" onClick={async () => {
                     setBusy(true);
                     try {
                       setSelected(await api.get('/academy/attempts/' + a.id));
@@ -331,7 +342,7 @@ function Analytics({
                     } finally {
                       setBusy(false);
                     }
-                  }} disabled={busy}>Javoblar va qaydlar</button>{!teacher && !a.accountId && a.finishedAt && <button className="btn btn-secondary" disabled={busy || a.leadId} onClick={async () => {
+                  }} disabled={busy}>{uiText("Javoblar va qaydlar")}</button>{!teacher && !a.accountId && a.finishedAt && <button className="btn btn-secondary" disabled={busy || a.leadId} onClick={async () => {
                     setBusy(true);
                     try {
                       const r = await api.save('/academy/attempts/' + a.id + '/lead', {});
@@ -342,13 +353,14 @@ function Analytics({
                     } finally {
                       setBusy(false);
                     }
-                  }}>{a.leadId ? 'CRM’da mavjud' : 'CRM arizasiga olish'}</button>}</td></tr>)}</tbody></table></div><p className="sa-muted">Brauzer qaydlari ko‘chirishni isbotlamaydi va bahoni avtomatik o‘zgartirmaydi. Boshqa qurilma, skrinshot yoki barcha tashqi dasturlarni aniqlash imkoni yo‘q. Holatni o‘quvchi bilan aniqlashtiring.</p></section>{selected && <section className="sa-card"><div className="sa-row"><h2>{selected.student} · javoblar</h2><button className="btn btn-secondary" onClick={() => setSelected(null)}>Yopish</button></div><WarningHistory attempt={selected} />{selected.questions.map((q, i) => <div className="sa-answer" key={q.id}><strong>{i + 1}. {q.q}</strong><p>Tanlagan: {q.options[selected.answers[q.id]] || 'Javobsiz'}</p>{selected.review && <p className={selected.review[i].correct ? 'sa-success' : 'sa-danger'}>To‘g‘ri javob: {q.options[selected.review[i].answer]}</p>}</div>)}</section>}<section className="sa-card"><h2>Savollar sifati</h2><p className="sa-muted">Kamida 5 javobdan keyin: 30% dan past — qiyin; 95% va undan yuqori — oson.</p>{data.questions.map(q => <div className="sa-answer" key={q.id}><div className="sa-row"><strong>{q.q}</strong><span className="sa-badge">{q.percent}% · {q.total} javob{q.quality === 'normal' ? '' : ' · ' + q.quality}</span></div><div className="sa-bar"><i style={{
+                  }}>{a.leadId ? uiText("CRM’da mavjud") : uiText("CRM arizasiga olish")}</button>}</td></tr>)}</tbody></table></div><p className="sa-muted">{uiText("Brauzer qaydlari ko‘chirishni isbotlamaydi va bahoni avtomatik o‘zgartirmaydi. Boshqa qurilma, skrinshot yoki barcha tashqi dasturlarni aniqlash imkoni yo‘q. Holatni o‘quvchi bilan aniqlashtiring.")}</p></section>{selected && <section className="sa-card"><div className="sa-row"><h2>{selected.student} {uiText("· javoblar")}</h2><button className="btn btn-secondary" onClick={() => setSelected(null)}>{uiText("Yopish")}</button></div><WarningHistory attempt={selected} />{selected.questions.map((q, i) => <div className="sa-answer" key={q.id}><strong>{i + 1}. {q.q}</strong><p>{uiText("Tanlagan:")} {q.options[selected.answers[q.id]] || 'Javobsiz'}</p>{selected.review && <p className={selected.review[i].correct ? 'sa-success' : 'sa-danger'}>{uiText("To‘g‘ri javob:")} {q.options[selected.review[i].answer]}</p>}</div>)}</section>}<section className="sa-card"><h2>{uiText("Savollar sifati")}</h2><p className="sa-muted">{uiText("Kamida 5 javobdan keyin: 30% dan past — qiyin; 95% va undan yuqori — oson.")}</p>{data.questions.map(q => <div className="sa-answer" key={q.id}><div className="sa-row"><strong>{q.q}</strong><span className="sa-badge">{q.percent}% · {q.total} {uiText("javob")}{q.quality === 'normal' ? '' : ' · ' + q.quality}</span></div><div className="sa-bar"><i style={{
               width: q.percent + '%'
-            }} /></div>{Object.keys(q.wrongOptions).length > 0 && <p>Ko‘p tanlangan xato: {Object.entries(q.wrongOptions).sort((a, b) => b[1] - a[1])[0].join(' — ')}</p>}</div>)}</section></>}</>;
+            }} /></div>{Object.keys(q.wrongOptions).length > 0 && <p>{uiText("Ko‘p tanlangan xato:")} {Object.entries(q.wrongOptions).sort((a, b) => b[1] - a[1])[0].join(' — ')}</p>}</div>)}</section></>}</>;
 }
 export default function SpaceAcademy({
   teacher = false
 }) {
+  useInterfaceLanguage();
   const [tab, setTab] = useState('library');
-  return <div className="sa-workspace"><nav className="sa-tabs" aria-label="Test boshqaruvi">{[['library', 'Kutubxona va savollar'], ['assignments', 'Test berish'], ['analytics', 'Natijalar va tahlil']].map(([id, label]) => <button className={tab === id ? 'active' : ''} aria-pressed={tab === id} key={id} onClick={() => setTab(id)}>{label}</button>)}</nav>{tab === 'library' ? <Library teacher={teacher} /> : tab === 'assignments' ? <Assignments /> : <Analytics teacher={teacher} />}</div>;
+  return <div className="sa-workspace"><nav className="sa-tabs" aria-label={uiText("Test boshqaruvi")}>{[['library', uiText("Kutubxona va savollar")], ['assignments', uiText("Test berish")], ['analytics', uiText("Natijalar va tahlil")]].map(([id, label]) => <button className={tab === id ? 'active' : ''} aria-pressed={tab === id} key={id} onClick={() => setTab(id)}>{label}</button>)}</nav>{tab === 'library' ? <Library teacher={teacher} /> : tab === 'assignments' ? <Assignments /> : <Analytics teacher={teacher} />}</div>;
 }

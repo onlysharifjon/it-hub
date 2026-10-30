@@ -1,3 +1,6 @@
+
+import {t as uiText, useI18n as useInterfaceLanguage, localeTag as uiLocaleTag} from '../space-design/i18n';
+import SpaceControls from '../space-design/SpaceControls'
 import { PageIntro, Initials, SummaryRow } from './ui/Workspace'
 import Overlay from './ui/Overlay'
 import PersonName from './ui/PersonName'
@@ -19,6 +22,7 @@ import MinarQrCards from './MinarQrCards'
 const COURSES = ['HTML', 'CSS', 'JavaScript']
 
 export default function MinarAccounts({ currentUser }) {
+  useInterfaceLanguage();
   const [confirmUI, ask] = useConfirm()
   const canManage = currentUser?.role === 'admin' || currentUser?.role === 'support_teacher'
   const isTeacher = currentUser?.role === 'teacher'
@@ -27,6 +31,8 @@ export default function MinarAccounts({ currentUser }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [groupFilter,setGroupFilter]=useState('all'),[statusFilter,setStatusFilter]=useState('all')
+  const accountsRequest=useRef(0)
 
   // Bitta hisob ochish modali
   const [modal, setModal] = useState(false)
@@ -52,13 +58,14 @@ export default function MinarAccounts({ currentUser }) {
   const [creds, setCreds] = useState(null)            // { full_name, login_id, password }
   const [bulkCreds, setBulkCreds] = useState(null)     // [{ full_name, login_id, password }]
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { const timer=setTimeout(()=>load(search.trim()||undefined),250);return()=>{clearTimeout(timer);accountsRequest.current++} }, [search])
 
   async function load(q) {
+    const request=++accountsRequest.current
     setLoading(true)
-    try { setItems(await fetchMinarAccounts({ q })) }
-    catch { toast.error("Yuklab bo'lmadi") }
-    finally { setLoading(false) }
+    try { const result=await fetchMinarAccounts({ q });if(request===accountsRequest.current)setItems(result) }
+    catch { if(request===accountsRequest.current)toast.error(uiText("Yuklab bo'lmadi")) }
+    finally { if(request===accountsRequest.current)setLoading(false) }
   }
 
   function handleSearch(e) {
@@ -86,8 +93,8 @@ export default function MinarAccounts({ currentUser }) {
   }
 
   async function handleCreate() {
-    if (!pickedStudent) return toast.error("Talabani tanlang")
-    if (customPassword && customPassword.length < 6) return toast.error("Parol kamida 6 belgi")
+    if (!pickedStudent) return toast.error(uiText("Talabani tanlang"))
+    if (customPassword && customPassword.length < 6) return toast.error(uiText("Parol kamida 6 belgi"))
     setSaving(true)
     try {
       const res = await createMinarAccount({
@@ -95,7 +102,7 @@ export default function MinarAccounts({ currentUser }) {
         course: course || null,
         password: customPassword || null,
       })
-      toast.success("Hisob yaratildi")
+      toast.success(uiText("Hisob yaratildi"))
       setModal(false)
       setCreds({ full_name: res.full_name, login_id: res.login_id, password: res.password })
       load(search.trim() || undefined)
@@ -112,7 +119,7 @@ export default function MinarAccounts({ currentUser }) {
       const result = await fetchMinarAccountGroups()
       if (request === groupsRequest.current) setGroups(result)
     } catch (e) {
-      if (request === groupsRequest.current) setGroupsError(e.message || "Guruhlarni yuklab bo'lmadi")
+      if (request === groupsRequest.current) setGroupsError(e.message || uiText("Guruhlarni yuklab bo'lmadi"))
     } finally {
       if (request === groupsRequest.current) setGroupsLoading(false)
     }
@@ -127,7 +134,7 @@ export default function MinarAccounts({ currentUser }) {
 
   async function handleBulkCreate() {
     if (bulkSaving || groupsLoading || groupsError) return
-    if (!groups.some(g => String(g.id) === bulkGroupId)) return toast.error("Guruhni tanlang")
+    if (!groups.some(g => String(g.id) === bulkGroupId)) return toast.error(uiText("Guruhni tanlang"))
     setBulkSaving(true)
     try {
       const res = await createMinarAccountsBulk({ group_id: Number(bulkGroupId), course: bulkCourse || null })
@@ -137,7 +144,7 @@ export default function MinarAccounts({ currentUser }) {
         setBulkCreds(res.created)
         load(search.trim() || undefined)
       } else {
-        toast("Bu guruhda hisobsiz faol talaba topilmadi", { icon: 'ℹ️' })
+        toast(uiText("Bu guruhda hisobsiz faol talaba topilmadi"), { icon: 'ℹ️' })
       }
     } catch (e) { toast.error(e.message) }
     finally { setBulkSaving(false) }
@@ -145,62 +152,60 @@ export default function MinarAccounts({ currentUser }) {
 
   async function handleReset(row) {
     const ok = await ask({
-      title: 'Parolni yangilash',
+      title: uiText("Parolni yangilash"),
       message: `${row.full_name} (${row.login_id}) uchun yangi parol yaratilsinmi?`,
-      detail: "Eski parol darhol ishlamay qoladi — yangi parol bir marta ko'rsatiladi.",
+      detail: uiText("Eski parol darhol ishlamay qoladi — yangi parol bir marta ko'rsatiladi."),
       confirmLabel: 'Ha, yangilash',
     })
     if (!ok) return
     try {
       const res = await resetMinarPassword(row.student_id)
       setCreds({ full_name: row.full_name, login_id: res.login_id, password: res.password })
-      toast.success("Yangi parol yaratildi")
+      toast.success(uiText("Yangi parol yaratildi"))
     } catch (e) { toast.error(e.message) }
   }
 
   async function handleToggle(row) {
     try {
       await patchMinarAccount(row.student_id, { is_active: !row.is_active })
-      toast.success(row.is_active ? "Hisob bloklandi" : "Hisob faollashtirildi")
+      toast.success(row.is_active ? uiText("Hisob bloklandi") : uiText("Hisob faollashtirildi"))
       load(search.trim() || undefined)
     } catch (e) { toast.error(e.message) }
   }
 
   function copy(text) {
     navigator.clipboard.writeText(text).then(
-      () => toast.success("Nusxalandi"),
-      () => toast.error("Nusxalab bo'lmadi"),
+      () => toast.success(uiText("Nusxalandi")),
+      () => toast.error(uiText("Nusxalab bo'lmadi")),
     )
   }
 
   const columns = [
-    { key: 'full_name', header: 'Talaba', sortable: true, render: r => <PersonName name={r.full_name} /> },
-    { key: 'group', header: 'Guruh', sortable: true, render: r => r.group || <span className="text-muted">—</span> },
+    { key: 'full_name', header: uiText("Talaba"), sortable: true, render: r => <PersonName name={r.full_name} /> },
+    { key: 'group', header: uiText("Guruh"), sortable: true, render: r => r.group || <span className="text-muted">—</span> },
     {
       key: 'login_id', header: 'Login', sortable: true,
       render: r => (
         <span className="cell-copy">
           <code>{r.login_id}</code>
-          <button className="btn-icon" title="Loginni nusxalash" aria-label="Loginni nusxalash" onClick={() => copy(r.login_id)}>
+          <button className="btn-icon" title={uiText("Loginni nusxalash")} aria-label={uiText("Loginni nusxalash")} onClick={() => copy(r.login_id)}>
             <FontAwesomeIcon icon={faCopy} />
           </button>
         </span>
       ),
     },
-    { key: 'course', header: 'Kurs', sortable: true,render:r=>!canManage ? r.course : <select aria-label={r.full_name+' kursi'} value={r.course} onChange={async e=>{try{await patchMinarAccount(r.student_id,{course:e.target.value});toast.success('Kurs yangilandi');load()}catch(e){toast.error(e.message)}}}>{COURSES.map(c=><option key={c}>{c}</option>)}</select> },
-    {key:'age_band',header:'Yosh toifasi',render:r=>!canManage ? (r.age_band || '—') : <select aria-label={r.full_name+' yosh toifasi'} value={r.age_band||''} onChange={async e=>{try{await patchMinarAccount(r.student_id,{age_band:e.target.value||null});load()}catch(e){toast.error(e.message)}}}><option value="">Kiritilmagan</option>{['7-9','10-12','13-16','17+'].map(a=><option key={a}>{a}</option>)}</select>},
+    { key: 'course', header: uiText("Kurs"), sortable: true,render:r=>!canManage ? r.course : <select aria-label={r.full_name+uiText(" kursi")} value={r.course} onChange={async e=>{try{await patchMinarAccount(r.student_id,{course:e.target.value});toast.success(uiText("Kurs yangilandi"));load()}catch(e){toast.error(e.message)}}}>{COURSES.map(c=><option key={c}>{c}</option>)}</select> },
+    {key:'age_band',header:uiText("Yosh toifasi"),render:r=>!canManage ? (r.age_band || '—') : <select aria-label={r.full_name+uiText(" yosh toifasi")} value={r.age_band||''} onChange={async e=>{try{await patchMinarAccount(r.student_id,{age_band:e.target.value||null});load()}catch(e){toast.error(e.message)}}}><option value="">{uiText("Kiritilmagan")}</option>{['7-9','10-12','13-16','17+'].map(a=><option key={a}>{a}</option>)}</select>},
     { key: 'xp', header: 'XP', sortable: true, align: 'right' },
     { key: 'streak', header: 'Streak', sortable: true, align: 'right' },
     {
-      key: 'is_active', header: 'Holat', sortable: true,
+      key: 'is_active', header: uiText("Holat"), sortable: true,
       render: r => (
         r.is_active && r.can_login === false
           ? <span className="status-badge inactive"
-              title="Talaba CRM'da arxivda yoki nofaol — o'quvchi kirganda «Akkaunt faol emas» chiqadi. Talabani arxivdan chiqaring.">
-              Talaba arxivda
-            </span>
+              title={uiText("Talaba CRM'da arxivda yoki nofaol — o'quvchi kirganda «Akkaunt faol emas» chiqadi. Talabani arxivdan chiqaring.")}>{uiText("Talaba arxivda")}</span>
           : <span className={`status-badge ${r.is_active ? 'active' : 'inactive'}`}>
-              {r.locked ? <><FontAwesomeIcon icon={faLock} /> Qulflangan</> : (r.is_active ? (r.is_test ? 'Faol (test)' : 'Faol') : 'Bloklangan')}
+              {r.locked ? <><FontAwesomeIcon icon={faLock} /> {uiText("Qulflangan")}</> : (r.is_active ? (r.is_test ? uiText("Faol (test)") : uiText("Faol")) : uiText("Bloklangan"))}
             </span>
       ),
     },
@@ -208,15 +213,15 @@ export default function MinarAccounts({ currentUser }) {
       key: 'actions', header: '', align: 'right', className: 'actions',
       render: r => (
         <RowActions>
-          <button className="btn-icon" title="Parolni yangilash" aria-label="Parolni yangilash" onClick={() => handleReset(r)}>
+          <button className="btn-icon" title={uiText("Parolni yangilash")} aria-label={uiText("Parolni yangilash")} onClick={() => handleReset(r)}>
             <FontAwesomeIcon icon={faKey} />
           </button>
-          <button className="btn-icon" title="QR kirish kartasi" aria-label="QR kirish kartasi"
+          <button className="btn-icon" title={uiText("QR kirish kartasi")} aria-label={uiText("QR kirish kartasi")}
             disabled={r.can_login === false} onClick={() => setQr({ studentIds: [r.student_id] })}>
             <FontAwesomeIcon icon={faQrcode} />
           </button>
-          <button className="btn-icon" title={r.is_active ? 'Bloklash' : 'Faollashtirish'}
-            aria-label={r.is_active ? 'Bloklash' : 'Faollashtirish'} onClick={() => handleToggle(r)}>
+          <button className="btn-icon" title={r.is_active ? uiText("Bloklash") : uiText("Faollashtirish")}
+            aria-label={r.is_active ? uiText("Bloklash") : uiText("Faollashtirish")} onClick={() => handleToggle(r)}>
             <FontAwesomeIcon icon={r.is_active ? faToggleOn : faToggleOff} />
           </button>
         </RowActions>
@@ -225,55 +230,52 @@ export default function MinarAccounts({ currentUser }) {
   ]
 
   return (
-    <div className="page">
+    <div className="page space-enterprise"><SpaceControls/>
       {confirmUI}
       <PageIntro
         title={<>Minar Space</>}
-        description={<><FontAwesomeIcon icon={faRocket} /> {isTeacher ? "O'z guruhlaringizdagi o'quvchilar uchun SPACE hisoblari." : "space.minaracademy.uz o'quvchi kabineti hisoblari."} Parol faqat yaratilganda/tiklanganda bir marta ko'rsatiladi.</>}
+        description={<><FontAwesomeIcon icon={faRocket} /> {isTeacher ? uiText("O'z guruhlaringizdagi o'quvchilar uchun SPACE hisoblari.") : uiText("space.minaracademy.uz o'quvchi kabineti hisoblari.")} {uiText("Parol faqat yaratilganda/tiklanganda bir marta ko'rsatiladi.")}</>}
         actions={canCreate && <div className="header-actions">
           <button className="button secondary" onClick={openBulkModal}>
-            <FontAwesomeIcon icon={faLayerGroup} /> Guruh bo'yicha ochish
-          </button>
+            <FontAwesomeIcon icon={faLayerGroup} />{uiText("Guruh bo'yicha ochish")}</button>
           {canManage && <><button className="button secondary" onClick={() => {
             loadGroups()
             setQr({ studentIds: null })
           }}>
-            <FontAwesomeIcon icon={faQrcode} /> QR kartalar
-          </button>
+            <FontAwesomeIcon icon={faQrcode} />{uiText("QR kartalar")}</button>
           <button className="button" onClick={openCreateModal}>
-            <FontAwesomeIcon icon={faPlus} /> Hisob ochish
-          </button>
+            <FontAwesomeIcon icon={faPlus} />{uiText("Hisob ochish")}</button>
           </>}
         </div>}
       />
 
       <SummaryRow items={[
-        { label: 'Jami hisoblar', value: items.length },
-        { label: 'Faol', value: items.filter(r => r.is_active && r.can_login !== false).length },
-        { label: 'Talaba arxivda', value: items.filter(r => r.is_active && r.can_login === false).length },
-        { label: 'Qulflangan', value: items.filter(r => r.locked).length },
+        { label: uiText("Jami hisoblar"), value: items.length },
+        { label: uiText("Faol"), value: items.filter(r => r.is_active && r.can_login !== false).length },
+        { label: uiText("Talaba arxivda"), value: items.filter(r => r.is_active && r.can_login === false).length },
+        { label: uiText("Qulflangan"), value: items.filter(r => r.locked).length },
       ]} />
 
       <div className="directory-toolbar">
         <form onSubmit={handleSearch}>
           <input className="field" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Ism yoki login (MA0042) bo'yicha qidirish" aria-label="Hisob qidirish" />
-        </form>
+            placeholder={uiText("Ism yoki login (MA0042) bo'yicha qidirish")} aria-label={uiText("Hisob qidirish")} />
+        </form><select aria-label={uiText("Guruh")} value={groupFilter} onChange={e=>setGroupFilter(e.target.value)}><option value="all">{uiText("Barcha guruhlar")}</option>{[...new Set(items.map(r=>r.group))].filter(Boolean).map(g=><option key={g}>{g}</option>)}</select><select aria-label={uiText("Holat")} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="all">{uiText("Barcha holatlar")}</option><option value="active">{uiText("Faol")}</option><option value="inactive">{uiText("Nofaol")}</option></select>
       </div>
 
       <DataTable
         columns={columns}
-        rows={items}
+        rows={items.filter(r=>(groupFilter==='all'||r.group===groupFilter)&&(statusFilter==='all'||(statusFilter==='active'?r.is_active&&r.can_login!==false:!r.is_active||r.can_login===false)))}
         loading={loading}
         rowClassName={r => (!r.is_active || r.can_login === false ? 'row-inactive' : undefined)}
         clientPageSize={25}
         densityToggle densityKey="minar_accounts"
         empty={{
           icon: faRocket,
-          title: search ? 'Hech narsa topilmadi' : "Minar Space hisoblari yo'q",
+          title: search ? uiText("Hech narsa topilmadi") : uiText("Minar Space hisoblari yo'q"),
           description: search
-            ? "Qidiruv so'zini o'zgartirib ko'ring."
-            : "Hisob ochilgach, talaba space.minaracademy.uz ga kira oladi.",
+            ? uiText("Qidiruv so'zini o'zgartirib ko'ring.")
+            : uiText("Hisob ochilgach, talaba space.minaracademy.uz ga kira oladi."),
         }}
       />
 
@@ -282,15 +284,15 @@ export default function MinarAccounts({ currentUser }) {
         <Overlay className="modal-overlay" onClick={() => setModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3><FontAwesomeIcon icon={faRocket} /> Minar Space hisobi ochish</h3>
+              <h3><FontAwesomeIcon icon={faRocket} /> {uiText("Minar Space hisobi ochish")}</h3>
               <button className="modal-close" onClick={() => setModal(false)}>✕</button>
             </div>
             <div className="modal-body">
-              <label>Talaba *</label>
+              <label>{uiText("Talaba *")}</label>
               {pickedStudent ? (
                 <div className="cell-copy" style={{ marginBottom: 10 }}>
                   <strong>{pickedStudent.full_name}</strong>
-                  <button className="btn-icon" title="Boshqasini tanlash" aria-label="Boshqasini tanlash"
+                  <button className="btn-icon" title={uiText("Boshqasini tanlash")} aria-label={uiText("Boshqasini tanlash")}
                     onClick={() => setPickedStudent(null)}>
                     <FontAwesomeIcon icon={faPlus} style={{ transform: 'rotate(45deg)' }} />
                   </button>
@@ -298,7 +300,7 @@ export default function MinarAccounts({ currentUser }) {
               ) : (
                 <>
                   <input className="field" value={studentQuery} onChange={e => setStudentQuery(e.target.value)}
-                    placeholder="Ism bo'yicha qidirish" />
+                    placeholder={uiText("Ism bo'yicha qidirish")} />
                   <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid var(--border, var(--border))', borderRadius: 8, marginTop: 6 }}>
                     {studentResults.map(s => (
                       <button key={s.id} className="button secondary" type="button"
@@ -307,30 +309,30 @@ export default function MinarAccounts({ currentUser }) {
                         {s.full_name} <span className="text-muted" style={{ fontSize: 12 }}>({s.phone1})</span>
                       </button>
                     ))}
-                    {studentResults.length === 0 && <div className="muted py-2" style={{ padding: 8 }}>Talaba topilmadi</div>}
+                    {studentResults.length === 0 && <div className="muted py-2" style={{ padding: 8 }}>{uiText("Talaba topilmadi")}</div>}
                   </div>
                 </>
               )}
 
               <div className="row-2" style={{ marginTop: 10 }}>
                 <div>
-                  <label>Kurs</label>
+                  <label>{uiText("Kurs")}</label>
                   <select className="field" value={course} onChange={e => setCourse(e.target.value)}>
-                    <option value="">Avtomatik (guruh bosqichidan)</option>
+                    <option value="">{uiText("Avtomatik (guruh bosqichidan)")}</option>
                     {COURSES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label>Parol</label>
+                  <label>{uiText("Parol")}</label>
                   <input className="field" value={customPassword} onChange={e => setCustomPassword(e.target.value)}
-                    placeholder="Bo'sh qolsa — avto" />
+                    placeholder={uiText("Bo'sh qolsa — avto")} />
                 </div>
               </div>
             </div>
             <div className="modal-footer">
-              <button className="button secondary" onClick={() => setModal(false)}>Bekor</button>
+              <button className="button secondary" onClick={() => setModal(false)}>{uiText("Bekor")}</button>
               <button className="button" onClick={handleCreate} disabled={saving}>
-                {saving ? 'Yaratilmoqda...' : 'Yaratish'}
+                {saving ? uiText("Yaratilmoqda...") : 'Yaratish'}
               </button>
             </div>
           </div>
@@ -344,34 +346,31 @@ export default function MinarAccounts({ currentUser }) {
         <Overlay className="modal-overlay" onClick={() => { if (!bulkSaving) setBulkModal(false) }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3><FontAwesomeIcon icon={faLayerGroup} /> Guruh bo'yicha ommaviy ochish</h3>
+              <h3><FontAwesomeIcon icon={faLayerGroup} /> {uiText("Guruh bo'yicha ommaviy ochish")}</h3>
               <button className="modal-close" disabled={bulkSaving} onClick={() => setBulkModal(false)}>✕</button>
             </div>
             <div className="modal-body">
-              <p className="text-muted" style={{ fontSize: 13, marginTop: 0 }}>
-                Guruhdagi hisobi hali yo'q barcha faol talabalarga hisob ochiladi.
-                {' '}Mavjud hisoblarning login va parollari o'zgarmaydi.
-                {isTeacher && <> Faqat sizga biriktirilgan faol guruhlar ko'rsatiladi.</>}
+              <p className="text-muted" style={{ fontSize: 13, marginTop: 0 }}>{uiText("Guruhdagi hisobi hali yo'q barcha faol talabalarga hisob ochiladi.")}{' '}{uiText("Mavjud hisoblarning login va parollari o'zgarmaydi.")}{isTeacher && <> {uiText("Faqat sizga biriktirilgan faol guruhlar ko'rsatiladi.")}</>}
               </p>
-              <label htmlFor="minar-bulk-group">Guruh *</label>
+              <label htmlFor="minar-bulk-group">{uiText("Guruh *")}</label>
               <select id="minar-bulk-group" className="field" value={bulkGroupId} disabled={groupsLoading || bulkSaving || !!groupsError} onChange={e => setBulkGroupId(e.target.value)}>
-                <option value="">{groupsLoading ? 'Guruhlar yuklanmoqda...' : 'Guruhni tanlang...'}</option>
+                <option value="">{groupsLoading ? uiText("Guruhlar yuklanmoqda...") : uiText("Guruhni tanlang...")}</option>
                 {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
               </select>
-              {groupsLoading && <p className="text-muted" role="status">Guruhlar yuklanmoqda...</p>}
-              {groupsError && <div role="alert"><p>{groupsError}</p><button className="button secondary" onClick={loadGroups}>Qayta urinish</button></div>}
-              {!groupsLoading && !groupsError && groups.length === 0 && <p className="text-muted" role="status">Faol guruh topilmadi.</p>}
+              {groupsLoading && <p className="text-muted" role="status">{uiText("Guruhlar yuklanmoqda...")}</p>}
+              {groupsError && <div role="alert"><p>{groupsError}</p><button className="button secondary" onClick={loadGroups}>{uiText("Qayta urinish")}</button></div>}
+              {!groupsLoading && !groupsError && groups.length === 0 && <p className="text-muted" role="status">{uiText("Faol guruh topilmadi.")}</p>}
 
-              <label style={{ marginTop: 10 }}>Kurs</label>
+              <label style={{ marginTop: 10 }}>{uiText("Kurs")}</label>
               <select className="field" value={bulkCourse} disabled={bulkSaving} onChange={e => setBulkCourse(e.target.value)}>
-                <option value="">Avtomatik (guruh bosqichidan)</option>
+                <option value="">{uiText("Avtomatik (guruh bosqichidan)")}</option>
                 {COURSES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
             <div className="modal-footer">
-              <button className="button secondary" disabled={bulkSaving} onClick={() => setBulkModal(false)}>Bekor</button>
+              <button className="button secondary" disabled={bulkSaving} onClick={() => setBulkModal(false)}>{uiText("Bekor")}</button>
               <button className="button" onClick={handleBulkCreate} disabled={bulkSaving || groupsLoading || !!groupsError || !groups.some(g => String(g.id) === bulkGroupId)}>
-                {bulkSaving ? 'Yaratilmoqda...' : 'Yaratish'}
+                {bulkSaving ? uiText("Yaratilmoqda...") : 'Yaratish'}
               </button>
             </div>
           </div>
@@ -383,14 +382,12 @@ export default function MinarAccounts({ currentUser }) {
         <Overlay className="modal-overlay" onClick={() => setCreds(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3><FontAwesomeIcon icon={faKey} /> Kirish ma'lumotlari</h3>
+              <h3><FontAwesomeIcon icon={faKey} /> {uiText("Kirish ma'lumotlari")}</h3>
               <button className="modal-close" onClick={() => setCreds(null)}>✕</button>
             </div>
             <div className="modal-body">
               <p style={{ margin: '0 0 10px' }}>
-                <strong>{creds.full_name}</strong> uchun space.minaracademy.uz kirish ma'lumotlari.
-                Parol <strong>faqat hozir</strong> ko'rinadi — talabaga yozib bering yoki yuboring.
-              </p>
+                <strong>{creds.full_name}</strong>{uiText("uchun space.minaracademy.uz kirish ma'lumotlari. Parol")}<strong>{uiText("faqat hozir")}</strong>{uiText("ko'rinadi — talabaga yozib bering yoki yuboring.")}</p>
               <label>Login</label>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input className="field" readOnly value={creds.login_id} style={{ fontFamily: 'monospace' }} />
@@ -398,7 +395,7 @@ export default function MinarAccounts({ currentUser }) {
                   <FontAwesomeIcon icon={faCopy} />
                 </button>
               </div>
-              <label>Parol</label>
+              <label>{uiText("Parol")}</label>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input className="field" readOnly value={creds.password || ''} style={{ fontFamily: 'monospace' }} />
                 <button className="button secondary" onClick={() => copy(creds.password || '')}>
@@ -409,11 +406,10 @@ export default function MinarAccounts({ currentUser }) {
                 className="button secondary" style={{ marginTop: 10 }}
                 onClick={() => copy(`Minar Space (space.minaracademy.uz)\nLogin: ${creds.login_id}\nParol: ${creds.password}`)}
               >
-                <FontAwesomeIcon icon={faCopy} /> Hammasini nusxalash
-              </button>
+                <FontAwesomeIcon icon={faCopy} />{uiText("Hammasini nusxalash")}</button>
             </div>
             <div className="modal-footer">
-              <button className="button" onClick={() => setCreds(null)}>Yopdim, saqlab oldim</button>
+              <button className="button" onClick={() => setCreds(null)}>{uiText("Yopdim, saqlab oldim")}</button>
             </div>
           </div>
         </Overlay>
@@ -424,13 +420,11 @@ export default function MinarAccounts({ currentUser }) {
         <Overlay className="modal-overlay" onClick={() => setBulkCreds(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3><FontAwesomeIcon icon={faKey} /> Yaratilgan hisoblar ({bulkCreds.length})</h3>
+              <h3><FontAwesomeIcon icon={faKey} /> {uiText("Yaratilgan hisoblar (")}{bulkCreds.length})</h3>
               <button className="modal-close" onClick={() => setBulkCreds(null)}>✕</button>
             </div>
             <div className="modal-body">
-              <p style={{ margin: '0 0 10px' }}>
-                Parollar <strong>faqat hozir</strong> ko'rinadi — talabalarga yozib bering yoki yuboring.
-              </p>
+              <p style={{ margin: '0 0 10px' }}>{uiText("Parollar")}<strong>{uiText("faqat hozir")}</strong>{uiText("ko'rinadi — talabalarga yozib bering yoki yuboring.")}</p>
               <div style={{ maxHeight: 320, overflowY: 'auto' }}>
                 {bulkCreds.map(c => (
                   <div key={c.login_id} className="cell-copy" style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border, var(--border))' }}>
@@ -444,11 +438,10 @@ export default function MinarAccounts({ currentUser }) {
                 className="button secondary" style={{ marginTop: 10 }}
                 onClick={() => copy(bulkCreds.map(c => `${c.full_name}: ${c.login_id} / ${c.password}`).join('\n'))}
               >
-                <FontAwesomeIcon icon={faCopy} /> Hammasini nusxalash
-              </button>
+                <FontAwesomeIcon icon={faCopy} />{uiText("Hammasini nusxalash")}</button>
             </div>
             <div className="modal-footer">
-              <button className="button" onClick={() => setBulkCreds(null)}>Yopdim, saqlab oldim</button>
+              <button className="button" onClick={() => setBulkCreds(null)}>{uiText("Yopdim, saqlab oldim")}</button>
             </div>
           </div>
         </Overlay>
