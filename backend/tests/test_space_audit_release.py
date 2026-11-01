@@ -47,7 +47,7 @@ def test_battle_fake_losses_and_duplicate_match_cannot_mint(client,db,acct):
     db.add(b);db.commit()
     first=post(client,'/games/results',{'result':{**fake,'matchId':b.match_id,'won':False}}).json()
     second=post(client,'/games/results',{'result':{**fake,'id':'different-client-id','matchId':b.match_id,'won':True}}).json()
-    assert first['award']==15 and second['state']['xp']==first['state']['xp']
+    assert first['award']==0 and first['state']['lightning']==2 and second['state']['xp']==first['state']['xp']
     assert second['state']['balance']==first['state']['balance'] and db.query(MinarResult).count()==1
 
 
@@ -130,10 +130,10 @@ def test_student_content_assess_review_and_permissions(client,db,acct,admin_toke
     assert all('answer' not in q and 'explain' not in q for q in public['questions'])
     answer=public['questions'][0]['options'].index('h1');key='assessment-intent-1'
     url=f"/study/content/{c['id']}/assess"
-    result=post(client,url,{'answers':[answer],'requestId':key}).json();assert result['passed'] and result['award']==5
+    result=post(client,url,{'answers':[answer],'requestId':key}).json();assert result['passed'] and result['award']==0
     assert post(client,url,{'answers':[answer],'requestId':key}).json()['award']==0
     a=account(db);p=db.query(MinarProgress).one();p.next_review_at=datetime.utcnow()-timedelta(days=1);db.commit()
-    assert post(client,url,{'answers':[answer],'requestId':'review-intent-001'}).json()['award']==2
+    assert post(client,url,{'answers':[answer],'requestId':'review-intent-001'}).json()['award']==0
     knowledge=client.get('/space/study/knowledge').json();assert knowledge['topics'][0]['mastery']==100
     assert db.query(MinarLearningAttempt).count()==2
     c['published']=False
@@ -267,13 +267,13 @@ def test_completed_course_has_daily_practice_between_review_dates(client,db,acct
     public=client.get('/space/study/content/'+str(c['id'])).json()
     answer=public['questions'][0]['options'].index('h1')
     url=f"/study/content/{c['id']}/assess"
-    assert post(client,url,{'answers':[answer],'requestId':'first-complete-01'}).json()['award']==5
+    assert post(client,url,{'answers':[answer],'requestId':'first-complete-01'}).json()['award']==0
     p=db.query(MinarProgress).one();due=p.next_review_at
     assert client.get('/space/study/today').json()['continue']['dailyPractice']
-    assert post(client,url,{'answers':[answer],'requestId':'daily-practice-01'}).json()['award']==2
+    assert post(client,url,{'answers':[answer],'requestId':'daily-practice-01'}).json()['award']==0
     assert post(client,url,{'answers':[answer],'requestId':'daily-practice-02'}).json()['award']==0
     db.refresh(p);assert p.next_review_at==due
-    assert account(db).xp==30
+    assert account(db).xp==0
 
 
 def test_old_month_reversal_does_not_inflate_current_teacher_budget(client,db,acct,admin_token,admin_user):

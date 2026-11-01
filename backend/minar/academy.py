@@ -126,6 +126,8 @@ def attempt_dict(a,teacher=False):
     return result
 
 def award(db,acc,ref,amount,title):
+    # Assessment coins require a teacher grant from the monthly allowance.
+    amount = 0
     if not db.query(MinarLedger.id).filter_by(account_id=acc.id,ref_key=ref).first():
         db.add(MinarLedger(account_id=acc.id,ref_key=ref,amount=amount,kind='lesson',title=title,local_date=tz.today().isoformat()))
         return amount

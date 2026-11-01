@@ -135,10 +135,10 @@ def test_teacher_sees_submissions_and_grades_with_coins_once(client, db, klass, 
 def test_grading_respects_teacher_coin_budget(client, db, klass, teacher_token):
     group, st, _ = klass
     hw = _homework(db, group)
-    db.add(models.CoinTransaction(student_id=st.id, teacher_id=group.teacher_id, amount=98))   # budjet: 2×50
+    db.add(models.CoinTransaction(student_id=st.id, teacher_id=group.teacher_id, amount=68))   # student allowance: 70
     db.commit()
     r = client.patch(f"/homeworks/{hw.id}/submissions/{st.id}", json={"grade": 90, "coins": 5}, headers=H(teacher_token))
-    assert r.status_code == 400 and "Coin yetarli emas" in r.json()["detail"]
+    assert r.status_code == 400 and "oylik limiti 70 coin" in r.json()["detail"]
     assert db.query(models.HomeworkSubmission).count() == 0                          # hech narsa saqlanmadi
 
 

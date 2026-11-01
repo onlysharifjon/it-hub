@@ -16,7 +16,7 @@ def _acc(db):
 
 def test_notifications_list_read_and_unread_in_state(client, db, acct, metodist_token):
     st, _ = acct
-    r = client.post("/coins/give", json={"student_id": st.id, "amount": 7, "reason": "Zo‘r savol"},
+    r = client.post("/coins/give", json={"student_id": st.id, "group_id": db.query(models.Group).one().id, "amount": 7, "reason": "Zo‘r savol"},
                     headers=H(metodist_token))
     assert r.status_code == 201, r.text
     boot = client.get("/space/students/me/bootstrap").json()
@@ -76,7 +76,7 @@ def test_achievement_unlocks_once_with_reward_and_notification(client, db, acct)
     assert ach["streak_3"]["unlockedAt"] and ach["streak_3"]["progress"] == 3
     assert ach["streak_7"]["unlockedAt"] is None and ach["streak_7"]["progress"] == 3
     assert db.query(MinarAchievement).count() == 1
-    assert db.query(MinarLedger).filter(MinarLedger.kind == "achievement").count() == 1
+    assert db.query(MinarLedger).filter(MinarLedger.kind == "achievement").count() == 0
     assert client.get("/space/notifications").json()["items"][0]["kind"] == "achievement"
     again = post(client, "/avatar/character", {"type": "character", "character": "foxy"}).json()
     assert again["unlocked"] == [] and db.query(MinarAchievement).count() == 1      # ikkinchi marta yo'q
@@ -88,7 +88,7 @@ def test_level_locks_game_difficulty(client, db, acct):
     boot = client.get("/space/students/me/bootstrap").json()
     assert boot["level"] == 1 and boot["unlocks"]["ztype:hard"] == 4 and boot["productLevels"]["crown"] == 4
     acc = _acc(db)
-    acc.xp = 3 * C.LEVEL_XP
+    acc.xp = 4 * C.LEVEL_XP
     db.commit()
     assert start_game(client, "ztype", difficulty="hard")["difficulty"] == "hard"
 
@@ -97,5 +97,8 @@ def test_coin_give_without_space_account_is_silent(client, db, metodist_token):
     st = models.Student(full_name="Akkauntsiz Bola", phone1="+998900000001", is_active=True)
     db.add(st)
     db.commit()
-    r = client.post("/coins/give", json={"student_id": st.id, "amount": 3}, headers=H(metodist_token))
+    group = models.Group(name="Academic coins", is_active=True)
+    db.add(group); db.flush()
+    db.add(models.GroupStudent(group_id=group.id, student_id=st.id)); db.commit()
+    r = client.post("/coins/give", json={"student_id": st.id, "group_id": group.id, "amount": 3}, headers=H(metodist_token))
     assert r.status_code == 201 and db.query(MinarNotification).count() == 0

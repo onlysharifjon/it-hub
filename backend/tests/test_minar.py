@@ -202,10 +202,10 @@ def test_bulk_create_for_group(client, db, metodist_token):
 
 def test_checkin_once_per_day_and_streak(client, db, acct):
     r = post(client, "/rewards/check-in").json()
-    assert r["award"] == 1 and r["state"]["balance"] == 1 and r["state"]["streak"] == 1
+    assert r["award"] == 0 and r["state"]["balance"] == 0 and r["state"]["xp"] == 20 and r["state"]["streak"] == 1
     assert r["state"]["checkins"] == [tz.today().isoformat()]
     again = post(client, "/rewards/check-in").json()
-    assert again["award"] == 0 and again["message"] == "" and again["state"]["balance"] == 1
+    assert again["award"] == 0 and again["message"] == "" and again["state"]["balance"] == 0
     # kecha kirgan bo'lsa ketma-ketlik davom etadi
     acc = db.query(MinarAccount).one()
     acc.last_login, acc.streak = (tz.today() - timedelta(days=1)).isoformat(), 3
@@ -223,14 +223,14 @@ def test_checkin_once_per_day_and_streak(client, db, acct):
 
 def test_lesson_and_quest_flow(client, acct):
     r = post(client, "/courses/complete", {"type": "lesson", "index": 0}).json()
-    assert r["award"] == 5 and r["state"]["xp"] == 50 and r["state"]["completedLessons"] == ["HTML-0"]
+    assert r["award"] == 0 and r["state"]["xp"] == 0 and r["state"]["completedLessons"] == ["HTML-0"]
     again = post(client, "/courses/complete", {"type": "lesson", "index": 0}).json()
-    assert again["award"] == 0 and again["state"]["balance"] == 5 and again["message"] == "Bu dars avval yakunlangan."
+    assert again["award"] == 0 and again["state"]["balance"] == 0 and again["message"] == "Bu dars avval yakunlangan."
     for bad in (3, -1, "0", None, True):
         assert post(client, "/courses/complete", {"type": "lesson", "index": bad}).status_code == 400
     assert post(client, "/quests/claim", {"type": "quest", "quest": "typing"}).status_code == 400   # shart bajarilmagan
     q = post(client, "/quests/claim", {"type": "quest", "quest": "lesson"}).json()
-    assert q["award"] == 5 and q["state"]["claimedQuests"] == [f"{tz.today().isoformat()}:lesson"]
+    assert q["award"] == 0 and q["state"]["claimedQuests"] == [f"{tz.today().isoformat()}:lesson"]
     assert post(client, "/quests/claim", {"type": "quest", "quest": "lesson"}).status_code == 409
     assert post(client, "/quests/claim", {"type": "quest", "quest": "hack"}).status_code == 400
 
@@ -302,22 +302,22 @@ def test_quiz_answer_once_and_server_score(client, db, acct):
     for i in range(1, 5):
         post(client, "/games/answer", {"session": sess["id"], "index": i, "choice": qs[i]["answer"]})
     r = finish(client, sess, score=5, total=5).json()                             # mijoz "score"i e'tiborsiz
-    assert r["award"] == 10 and r["state"]["results"][0]["score"] == 4 and r["state"]["results"][0]["eligible"]
+    assert r["award"] == 0 and r["state"]["results"][0]["score"] == 4 and r["state"]["results"][0]["eligible"]
 
 
 def test_game_reward_xp_and_idempotency(client, db, acct):
     sess, r = play_typing(client, db, 10)
     r = r.json()
     first_win = achievements.BY_CODE["first_win"].reward                       # birinchi g'alaba yutug'i
-    assert r["award"] == 10 and r["state"]["balance"] == 10 + first_win and r["state"]["xp"] == 50
+    assert r["award"] == 0 and r["state"]["balance"] == 0 and r["state"]["xp"] == 5
     assert [a["id"] for a in r["unlocked"]] == ["first_win"]
     assert r["state"]["results"][0]["id"] == sess["id"] and r["state"]["gameRewards"] == {"typing": 1}
     dup = finish(client, sess, typed="x", duration=30).json()
-    assert dup["state"]["balance"] == 10 + first_win and dup["state"]["xp"] == 50  # ikkinchi marta coin yo'q
+    assert dup["state"]["balance"] == 0 and dup["state"]["xp"] == 5  # ikkinchi marta coin yo'q
     assert dup["unlocked"] == []
     _, weak = play_typing(client, db, 2)
     weak = weak.json()
-    assert weak["award"] == 0 and weak["state"]["xp"] == 60 and "15 ta harf" in weak["message"]
+    assert weak["award"] == 0 and weak["state"]["xp"] == 5 and "15 ta harf" in weak["message"]
 
 
 def test_typing_word_level_accuracy(client, db, acct):
@@ -333,10 +333,11 @@ def test_daily_cap_three_rewards_per_game(client, db, acct):
     awards, msgs = [], []
     for _ in range(4):
         r = play_typing(client, db, 10)[1].json()
-        awards.append(r["award"]); msgs.append(r["message"])
-    assert awards == [10, 10, 10, 0] and "Bugungi mukofotlar olindi" in msgs[-1]
+        assert r["award"] == 0
+        awards.append(r["state"]["lightning"]); msgs.append(r["message"])
+    assert awards == [2, 4, 6, 6] and "Bugungi mukofotlar olindi" in msgs[-1]
     r = finish(client, play_questions(client, db, "quiz", 3)).json()
-    assert r["award"] == 10 and r["state"]["gameRewards"] == {"typing": 3, "quiz": 1}
+    assert r["award"] == 0 and r["state"]["gameRewards"] == {"typing": 3, "quiz": 1}
     assert r["state"]["dailyRewardLimit"] == 3
 
 
@@ -379,7 +380,7 @@ def test_memory_server_side_flips(client, db, acct):
         a, b = [i for i, c in enumerate(cards) if c == v]
         flip(a); assert flip(b).json()["match"] is True
     r = finish(client, sess, score=0, moves=0).json()
-    assert r["award"] == 8 and r["state"]["results"][0]["moves"] == 7
+    assert r["award"] == 0 and r["state"]["lightning"] == 2 and r["state"]["results"][0]["moves"] == 7
 
 
 def test_memory_move_limit(client, db, acct):
@@ -398,15 +399,15 @@ def test_memory_move_limit(client, db, acct):
 
 def test_all_game_rules(client, db, acct):
     assert finish(client, play_questions(client, db, "quiz", 2)).json()["award"] == 0
-    assert finish(client, play_questions(client, db, "bug", 2)).json()["award"] == 10
+    assert finish(client, play_questions(client, db, "bug", 2)).json()["state"]["results"][0]["lightning"] == 2
     assert finish(client, play_questions(client, db, "bug", 1)).json()["award"] == 0
-    for n, want in ((5, 15), (4, 0)):
+    for n, want in ((5, 2), (4, 0)):
         z = start_game(client, "ztype")
         for i in range(n):
             row=session_row(db,z["id"]);row.started_at=datetime.utcnow()-timedelta(seconds=2+i*3);db.commit()
             assert post(client,"/games/hit",{"session":z["id"],"index":i,"word":z["words"][i]}).status_code==200
         row=session_row(db,z["id"]);row.started_at=datetime.utcnow()-timedelta(seconds=60);db.commit()
-        assert finish(client, z, hits=list(range(n)), duration=60).json()["award"] == want
+        assert finish(client, z, hits=list(range(n)), duration=60).json()["state"]["results"][0]["lightning"] == want
 
 
 def test_battle_reward_needs_server_confirmed_win(client, db, acct):
@@ -422,7 +423,7 @@ def test_battle_reward_needs_server_confirmed_win(client, db, acct):
                        winner_account_id=acc.id, created_at=datetime.utcnow()))
     db.commit()
     real = {**claim, "id": "match-real-0001", "matchId": "match-real-0001"}
-    assert post(client, "/games/results", {"type": "game", "result": real}).json()["award"] == 15
+    assert post(client, "/games/results", {"type": "game", "result": real}).json()["state"]["results"][0]["lightning"] == 2
     # boshqa akkaunt g'olib bo'lgan bellashuvga da'vo qilib bo'lmaydi
     other = models.Student(full_name="Boshqa Bola", phone1="+998900000000", is_active=True)
     db.add(other)
@@ -468,7 +469,7 @@ def test_equip_toggle_and_ownership(client, db, acct, metodist_user):
     locked = post(client, "/shop/purchases", {"productId": "crown", "requestId": str(uuid.uuid4())})
     assert locked.status_code == 403 and "4-darajada" in locked.json()["message"]       # daraja qulfi
     acc = db.query(MinarAccount).one()
-    acc.xp = (C.PRODUCT_MIN_LEVEL["crown"] - 1) * C.LEVEL_XP
+    acc.xp = C.LEVEL_XP * 2 ** (C.PRODUCT_MIN_LEVEL["crown"] - 2)
     db.commit()
     for pid in ("cap", "crown"):
         assert post(client, "/shop/purchases", {"productId": pid, "requestId": str(uuid.uuid4())}).status_code == 200
@@ -539,6 +540,41 @@ def test_teacher_coins_and_attendance_flow_into_state(client, db, acct, metodist
 
 # ── Reyting ─────────────────────────────────────────────────────────────────
 
+def test_battle_text_changes_each_match_and_comes_from_the_course_bank():
+    texts = {games.battle_text("HTML", seed) for seed in range(40)}
+    assert len(texts) > 30
+    assert all(len(text.split()) == C.BATTLE_WORDS for text in texts)
+    known = set(games.bank.TYPING_WORDS["HTML"]["easy"] + games.bank.TYPING_WORDS["HTML"]["normal"])
+    assert all(set(text.split()) <= known for text in texts)
+
+
+def test_leaderboard_rows_carry_the_real_hero_and_outfit(client, db, metodist_token):
+    _, creds = new_account(client, db, metodist_token, name="Hero Egasi")
+    login(client, creds)
+    db.query(MinarAccount).filter_by(login_id=creds["login_id"]).update({"character": "foxy", "equipment": '{"hat": "crown"}'})
+    db.commit()
+    row = next(r for r in client.get("/space/leaderboard?metric=xp").json() if r["id"] == creds["login_id"])
+    assert row["character"] == "foxy" and row["equipment"]["hat"] == "crown"
+
+
+def test_test_account_is_not_pinned_and_ranking_uses_real_scores(client, db, metodist_token, monkeypatch):
+    _, creds = new_account(client, db, metodist_token, name="Aziz Karimov")
+    login(client, creds)
+    db.query(MinarAccount).filter_by(login_id=creds["login_id"]).update({"xp": 120})
+    db.commit()
+    student, _ = make_student(db, name="Minar Space")
+    leader = MinarAccount(student_id=student.id, login_id="MATEST", password_hash="x", course="HTML",
+                          character="robo", equipment="{}", xp=0, streak=0, is_test=True)
+    db.add(leader)
+    db.commit()
+    for metric in ("xp", "coins", "lightning"):
+        rows = client.get("/space/leaderboard?metric=" + metric).json()
+        assert [r["id"] for r in rows] == [creds["login_id"]]
+        assert rows[0]["xp"] == 120 and rows[0]["lightning"] == 0
+    assert client.get("/space/leaderboard?metric=xp&course=CSS").json() == []
+    assert service.balance_and_earned(db, leader) == (0, 0)
+
+
 def test_leaderboard_masks_names_filters_and_includes_self(client, db, metodist_token, metodist_user):
     _, c1 = new_account(client, db, metodist_token, "Azizbek Komilov")
     st2, c2 = new_account(client, db, metodist_token, "Malika Karimova", stage="fullstack")     # JavaScript
@@ -546,9 +582,10 @@ def test_leaderboard_masks_names_filters_and_includes_self(client, db, metodist_
     login(client, c1)
     post(client, "/rewards/check-in")
     rows = client.get("/space/leaderboard?metric=coins&period=all&course=all").json()
-    assert isinstance(rows, list) and [r["name"] for r in rows] == ["Malika K.", "Azizbek K."]
-    assert rows[0] == {"id": c2["login_id"], "name": "Malika K.", "avatar": "🤖", "coins": 80, "week": 80, "xp": 0,
-                       "active": 0, "course": "JavaScript", "rank": 1, "total": 2}
+    assert isinstance(rows, list) and [r["name"] for r in rows] == ["Azizbek K.", "Malika K."]
+    assert rows[1] == {"id": c2["login_id"], "name": "Malika K.", "avatar": "🤖", "character": "robo",
+                       "equipment": {"hat": None, "accessory": None, "outfit": None, "background": None}, "coins": 80, "week": 80, "xp": 0,
+                       "active": 0, "course": "JavaScript", "rank": 2, "total": 2, "lightning": 0, "level": 1}
     js = client.get("/space/leaderboard?course=JavaScript").json()
     assert [r["id"] for r in js] == [c2["login_id"]]
     assert client.get("/space/leaderboard?metric=hack").status_code == 400
@@ -639,10 +676,10 @@ def test_ws_typing_battle_full_flow_and_reward(client, ws_client, db, metodist_t
         assert start["sender"] == "server" and start["at"] > 1_700_000_000_000
         battles.ROOMS[room["roomId"]].start_ms -= 10_000                                 # vaqtni oldinga suramiz
         # Mehmon chala yozadi, xost hammasini yozadi
-        gws.send_json({"type": "progress", "matchId": start["matchId"], "typed": C.BATTLE_TEXT[:20], "score": 999, "done": True})
+        gws.send_json({"type": "progress", "matchId": start["matchId"], "typed": start["text"][:20], "score": 999, "done": True})
         prog = _recv_until(hws, "progress")
         assert prog["score"] == 20 and prog["done"] is False and prog["sender"] == "tab-guest"   # client `score`/`done` inobatga olinmadi
-        hws.send_json({"type": "progress", "matchId": start["matchId"], "typed": C.BATTLE_TEXT, "score": 1, "done": False})
+        hws.send_json({"type": "progress", "matchId": start["matchId"], "typed": start["text"], "score": 1, "done": False})
         res_h, res_g = _recv_until(hws, "result"), _recv_until(gws, "result")
         assert res_h == res_g and res_h["winnerId"] == host["login_id"] and res_h["draw"] is False
         match_id = start["matchId"]
@@ -653,7 +690,7 @@ def test_ws_typing_battle_full_flow_and_reward(client, ws_client, db, metodist_t
     win = {"id": match_id, "game": "battle", "mode": "typing", "won": True, "draw": False, "score": 130,
            "matchId": match_id, "practice": False}
     lose = {**win, "won": False}
-    assert post(hc, "/games/results", {"type": "game", "result": win}, key=match_id).json()["award"] == 15
+    assert post(hc, "/games/results", {"type": "game", "result": win}, key=match_id).json()["state"]["results"][0]["lightning"] == 2
     assert post(gc, "/games/results", {"type": "game", "result": {**win, "won": True}}, key=match_id).json()["award"] == 0  # yutqazgan da'vo qila olmaydi
     assert post(gc, "/games/results", {"type": "game", "result": {**lose, "id": "another-id-0001"}}).json()["award"] == 0
 
@@ -666,7 +703,7 @@ def test_ws_typing_speed_limit_blocks_instant_paste(client, ws_client, db, metod
         _recv_until(hws, "join")
         hws.send_json({"type": "start"})
         start = _recv_until(hws, "start")
-        hws.send_json({"type": "progress", "matchId": start["matchId"], "typed": C.BATTLE_TEXT})   # 0 soniyada butun matn
+        hws.send_json({"type": "progress", "matchId": start["matchId"], "typed": start["text"]})   # 0 soniyada butun matn
         gws.send_json({"type": "progress", "matchId": start["matchId"], "typed": "hel"})
         p = _recv_until(hws, "progress")
         assert p["sender"] == "g"                                    # faqat mehmonning xabari o'tdi

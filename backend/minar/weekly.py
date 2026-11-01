@@ -32,7 +32,7 @@ from .service import public_name
 log = logging.getLogger("ithub.minar.weekly")
 
 FIRST_WEEK = date(2026, 9, 28)   # turnir va hisobotlar shu haftadan boshlab (oldingi haftalar mukofotlanmaydi)
-PRIZES = (50, 30, 20)         # guruhdagi 1-, 2-, 3-o'rin (coin)
+PRIZES = (0, 0, 0)         # guruhdagi 1-, 2-, 3-o'rin (coin)
 MIN_POINTS = 50               # mukofot uchun haftalik minimal ochko
 OVERALL_LIMIT = 20
 
@@ -183,7 +183,7 @@ def finalize_week(db: Session, start: date) -> int:
                                title=f"Haftalik turnir: {place}-o‘rin", amount=coins, local_date=today,
                                created_at=now))
             notify.to_account(db, aid, "tournament", f"Haftalik turnirda {place}-o‘rin! 🏆",
-                              f"{gname} guruhida {p} ochko. +{coins} coin.", "tournament")
+                              f"{gname} guruhida {p} XP. Turnir yutug‘i!", "tournament")
             db.flush()
             achievements.evaluate(db, acc)
             given += 1

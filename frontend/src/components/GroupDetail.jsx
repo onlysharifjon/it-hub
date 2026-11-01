@@ -580,6 +580,7 @@ export default function GroupDetail({ group: groupProp, onBack, currentUser }) {
 
           {/* ── Yo'qlama tab ── */}
           {mainTab === 'attendance' && <>
+          <p className="text-muted" style={{ fontSize: 12, marginBottom: 14 }}>Joriy oyda «bor» belgilangan har bir dars uchun 1 coin avtomatik beriladi. O‘quvchining barcha guruhlaridagi jami oylik limiti — 70 coin. Takroriy saqlash qo‘shimcha coin bermaydi.</p>
           {/* Month filter */}
           <div className="toolbar" style={{ marginBottom: '1rem' }}>
             <select className="field-sm" value={month} onChange={e => setMonth(Number(e.target.value))}>

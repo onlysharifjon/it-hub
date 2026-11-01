@@ -122,13 +122,13 @@ def assess(db, acc, cid, payload):
                 p.review_level=min(4,p.review_level+1)
                 p.next_review_at=now+timedelta(days=(1,3,7,14)[p.review_level-1])
                 if first:
-                    award=5;acc.xp+=30
+                    award=0
                     db.add(MinarLedger(account_id=acc.id,ref_key=f'study:{cid}',kind='lesson',title=c.title,amount=award,local_date=tz.today().isoformat()))
             if not first and (due or daily_practice):
                 # One daily review credit qualifies the mission, with no repeat XP.
                 ref=f'review:{tz.today().isoformat()}'
                 if not db.query(MinarLedger.id).filter_by(account_id=acc.id,ref_key=ref).first():
-                    award=2
+                    award=0
                     db.add(MinarLedger(account_id=acc.id,ref_key=ref,kind='lesson',title='Bilimni takrorlash',amount=award,local_date=tz.today().isoformat()))
         else:
             p.next_review_at=now+timedelta(days=1)

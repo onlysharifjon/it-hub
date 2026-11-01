@@ -271,34 +271,21 @@ def test_academic_options_scoped_for_teacher(client, db, admin_user, teacher_use
 
 # ── Coinlar ──────────────────────────────────────────────────────────────────
 
-def test_teacher_coin_budget_50_per_student(client, db, teacher_user):
+def test_teacher_coin_budget_70_per_student(client, db, teacher_user):
     group = _mk_group(db, teacher_id=teacher_user.id)
     s1 = _mk_student(db, "Birinchi bola", "+998900000041")
     s2 = _mk_student(db, "Ikkinchi bola", "+998900000042")
     _enroll(db, group, s1); _enroll(db, group, s2)
     h = _h(client, "ustoz", "ustoz123")
-
-    # Budjet = 2 talaba × 50 = 100
-    s = client.get("/coins/summary", headers=h).json()
-    assert s["budget"] == 100 and s["spent"] == 0 and s["remaining"] == 100
-
-    # 60 coin beramiz — qoldiq 40
-    res = client.post("/coins/give", headers=h, json={
-        "student_id": s1.id, "group_id": group.id, "amount": 60, "reason": "Faol qatnashdi"})
-    assert res.status_code == 201, res.text
-    s = client.get("/coins/summary", headers=h).json()
-    assert s["spent"] == 60 and s["remaining"] == 40
-
-    # 41 coin — budjetdan oshadi -> 400
-    res = client.post("/coins/give", headers=h, json={
-        "student_id": s2.id, "group_id": group.id, "amount": 41})
-    assert res.status_code == 400
-    assert "qoldiq 40" in res.json()["detail"]
-
-    # 40 coin — bo'ladi, qoldiq 0
-    assert client.post("/coins/give", headers=h, json={
-        "student_id": s2.id, "group_id": group.id, "amount": 40}).status_code == 201
-    assert client.get("/coins/summary", headers=h).json()["remaining"] == 0
+    summary = client.get("/coins/summary", headers=h).json()
+    assert summary['budget'] == summary['remaining'] == 140
+    for student in [s1, s2]:
+        response = client.post('/coins/give', headers=h, json={
+            'student_id': student.id, 'group_id': group.id, 'amount': 70, 'reason': 'Uy vazifasi'})
+        assert response.status_code == 201, response.text
+    assert client.get('/coins/summary', headers=h).json()['remaining'] == 0
+    assert client.post('/coins/give', headers=h, json={
+        'student_id': s1.id, 'group_id': group.id, 'amount': 1}).status_code == 400
 
 
 def test_coin_budget_resets_next_month(client, db, teacher_user):
@@ -319,10 +306,10 @@ def test_coin_budget_resets_next_month(client, db, teacher_user):
                            group_id=group.id, amount=50, created_at=prev))
     db.commit()
 
-    # Joriy oy — qoldiq to'liq (1 talaba × 50)
+    # Joriy oy — qoldiq to‘liq (1 talaba × 70)
     h = _h(client, "ustoz", "ustoz123")
     s = client.get("/coins/summary", headers=h).json()
-    assert s["spent"] == 0 and s["remaining"] == 50
+    assert s["spent"] == 0 and s["remaining"] == 70
 
 
 def test_coin_teacher_foreign_group_forbidden(client, db, teacher_user):
@@ -335,11 +322,13 @@ def test_coin_teacher_foreign_group_forbidden(client, db, teacher_user):
     assert res.status_code == 403
 
 
-def test_admin_coins_unlimited_and_parent_sees(client, db, admin_user, hunter_user):
+def test_admin_grant_within_student_cap_and_parent_sees(client, db, admin_user, hunter_user):
     student = _mk_student(db, "Bola", "+998900000045")
     ah = _h(client, "admin", "admin123")
 
-    # Admin uchun budjet cheksiz
+    group = _mk_group(db)
+    _enroll(db, group, student)
+    # Admin has no personal pool, but the student cap still applies.
     s = client.get("/coins/summary", headers=ah).json()
     assert s["budget"] is None and s["remaining"] is None
 
@@ -348,14 +337,14 @@ def test_admin_coins_unlimited_and_parent_sees(client, db, admin_user, hunter_us
                              "student_ids": [student.id]}).json()
 
     client.post("/coins/give", headers=ah, json={
-        "student_id": student.id, "amount": 500, "reason": "Olimpiada g'olibi"})
+        "student_id": student.id, "group_id": group.id, "amount": 70, "reason": "Olimpiada g'olibi"})
 
     ptoken = client.post("/parent/auth/login", json={
         "username": acct["username"], "password": acct["generated_password"]}).json()["access_token"]
     ph = {"Authorization": f"Bearer {ptoken}"}
 
     coins = client.get(f"/parent/children/{student.id}/coins", headers=ph).json()
-    assert coins["total"] == 500
+    assert coins["total"] == 70
     assert coins["recent"][0]["reason"] == "Olimpiada g'olibi"
 
     notifs = client.get("/parent/notifications", headers=ph).json()
@@ -363,14 +352,16 @@ def test_admin_coins_unlimited_and_parent_sees(client, db, admin_user, hunter_us
 
     # Reyting
     totals = client.get("/coins/totals", headers=ah).json()
-    assert totals[0]["student_name"] == "Bola" and totals[0]["total"] == 500
+    assert totals[0]["student_name"] == "Bola" and totals[0]["total"] == 70
 
 
 def test_admin_deduct_coins(client, db, admin_user, teacher_user, hunter_user):
     student = _mk_student(db, "Bola", "+998900000046")
     ah = _h(client, "admin", "admin123")
 
-    client.post("/coins/give", headers=ah, json={"student_id": student.id, "amount": 100})
+    group = _mk_group(db)
+    _enroll(db, group, student)
+    client.post("/coins/give", headers=ah, json={"student_id": student.id, "group_id": group.id, "amount": 70})
 
     # Teacher yechay olmaydi
     assert client.post("/coins/deduct", headers=_h(client, "ustoz", "ustoz123"),
@@ -378,17 +369,17 @@ def test_admin_deduct_coins(client, db, admin_user, teacher_user, hunter_user):
 
     # Balansdan ko'p yechib bo'lmaydi
     res = client.post("/coins/deduct", headers=ah, json={"student_id": student.id, "amount": 101})
-    assert res.status_code == 400 and "100 coin bor" in res.json()["detail"]
+    assert res.status_code == 400 and "70 coin bor" in res.json()["detail"]
 
-    # 30 yechamiz — jami 70
+    # 30 yechamiz — jami 40
     res = client.post("/coins/deduct", headers=ah, json={
         "student_id": student.id, "amount": 30, "reason": "Intizom"})
     assert res.status_code == 201 and res.json()["amount"] == -30
     totals = client.get("/coins/totals", headers=ah).json()
     row = next(t for t in totals if t["student_id"] == student.id)
-    assert row["total"] == 70
+    assert row["total"] == 40
 
-    # Ota-ona ilovasida ham 70 va yechilgan yozuv ko'rinadi
+    # Ota-ona ilovasida ham 40 va yechilgan yozuv ko'rinadi
     acct = client.post("/parents", headers=_h(client, "hunter", "hunter123"),
                        json={"full_name": "Ona", "phone": "+998901112266",
                              "student_ids": [student.id]}).json()
@@ -396,5 +387,5 @@ def test_admin_deduct_coins(client, db, admin_user, teacher_user, hunter_user):
         "username": acct["username"], "password": acct["generated_password"]}).json()["access_token"]
     coins = client.get(f"/parent/children/{student.id}/coins",
                        headers={"Authorization": f"Bearer {ptoken}"}).json()
-    assert coins["total"] == 70
+    assert coins["total"] == 40
     assert coins["recent"][0]["amount"] == -30

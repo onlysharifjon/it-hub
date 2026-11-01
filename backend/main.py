@@ -4339,6 +4339,14 @@ def save_attendance(
     if actor.role == UserRole.teacher.value and group.teacher_id != actor.id:
         raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
 
+    from .reward_policy import attendance_grant, group_students, lock_grant_scope, lock_students
+    lock_grant_scope(db, actor, group_id)
+    members = {sid for (sid,) in group_students(db, group_id).all()}
+    if any(item.get("student_id") not in members or (item.get("is_present") is not None and type(item.get("is_present")) is not bool) for item in payload):
+        raise HTTPException(400, "Yo‘qlama a’zosi yoki holati noto‘g‘ri.")
+    if len({item["student_id"] for item in payload}) != len(payload):
+        raise HTTPException(400, "O‘quvchi yo‘qlamada takrorlangan.")
+    lock_students(db, sorted(item["student_id"] for item in payload))
     newly_absent: list[int] = []
     newly_present: list[int] = []
     for item in payload:
@@ -4370,6 +4378,9 @@ def save_attendance(
                 lesson_date=d,
                 is_present=present,
             ))
+
+    for item in sorted(payload, key=lambda item: item["student_id"]):
+        attendance_grant(db, actor, group_id, item["student_id"], d, item.get("is_present"))
 
     # Yo'q deb belgilangan bolalarning ota-onalariga bildirishnoma
     for sid in newly_absent:
@@ -4417,6 +4428,12 @@ def delete_attendance_date(
         if group.teacher_id != actor.id:
             raise HTTPException(status_code=403, detail="Bu guruh sizga tegishli emas")
 
+    from .reward_policy import attendance_grant, lock_grant_scope, lock_students
+    lock_grant_scope(db, actor, group_id, active=False)
+    rows = db.query(models.Attendance).filter_by(group_id=group_id, lesson_date=d).all()
+    lock_students(db, sorted(row.student_id for row in rows))
+    for row in sorted(rows, key=lambda row: row.student_id):
+        attendance_grant(db, actor, group_id, row.student_id, d, False)
     db.query(models.Attendance).filter(
         models.Attendance.group_id == group_id,
         models.Attendance.lesson_date == d,
@@ -5130,6 +5147,8 @@ def grade_homework_submission(homework_id: int, student_id: int, payload: schema
     st = db.query(models.Student).filter(models.Student.id == student_id).first()
     if not member or not st:
         raise HTTPException(status_code=404, detail="Talaba bu guruhda emas")
+    from .reward_policy import lock_grant_scope
+    lock_grant_scope(db, actor, hw.group_id)
     from .wallet import lock
     lock(db, student_id)
     db.query(MinarAccount).filter_by(student_id=student_id).with_for_update().first()
@@ -5700,11 +5719,11 @@ def delete_event(event_id: int, db: Session = Depends(get_db), actor: models.Use
 # berilganlar yig'indisi. Shu sabab har oyning 1-kunida qoldiq o'z-o'zidan
 # to'liq budjetga qaytadi — cron kerak emas.
 
-COINS_PER_STUDENT = int(os.getenv("COINS_PER_STUDENT", "50"))
+COINS_PER_STUDENT = 70
 
 
 def _teacher_coin_budget(db: Session, teacher_id: int) -> int:
-    """Oylik budjet: 50 coin × o'qituvchi guruhlaridagi har bir faol talaba."""
+    """Oylik budjet: 70 coin × o'qituvchi guruhlaridagi har bir faol talaba."""
     student_count = (
         db.query(func.count(func.distinct(models.GroupStudent.student_id)))
         .join(models.Group, models.Group.id == models.GroupStudent.group_id)
@@ -5743,13 +5762,15 @@ def _coins_spent_this_month(db: Session, teacher_id: int, now: Optional[datetime
 
 
 def _coin_tx_read(t: models.CoinTransaction) -> schemas.CoinTransactionRead:
+    from .reward_policy import coin_title
     return schemas.CoinTransactionRead(
         id=t.id, student_id=t.student_id,
         student_name=t.student.full_name if t.student else None,
         group_name=t.group.name if t.group else None,
         teacher_id=t.teacher_id,
         teacher_name=(t.teacher.full_name or t.teacher.username) if t.teacher else None,
-        amount=t.amount, reason=t.reason, created_at=t.created_at,
+        amount=t.amount, reason=coin_title(t.reason, t.amount), created_at=t.created_at,
+        automatic=(t.reason or "").startswith("Davomat:"),
     )
 
 
@@ -5767,18 +5788,10 @@ def coin_summary(db: Session = Depends(get_db), actor: models.User = Depends(req
 def _award_coins(db: Session, actor: models.User, *, student_id: int, group_id: Optional[int],
                  amount: int, reason: Optional[str]) -> models.CoinTransaction:
     """Talabaga coin berish (budjet nazorati, audit, ota-ona va Space bildirishnomasi). Commit qilmaydi."""
-    # Serialize budget checks across workers. Positive credits need no wallet balance check.
-    db.query(models.User.id).filter(models.User.id == actor.id).with_for_update().one()
-    # Teacher uchun oylik budjet nazorati (boshqa rollar cheklanmagan)
-    if actor.role == UserRole.teacher.value:
-        budget = _teacher_coin_budget(db, actor.id)
-        remaining = budget - _coins_spent_this_month(db, actor.id)
-        if amount > remaining:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Coin yetarli emas: qoldiq {max(0, remaining)} (har oy 1-sanada {budget} ga to'ladi)",
-            )
-
+    from .reward_policy import validate_grant
+    if (reason or "").startswith("Davomat:"):
+        raise HTTPException(400, "Davomat coini faqat yo‘qlama orqali beriladi.")
+    validate_grant(db, actor, student_id, group_id, amount)
     t = models.CoinTransaction(
         student_id=student_id, teacher_id=actor.id, group_id=group_id,
         amount=amount, reason=reason, created_at=datetime.utcnow(),
@@ -5855,6 +5868,9 @@ def cancel_coin_transaction(
         raise HTTPException(status_code=404, detail="Coin yozuvi topilmadi")
     if actor.role == UserRole.teacher.value and t.teacher_id != actor.id:
         raise HTTPException(status_code=403, detail="Faqat o'zingiz bergan coinni bekor qila olasiz")
+
+    if (t.reason or "").startswith("Davomat:"):
+        raise HTTPException(400, "Davomat coini yo‘qlama orqali tuzatiladi. Guruh yo‘qlamasidagi holatni o‘zgartiring.")
 
     write_audit(db, entity_type="coin", entity_id=t.id, action="cancel", changed_by_id=actor.id,
                 old_value={"student_id": t.student_id, "amount": t.amount, "reason": t.reason})
@@ -10022,3 +10038,8 @@ def staff_student_weekly_summary(student_id: int, week_start: Optional[date] = N
 def readyz():
     from .readiness import check
     return check()
+
+@app.get('/coins/budgets')
+def coin_group_budgets(db: Session = Depends(get_db), actor: models.User = Depends(require_attendance_editor)):
+    from .reward_policy import budgets
+    return budgets(db, actor)

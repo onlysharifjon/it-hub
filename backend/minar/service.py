@@ -126,7 +126,8 @@ def _history(db: Session, acc: MinarAccount, limit: int = 30) -> list[dict]:
     items: list[tuple[datetime, dict]] = []
     for t in coin_scope(db, db.query(CT).filter(CT.student_id == acc.student_id), CT).order_by(CT.created_at.desc()).limit(limit).all():
         reason = (t.reason or "").strip()
-        title = reason or ("O‘qituvchi mukofoti" if t.amount > 0 else "Coin yechildi")
+        from ..reward_policy import coin_title
+        title = coin_title(reason, t.amount)
         items.append((t.created_at, {
             "id": f"crm-{t.id}", "title": title, "amount": int(t.amount),
             "date": _local_date(t.created_at), "time": tz.isoformat(t.created_at), "kind": "reward",
@@ -163,7 +164,7 @@ def _attendance(db: Session, acc: MinarAccount) -> list[dict]:
         out.append({"id": a.id, "groupId": a.group_id, "group": group_name, "date": k,
             "status": "present" if here else "absent",
             "time": tz.to_local(first_seen[k]).strftime("%H:%M") if here and k in first_seen else None,
-            "coins": 0})
+            "coins": int(db.query(func.coalesce(func.sum(CT.amount),0)).filter_by(student_id=sid,reason=f"Davomat:{a.group_id}:{sid}:{k}").scalar() or 0)})
 
     return out
 
@@ -182,7 +183,7 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
             data = json.loads(r.payload)
         except ValueError:
             data = {}
-        results.append({**data, "id": r.result_id, "game": r.game, "date": r.local_date, "award": r.award})
+        results.append({**data, "id": r.result_id, "game": r.game, "date": r.local_date, "award": r.award,"xp":r.xp})
 
     purchases = [
         {"id": p.id, "productId": p.product_id, "name": p.name, "price": p.price,
@@ -197,9 +198,10 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
     checkins = [k[0].split(":", 1)[1] for k in db.query(MinarLedger.ref_key).filter(
         MinarLedger.account_id == acc.id, MinarLedger.kind == "checkin", MinarLedger.local_date >= (tz.today()-timedelta(days=90)).isoformat()).order_by(MinarLedger.local_date).all()]
 
-    game_rewards = {g: int(n) for g, n in coin_scope(db, db.query(MinarResult.game, func.count(MinarResult.id)).filter(
-        MinarResult.account_id == acc.id, MinarResult.local_date == today_key(), MinarResult.award > 0,
-    ), MinarResult).group_by(MinarResult.game).all()}
+    game_rewards = {}
+    for row in db.query(MinarResult).filter_by(account_id=acc.id,local_date=today_key()).all():
+        if json.loads(row.payload).get('lightning',0)>0:
+            game_rewards[row.game]=game_rewards.get(row.game,0)+1
 
     today = today_key()
     daily_games = [g for g, in db.query(MinarResult.game).filter(MinarResult.account_id==acc.id,MinarResult.local_date==today).distinct()]
@@ -218,6 +220,9 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
         "earned": earned,
         "earnedToday": earned_today(db, acc),
         "xp": acc.xp,
+        "lightning": lightning_total(db, acc.id),
+        "lightningBadges": lightning_total(db, acc.id) // 10,
+        "characterLevels": C.CHARACTER_LEVEL,
         "streak": effective_streak(acc),
         "lastLogin": acc.last_login,
         "owned": owned_hero_items(db, acc),
@@ -243,6 +248,9 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
 # ── Amallar ─────────────────────────────────────────────────────────────────
 
 def _credit(db: Session, acc: MinarAccount, amount: int, title: str, kind: str, ref_key: str) -> None:
+    # SPACE never grants spendable coins. Only CRM academic grants may do so.
+    if amount > 0:
+        raise MinarError(400, "Coin faqat ustoz va davomat orqali beriladi.")
     if amount > 0 and coin_phase(db)["testMode"]:
         title = "Test coinlari — dushanbagacha: " + title
     db.add(MinarLedger(
@@ -304,10 +312,14 @@ def act_checkin(db: Session, acc: MinarAccount) -> tuple[int, str]:
         acc.streak = 1
     else:
         acc.streak += 1
+    first_visit = not acc.last_login and not db.query(MinarLedger.id).filter_by(account_id=acc.id, ref_key="welcome-xp").first()
+    if first_visit:
+        acc.xp += C.WELCOME_XP
+        _credit(db, acc, 0, "Birinchi tashrif XP", "welcome", "welcome-xp")
     acc.last_login = today
     _credit(db, acc, C.CHECKIN_COIN, "Kunlik kirish", "checkin", f"checkin:{today}")
     _commit(db)
-    return C.CHECKIN_COIN, "Xush kelibsan! Bugungi +1 coin seniki."
+    return 0, "+20 XP — birinchi tashrif!" if first_visit else "Xush kelibsan!"
 
 
 def act_purchase(db: Session, acc: MinarAccount, product_id: Any, request_id: Any) -> tuple[int, str]:
@@ -368,6 +380,8 @@ def act_equip(db: Session, acc: MinarAccount, product_id: Any) -> tuple[int, str
 def act_character(db: Session, acc: MinarAccount, character: Any) -> tuple[int, str]:
     if character not in C.CHARACTERS:
         raise MinarError(400, "Qahramon topilmadi.")
+    if C.level_of(acc.xp) < C.CHARACTER_LEVEL[character]:
+        raise MinarError(403, "Bu qahramon uchun darajangiz yetarli emas.")
     acc.character = character
     _commit(db)
     return 0, "Yangi sarguzashtdoshing tayyor!"
@@ -385,7 +399,7 @@ def act_lesson(db: Session, acc: MinarAccount, index: Any) -> tuple[int, str]:
     acc.xp += C.LESSON_XP
     _credit(db, acc, C.LESSON_COIN, "Dars yakunlandi", "lesson", f"lesson:{acc.course}-{index}")
     _commit(db)
-    return C.LESSON_COIN, "Ajoyib! +5 coin va +50 XP."
+    return C.LESSON_COIN, "Dars yakunlandi. Coinni ustoz baholashdan keyin beradi."
 
 
 def act_homework(db: Session, acc: MinarAccount, homework_id: int, payload: Any) -> tuple[int, str]:
@@ -416,7 +430,7 @@ def act_quest(db: Session, acc: MinarAccount, quest: Any) -> tuple[int, str]:
     db.add(MinarQuest(account_id=acc.id, local_date=today, quest=quest, claimed_at=datetime.utcnow()))
     _credit(db, acc, C.QUEST_COIN, "Kunlik topshiriq", "quest", f"quest:{today}:{quest}")
     _commit(db)
-    return C.QUEST_COIN, "Topshiriq bajarildi! +5 coin."
+    return C.QUEST_COIN, "Topshiriq bajarildi!"
 
 
 # ── O'yin natijalari ────────────────────────────────────────────────────────
@@ -492,10 +506,15 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
     played = coin_scope(db, db.query(func.count(MinarResult.id)).filter(
         MinarResult.account_id == acc.id, MinarResult.local_date == today,
         MinarResult.game == game, MinarResult.award > 0), MinarResult).scalar() or 0
-    award = C.GAME_BASE[game] if eligible and played < C.DAILY_REWARDED_GAMES else 0
+    award = 0
+    # Reward counters use verified result payloads, never client-supplied values.
+    today_rows = db.query(MinarResult).filter_by(account_id=acc.id,local_date=today,game=game).all()
+    rewarded = sum(bool(json.loads(row.payload).get("lightning",0)) for row in today_rows)
+    lightning = C.LIGHTNING_WIN if eligible and rewarded < C.DAILY_REWARDED_GAMES else 0
+    payload["lightning"] = lightning
     attempts = coin_scope(db, db.query(func.count(MinarResult.id)).filter(MinarResult.account_id == acc.id,
         MinarResult.local_date == today, MinarResult.game == game), MinarResult).scalar() or 0
-    xp = (C.XP_WIN if eligible else C.XP_TRY) if attempts < 10 else 0
+    xp = C.XP_WIN if lightning else 0
 
     db.add(MinarResult(
         account_id=acc.id, result_id=rid, game=game, payload=json.dumps(payload),
@@ -505,17 +524,17 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
     if award:
         _credit(db, acc, award, f"{C.GAME_TITLE[game]} yutug‘i", "game", f"game:{rid}")
     _commit(db)
-    if award:
-        return award, f"Zo‘r natija! +{award} coin seniki."
+    if lightning:
+        return 0, f"Zo‘r natija! +{lightning}⚡ va +{xp} XP."
     if eligible:
-        return 0, "Bugungi mukofotlar olindi. Mashqni davom ettir — ertaga yana coin olasan!"
+        return 0, "Bugungi mukofotlar olindi. Mashqni davom ettir — ertaga yana ⚡ va XP olasan!"
     return 0, games.GOAL_HINT.get(game, "Yaxshi urinish! Yana mashq qilib ko‘r.")
 
 
 # ── Reyting ─────────────────────────────────────────────────────────────────
 
 def leaderboard(db: Session, me: MinarAccount, metric: str, period: str, course: str) -> list[dict]:
-    if metric not in ("coins", "active", "xp"):
+    if metric not in ("lightning", "xp", "coins", "active"):
         raise MinarError(400, "Reyting turi noto‘g‘ri.")
     if period not in ("week", "all"):
         raise MinarError(400, "Reyting davri noto‘g‘ri.")
@@ -524,14 +543,19 @@ def leaderboard(db: Session, me: MinarAccount, metric: str, period: str, course:
 
     week_start = tz.today() - timedelta(days=6)
     week_utc = tz.day_bounds(week_start)[0]
-    crm_all = {sid: int(v) for sid, v in coin_scope(db, db.query(CT.student_id, _positive(CT.amount)), CT).group_by(CT.student_id).all()}
+    crm_all = {sid: int(v) for sid, v in coin_scope(db, db.query(CT.student_id, func.coalesce(func.sum(CT.amount),0)), CT).group_by(CT.student_id).all()}
     crm_week = {sid: int(v) for sid, v in coin_scope(db, db.query(CT.student_id, _positive(CT.amount))
                 .filter(CT.created_at >= week_utc), CT).group_by(CT.student_id).all()}
-    led_all = {aid: int(v) for aid, v in coin_scope(db, db.query(MinarLedger.account_id, _positive(MinarLedger.amount)), MinarLedger)
+    led_all = {aid: int(v) for aid, v in coin_scope(db, db.query(MinarLedger.account_id, func.coalesce(func.sum(MinarLedger.amount),0)), MinarLedger)
                .group_by(MinarLedger.account_id).all()}
     led_week = {aid: int(v) for aid, v in coin_scope(db, db.query(MinarLedger.account_id, _positive(MinarLedger.amount))
                 .filter(MinarLedger.local_date >= week_start.isoformat()), MinarLedger).group_by(MinarLedger.account_id).all()}
 
+    lightning_by_account = {}
+    reward_query=db.query(MinarResult.account_id,MinarResult.payload)
+    if period=='week': reward_query=reward_query.filter(MinarResult.local_date>=week_start.isoformat())
+    for aid,payload in reward_query.all():
+        lightning_by_account[aid]=lightning_by_account.get(aid,0)+int(json.loads(payload).get('lightning',0))
     rows = []
     q = (
         db.query(MinarAccount, models.Student.full_name)
@@ -546,21 +570,41 @@ def leaderboard(db: Session, me: MinarAccount, metric: str, period: str, course:
             "id": acc.login_id,
             "name": public_name(full_name),
             "avatar": C.CHARACTER_EMOJI.get(acc.character, "🤖"),
+            "character": acc.character,
+            "equipment": get_equipment(acc),
             "coins": crm_all.get(acc.student_id, 0) + led_all.get(acc.id, 0),
             "week": crm_week.get(acc.student_id, 0) + led_week.get(acc.id, 0),
             "xp": acc.xp,
+            "level": C.level_of(acc.xp),
+            "lightning": lightning_by_account.get(acc.id,0),
             "active": effective_streak(acc),
             "course": acc.course,
         })
 
-    def value(r: dict) -> int:
-        return r["week"] if metric == "coins" and period == "week" else r["coins"] if metric == "coins" \
-            else r["active"] if metric == "active" else r["xp"]
-
-    rows.sort(key=lambda r: (-value(r), r["id"]))
+    rows.sort(key=lambda r: (-r["xp"],-r["lightning"],r["id"]) if metric=="xp" else (-r["lightning"],-r["xp"],r["id"]))
     for i, row in enumerate(rows, 1):
         row.update(rank=i, total=len(rows))
     top = rows[:50]
     if me.login_id not in {r["id"] for r in top}:
         top += [r for r in rows if r["id"] == me.login_id]
     return top
+
+
+def lightning_total(db, account_id, since=None):
+    q=db.query(MinarResult.payload).filter_by(account_id=account_id)
+    if since: q=q.filter(MinarResult.local_date>=since)
+    return sum(int(json.loads(payload).get('lightning',0)) for (payload,) in q.all())
+
+
+def public_profile(db, me, login_id):
+    # Only authenticated students can view self or the academy's top three.
+    allowed={row['id'] for metric in ('lightning','xp') for row in leaderboard(db,me,metric,'all','all')[:3]}
+    if login_id != me.login_id and login_id not in allowed:
+        raise MinarError(404, 'Ommaviy profil topilmadi.')
+    acc=db.query(MinarAccount).filter_by(login_id=login_id,is_active=True).first()
+    if not acc: raise MinarError(404, 'Profil topilmadi.')
+    st=db.query(models.Student).filter_by(id=acc.student_id).one()
+    coins,_=balance_and_earned(db,acc)
+    return {'id':acc.login_id,'name':st.full_name,'course':acc.course,'character':acc.character,
+            'level':C.level_of(acc.xp),'xp':acc.xp,'lightning':lightning_total(db,acc.id),'coins':coins,
+            'badges':lightning_total(db,acc.id)//10,'equipment':get_equipment(acc)}

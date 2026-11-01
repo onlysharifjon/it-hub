@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint,
+    BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint,
 )
 
 from ..database import Base
@@ -22,7 +22,7 @@ class MinarAccount(Base):
     active_group_id = Column(Integer, ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
     character = Column(String(10), nullable=False, default="robo")           # robo | foxy | drako
     equipment = Column(Text, nullable=False, default="{}")                   # {"hat": "cap", ...} JSON
-    xp = Column(Integer, nullable=False, default=0)
+    xp = Column(BigInteger, nullable=False, default=0)
     streak = Column(Integer, nullable=False, default=0)
     last_login = Column(String(10), nullable=True)                           # YYYY-MM-DD (Toshkent)
     is_active = Column(Boolean, nullable=False, default=True)

@@ -2,7 +2,7 @@
 
 Protokol — `minar-academy/API-CONTRACT.md` §7. Server hakam:
   * start vaqti, matchId, natija va g'olib serverda aniqlanadi (client `won` ga ishonilmaydi);
-  * typing: `typed` matni serverdagi `BATTLE_TEXT` bilan solishtiriladi, yozish tezligi chegaralanadi;
+  * typing: `typed` matni shu o'yin uchun serverda tuzilgan `room.text` bilan solishtiriladi, yozish tezligi chegaralanadi;
   * quiz: javob indeksi serverdagi to'g'ri javoblar bilan solishtiriladi;
   * server yuborgan barcha xabarlarda `sender: "server"` (frontend o'z `sender`ini e'tiborsiz qoldiradi).
 
@@ -131,6 +131,7 @@ class Room:
         self.paired = False
         self.match_id = ""
         self.questions = []
+        self.text = ""
         self.start_ms = 0
         self.prog = {"host": Prog(), "guest": Prog()}
         self.finished: set[str] = set()
@@ -326,11 +327,12 @@ async def _start(room: Room, conn: Conn) -> None:
     if conn.role != "host" or room.state != "ready" or not room.host or not room.guest:
         return
     room.questions = games.questions("quiz", room.course, secrets.randbits(31))
+    room.text = games.battle_text(room.course, secrets.randbits(31))
     room.state = "playing"
     room.match_id = str(uuid.uuid4())
     room.start_ms = int(time.time() * 1000) + 1000
     payload = {"type": "start", "sender": "server", "at": room.start_ms, "mode": room.mode,
-               "course": room.course, "matchId": room.match_id,
+               "course": room.course, "matchId": room.match_id, "text": room.text,
                "questions": [{"q":q["q"], "options":q["options"]} for q in room.questions]}
     await _send(room.host, payload)
     await _send(room.guest, payload)
@@ -361,13 +363,13 @@ async def _progress(room: Room, conn: Conn, m: dict) -> None:
     now_ms = int(time.time() * 1000)
     if room.mode == "typing":
         typed = m.get("typed")
-        if not isinstance(typed, str) or len(typed) > len(C.BATTLE_TEXT) + 5:
+        if not isinstance(typed, str) or len(typed) > len(room.text) + 5:
             return
         if len(typed) > MAX_TYPE_CPS * max(elapsed, 0) + 12:
             return                                   # inson yoza olmaydigan tezlik
-        correct = sum(1 for a, b in zip(typed, C.BATTLE_TEXT) if a == b)
-        p.score, p.progress = correct, correct / len(C.BATTLE_TEXT) * 100
-        p.done = typed == C.BATTLE_TEXT
+        correct = sum(1 for a, b in zip(typed, room.text) if a == b)
+        p.score, p.progress = correct, correct / len(room.text) * 100
+        p.done = typed == room.text
     else:
         qi, ai = m.get("questionIndex"), m.get("answerIndex")
         if any(isinstance(v, bool) or not isinstance(v, int) for v in (qi, ai)):

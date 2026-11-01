@@ -2,7 +2,7 @@
 
 Har yutuq bitta ko'rsatkichga (metric) va maqsadga (target) bog'langan. `evaluate` har
 holat o'zgartiruvchi amaldan keyin chaqiriladi (service.run): yangi ochilganlarini yozadi,
-mukofot coinini ledgerga qo'shadi va bildirishnoma yuboradi. Ko'rsatkichlar faqat hali
+coin bermasdan nishonni ochadi va bildirishnoma yuboradi. Ko'rsatkichlar faqat hali
 ochilmagan yutuqlar uchun hisoblanadi.
 """
 from __future__ import annotations
@@ -36,29 +36,29 @@ class Achievement:
 
 
 CATALOG: tuple[Achievement, ...] = (
-    Achievement("first_win", "Birinchi qadam", "Istalgan o‘yinda birinchi marta yut.", "sparkles", "wins", 1, 5),
-    Achievement("wins_25", "O‘yin ustasi", "O‘yinlarda 25 marta yut.", "gamepad", "wins", 25, 20),
-    Achievement("wins_100", "Afsona", "O‘yinlarda 100 marta yut.", "crown", "wins", 100, 50),
-    Achievement("streak_3", "Uch kun ketma-ket", "3 kun ketma-ket kir.", "flame", "streak", 3, 5),
-    Achievement("streak_7", "Haftalik qahramon", "7 kun ketma-ket kir.", "flame", "streak", 7, 15),
-    Achievement("streak_30", "Temir iroda", "30 kun ketma-ket kir.", "shield", "streak", 30, 50),
-    Achievement("quiz_perfect", "A’lochi", "Code Quizda 5 tadan 5 ta to‘g‘ri javob ber.", "graduation", "quiz_perfect", 1, 10),
-    Achievement("bug_perfect", "Bug ovchisi", "Bug Hunterda 3 ta xatoning hammasini top.", "bug", "bug_perfect", 1, 10),
-    Achievement("memory_fast", "Fil xotira", "Memory Matchni 8 urinish ichida yakunla.", "puzzle", "memory_fast", 1, 10),
-    Achievement("typing_fast", "Tez barmoqlar", "Minar Typeda 30 WPM tezlik va 90% aniqlik.", "keyboard", "typing_fast", 1, 15),
-    Achievement("battle_1", "Arena debyuti", "Battle arenada birinchi g‘alabani qo‘lga kirit.", "swords", "battle_wins", 1, 10),
-    Achievement("battle_10", "Arena chempioni", "Battle arenada 10 marta yut.", "trophy", "battle_wins", 10, 30),
-    Achievement("lessons_3", "Bilimdon", "3 ta mini-darsni yakunla.", "book", "lessons", 3, 10),
-    Achievement("level_5", "Yulduzli o‘quvchi", "5-darajaga chiq.", "star", "level", 5, 20),
-    Achievement("earned_500", "Coin yig‘uvchi", "Jami 500 coin yig‘.", "coins", "earned", 500, 10),
-    Achievement("homework_1", "Mas’uliyatli", "Birinchi uy vazifangni Space orqali topshir.", "homework", "homework_done", 1, 5),
-    Achievement("homework_10", "Intizomli", "10 ta uy vazifasini topshir.", "homework", "homework_done", 10, 25),
-    Achievement("homework_a", "A’lo baho", "Uy vazifasidan 90+ ball ol.", "graduation", "homework_excellent", 1, 15),
-    Achievement("code_1", "Birinchi kod", "Kod maydonida birinchi topshiriqni bajar.", "code", "code_solved", 1, 5),
-    Achievement("code_10", "Yosh dasturchi", "Kod maydonida 10 ta topshiriqni bajar.", "code", "code_solved", 10, 25),
-    Achievement("tournament_podium", "Shohsupada", "Haftalik turnirda 1–3-o‘rinni egalla.", "trophy", "tournament_podium", 1, 10),
-    Achievement("tournament_win", "Hafta chempioni", "Haftalik turnirda guruhingda 1-o‘rinni ol.", "crown", "tournament_wins", 1, 20),
-    Achievement("code_all", "Kod ustasi", "Kod maydonidagi barcha topshiriqlarni bajar.", "crown", "code_solved", len(playground.TASKS), 60),
+    Achievement("first_win", "Birinchi qadam", "Istalgan o‘yinda birinchi marta yut.", "sparkles", "wins", 1, 0),
+    Achievement("wins_25", "O‘yin ustasi", "O‘yinlarda 25 marta yut.", "gamepad", "wins", 25, 0),
+    Achievement("wins_100", "Afsona", "O‘yinlarda 100 marta yut.", "crown", "wins", 100, 0),
+    Achievement("streak_3", "Uch kun ketma-ket", "3 kun ketma-ket kir.", "flame", "streak", 3, 0),
+    Achievement("streak_7", "Haftalik qahramon", "7 kun ketma-ket kir.", "flame", "streak", 7, 0),
+    Achievement("streak_30", "Temir iroda", "30 kun ketma-ket kir.", "shield", "streak", 30, 0),
+    Achievement("quiz_perfect", "A’lochi", "Code Quizda 5 tadan 5 ta to‘g‘ri javob ber.", "graduation", "quiz_perfect", 1, 0),
+    Achievement("bug_perfect", "Bug ovchisi", "Bug Hunterda 3 ta xatoning hammasini top.", "bug", "bug_perfect", 1, 0),
+    Achievement("memory_fast", "Fil xotira", "Memory Matchni 8 urinish ichida yakunla.", "puzzle", "memory_fast", 1, 0),
+    Achievement("typing_fast", "Tez barmoqlar", "Minar Typeda 30 WPM tezlik va 90% aniqlik.", "keyboard", "typing_fast", 1, 0),
+    Achievement("battle_1", "Arena debyuti", "Battle arenada birinchi g‘alabani qo‘lga kirit.", "swords", "battle_wins", 1, 0),
+    Achievement("battle_10", "Arena chempioni", "Battle arenada 10 marta yut.", "trophy", "battle_wins", 10, 0),
+    Achievement("lessons_3", "Bilimdon", "3 ta mini-darsni yakunla.", "book", "lessons", 3, 0),
+    Achievement("level_5", "Yulduzli o‘quvchi", "5-darajaga chiq.", "star", "level", 5, 0),
+    Achievement("earned_500", "Coin yig‘uvchi", "Jami 500 coin yig‘.", "coins", "earned", 500, 0),
+    Achievement("homework_1", "Mas’uliyatli", "Birinchi uy vazifangni Space orqali topshir.", "homework", "homework_done", 1, 0),
+    Achievement("homework_10", "Intizomli", "10 ta uy vazifasini topshir.", "homework", "homework_done", 10, 0),
+    Achievement("homework_a", "A’lo baho", "Uy vazifasidan 90+ ball ol.", "graduation", "homework_excellent", 1, 0),
+    Achievement("code_1", "Birinchi kod", "Kod maydonida birinchi topshiriqni bajar.", "code", "code_solved", 1, 0),
+    Achievement("code_10", "Yosh dasturchi", "Kod maydonida 10 ta topshiriqni bajar.", "code", "code_solved", 10, 0),
+    Achievement("tournament_podium", "Shohsupada", "Haftalik turnirda 1–3-o‘rinni egalla.", "trophy", "tournament_podium", 1, 0),
+    Achievement("tournament_win", "Hafta chempioni", "Haftalik turnirda guruhingda 1-o‘rinni ol.", "crown", "tournament_wins", 1, 0),
+    Achievement("code_all", "Kod ustasi", "Kod maydonidagi barcha topshiriqlarni bajar.", "crown", "code_solved", len(playground.TASKS), 0),
 )
 BY_CODE = {a.code: a for a in CATALOG}
 
@@ -155,7 +155,7 @@ def _values(db: Session, acc: MinarAccount, metrics: set[str]) -> dict[str, int]
 
 def _public(a: Achievement, progress: int, unlocked_at: datetime | None) -> dict:
     return {"id": a.code, "title": a.title, "description": a.description, "icon": a.icon,
-            "target": a.target, "progress": min(progress, a.target), "reward": a.reward,
+            "target": a.target, "progress": min(progress, a.target), "reward": 0,
             "unlockedAt": tz.isoformat(unlocked_at) if unlocked_at else None}
 
 
@@ -172,11 +172,8 @@ def evaluate(db: Session, acc: MinarAccount) -> list[dict]:
         if values.get(a.metric, 0) < a.target:
             continue
         db.add(MinarAchievement(account_id=acc.id, code=a.code, unlocked_at=now))
-        if a.reward:
-            db.add(MinarLedger(account_id=acc.id, ref_key=f"achievement:{a.code}", kind="achievement",
-                               title=f"Yutuq: {a.title}", amount=a.reward, local_date=today, created_at=now))
         notify.to_account(db, acc.id, "achievement", f"Yangi yutuq: {a.title} 🏅",
-                          f"{a.description} +{a.reward} coin." if a.reward else a.description, "achievements")
+                          a.description, "achievements")
         new.append(_public(a, values[a.metric], now))
     return new
 

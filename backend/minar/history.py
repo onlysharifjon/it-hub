@@ -4,6 +4,7 @@ from sqlalchemy import select, union_all, literal, func, case
 from .. import models, tz
 from .models import MinarLedger, MinarResult
 from .errors import MinarError
+from ..reward_policy import coin_title
 
 
 def listing(db, acc, offset=0, month=None):
@@ -26,7 +27,7 @@ def listing(db, acc, offset=0, month=None):
     total, earned, spent = db.query(func.count(), func.coalesce(func.sum(case((q.c.amount>0,q.c.amount),else_=0)),0),
         func.coalesce(func.sum(case((q.c.amount<0,-q.c.amount),else_=0)),0)).select_from(q).filter(*filters).one()
     rows=db.query(q).filter(*filters).order_by(q.c.created_at.desc(),q.c.source,q.c.id.desc()).offset(max(0,offset)).limit(50).all()
-    return {'items':[{'id':f'{r.source}-{r.id}','title':r.title,'amount':r.amount,'time':tz.isoformat(r.created_at),
+    return {'items':[{'id':f'{r.source}-{r.id}','title':coin_title(r.title,r.amount) if r.source=='crm' else r.title,'amount':r.amount,'time':tz.isoformat(r.created_at),
                      'date':tz.to_local(r.created_at).date().isoformat()} for r in rows],
             'total':total,'earned':int(earned),'spent':int(spent),'next':offset+50 if offset+50<total else None}
 
@@ -41,7 +42,7 @@ def game_listing(db,acc,offset=0,month=None):
     total,xp,coins=q.with_entities(func.count(MinarResult.id),func.coalesce(func.sum(MinarResult.xp),0),func.coalesce(func.sum(MinarResult.award),0)).one()
     rows=q.order_by(MinarResult.created_at.desc(),MinarResult.id.desc()).offset(max(0,offset)).limit(50).all()
     return {'items':[{**json.loads(r.payload),'id':r.result_id,'date':r.local_date,'xp':r.xp,'award':r.award} for r in rows],
-            'total':total,'xp':int(xp),'coins':int(coins),'next':offset+50 if offset+50<total else None}
+            'total':total,'xp':int(xp),'coins':int(coins),'lightning':sum(int(json.loads(payload).get('lightning',0)) for (payload,) in q.with_entities(MinarResult.payload).all()),'next':offset+50 if offset+50<total else None}
 
 
 def attendance_listing(db,acc,month=None,offset=0):

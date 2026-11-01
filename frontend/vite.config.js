@@ -8,7 +8,7 @@ import react from '@vitejs/plugin-react'
 // bloklanadi va sahifada hamma ma'lumot bo'sh (null) ko'rinadi. Proxy server
 // tomonida ishlagani uchun CORS umuman qo'llanilmaydi.
 // Lokal backend bilan ishlash: DEV_API_TARGET=http://127.0.0.1:8001 npm run dev
-const DEV_API_TARGET = process.env.DEV_API_TARGET || 'https://crm.minaracademy.uz'
+const DEV_API_TARGET = process.env.DEV_API_TARGET || 'http://127.0.0.1:8001'
 const isLocalTarget = /localhost|127\.0\.0\.1/.test(DEV_API_TARGET)
 
 export default defineConfig({

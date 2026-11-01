@@ -6,7 +6,9 @@ narx/javobga ishonilmaydi. `data.js` o'zgarsa, shu fayl ham yangilanadi.
 from __future__ import annotations
 
 COURSES = ("HTML", "CSS", "JavaScript")
-CHARACTERS = ("robo", "foxy", "drako")
+CHARACTERS = ("robo", "foxy", "drako") + tuple(f"hero{i:02d}" for i in range(4, 51))
+CHARACTER_LEVEL = {key: 1 + i // 4 for i, key in enumerate(CHARACTERS)}
+LEADERBOARD_LEADER = "MATEST"
 CHARACTER_EMOJI = {"robo": "🤖", "foxy": "🦊", "drako": "🐲"}
 SLOTS = ("hat", "accessory", "outfit", "background")
 
@@ -32,15 +34,16 @@ UNLOCK_LEVEL = {"typing:normal": 2, "ztype:normal": 2, "ztype:hard": 4}
 PRODUCT_MIN_LEVEL = {"space": 2, "hoodie": 3, "crown": 4}
 
 LESSONS_PER_COURSE = 3
-LESSON_COIN = 5
-LESSON_XP = 50
-CHECKIN_COIN = 1
-QUEST_COIN = 5
+LESSON_COIN = 0
+LESSON_XP = 0
+CHECKIN_COIN = 0
+WELCOME_XP = 20
+QUEST_COIN = 0
 QUESTS = ("typing", "games", "lesson")
 
-LEVEL_XP = 300
-XP_WIN = 50
-XP_TRY = 10
+LEVEL_XP = 2000
+XP_WIN = 5
+XP_TRY = 0
 
 DAILY_REWARDED_GAMES = 3
 GAME_BASE = {"typing": 10, "ztype": 15, "quiz": 10, "memory": 8, "bug": 10, "battle": 15}
@@ -59,11 +62,8 @@ QUIZ_TOTAL = 5
 BUG_TOTAL = 3
 MEMORY_PAIRS = 6
 
-# Typing battle matni (frontend `battle.jsx` dagi `battleText` bilan bir xil)
-BATTLE_TEXT = (
-    "hello minar code your dreams learn html style with css create with javascript "
-    "every small step makes you a better developer"
-)
+# Typing battle matni har o'yinda games.battle_text orqali yangidan tuziladi
+BATTLE_WORDS = 18
 BATTLE_SECONDS = 60
 
 # CRM guruh bosqichi -> kurs (akkaunt yaratilganda standart; xodim o'zgartira oladi)
@@ -76,4 +76,7 @@ def default_course_for_stage(stage: str | None) -> str:
 
 
 def level_of(xp: int) -> int:
-    return xp // LEVEL_XP + 1
+    return 1 if xp < LEVEL_XP else 2 + (max(0, int(xp)) // LEVEL_XP).bit_length() - 1
+
+LIGHTNING_WIN = 2
+LIGHTNING_BADGE = 10

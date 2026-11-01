@@ -881,3 +881,5 @@ export const spaceStaff = {
     const url=URL.createObjectURL(await r.blob());const a=Object.assign(document.createElement('a'),{href:url,download:name});document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000)
   }
 }
+
+export async function fetchCoinBudgets() { return request('/coins/budgets') }

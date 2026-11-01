@@ -81,6 +81,12 @@ def typing_words(course: str, difficulty: str, seed: int) -> list[str]:
     return _sequence(random.Random(seed), bank.TYPING_WORDS[course][difficulty], TYPING_WORDS_COUNT)
 
 
+def battle_text(course: str, seed: int) -> str:
+    """Fresh words for each typing battle, drawn from the course's word bank."""
+    words = bank.TYPING_WORDS[course]
+    return " ".join(_sequence(random.Random(seed), words["easy"] + words["normal"], C.BATTLE_WORDS))
+
+
 def ztype_words(course: str, seed: int) -> list[str]:
     return _sequence(random.Random(seed), bank.ZTYPE_WORDS[course], 200)
 

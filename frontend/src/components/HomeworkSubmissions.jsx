@@ -3,7 +3,7 @@ import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faInbox, faCheck, faLink, faCoins } from '@fortawesome/free-solid-svg-icons'
 import Overlay from './ui/Overlay'
-import { fetchHomeworkSubmissions, gradeHomeworkSubmission } from '../api'
+import { fetchHomeworkSubmissions, gradeHomeworkSubmission, fetchCoinBudgets } from '../api'
 
 const STATUS = {
   submitted: { label: 'Tekshirish kerak', cls: 'pending' },
@@ -12,17 +12,22 @@ const STATUS = {
 }
 
 // Bitta talaba qatori: javob + baho/izoh/coin formasi
-function SubmissionRow({ homeworkId, row, onSaved }) {
+function SubmissionRow({ homeworkId, row, onSaved, allowance }) {
   const [grade, setGrade] = useState(row.grade ?? '')
   const [comment, setComment] = useState(row.teacher_comment || '')
   const [coins, setCoins] = useState(row.coins || 0)
   const [saving, setSaving] = useState(false)
   const st = STATUS[row.status] || STATUS.pending
+  const maxCoins = Math.min(20, allowance ?? 0)
 
   async function save() {
     const g = Number(grade)
     if (grade === '' || !Number.isInteger(g) || g < 0 || g > 100) {
       toast.error('Baho 0 dan 100 gacha butun son bo\'lsin')
+      return
+    }
+    if (!row.coins && (!Number.isInteger(Number(coins)) || Number(coins) < 0 || Number(coins) > maxCoins)) {
+      toast.error(`Hozir ko‘pi bilan ${maxCoins} coin berish mumkin`)
       return
     }
     setSaving(true)
@@ -62,10 +67,11 @@ function SubmissionRow({ homeworkId, row, onSaved }) {
           <input className="field" value={comment} maxLength={1000}
             onChange={e => setComment(e.target.value)} placeholder="Masalan: Zo'r, lekin alt yetishmayapti" />
         </label>
-        <label title={row.coins ? 'Coin berilgan' : 'Oylik budjetingizdan'}>
+        <label title={row.coins ? 'Coin berilgan' : 'O‘quvchining umumiy 70 coinlik oylik limitidan'}>
           <FontAwesomeIcon icon={faCoins} /> Coin
-          <input className="field" type="number" min={0} max={20} value={coins} disabled={!!row.coins}
+          <input className="field" type="number" min={0} max={maxCoins} step={1} value={coins} disabled={!!row.coins || maxCoins === 0}
             onChange={e => setCoins(e.target.value)} />
+          <small>{row.coins ? `${row.coins} coin berilgan` : allowance == null ? 'Limit yuklanmoqda…' : `Hozir: ${maxCoins} gacha`}</small>
         </label>
         <button className="button small" onClick={save} disabled={saving}>
           <FontAwesomeIcon icon={faCheck} /> {saving ? '...' : row.status === 'graded' ? 'Yangilash' : 'Baholash'}
@@ -77,8 +83,14 @@ function SubmissionRow({ homeworkId, row, onSaved }) {
 
 export default function HomeworkSubmissions({ homework, onClose, onChanged }) {
   const [rows, setRows] = useState(null)
+  const [budget, setBudget] = useState(null)
+
+  function refreshBudget() {
+    return fetchCoinBudgets().then(groups => setBudget(groups.find(g => g.id === homework.group_id) || null)).catch(() => setBudget(null))
+  }
 
   useEffect(() => {
+    refreshBudget()
     fetchHomeworkSubmissions(homework.id).then(setRows).catch(e => {
       toast.error(e.message)
       setRows([])
@@ -87,6 +99,7 @@ export default function HomeworkSubmissions({ homework, onClose, onChanged }) {
 
   function saved(updated) {
     setRows(rs => rs.map(r => (r.student_id === updated.student_id ? updated : r)))
+    refreshBudget()
     onChanged?.()
   }
 
@@ -108,7 +121,7 @@ export default function HomeworkSubmissions({ homework, onClose, onChanged }) {
                 <div style={{ fontSize: 13, marginBottom: 10 }}>
                   {waiting ? <strong>{waiting} ta javob tekshirilishi kerak</strong> : 'Yangi javob yo\'q'}
                 </div>
-                {rows.map(r => <SubmissionRow key={r.student_id} homeworkId={homework.id} row={r} onSaved={saved} />)}
+                {rows.map(r => <SubmissionRow key={r.student_id} homeworkId={homework.id} row={r} onSaved={saved} allowance={budget ? Math.min(budget.available, budget.students.find(s => s.id === r.student_id)?.remaining ?? 0) : null} />)}
               </>}
         </div>
       </div>

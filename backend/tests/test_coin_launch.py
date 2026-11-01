@@ -47,7 +47,7 @@ def test_reset_all_students_preserves_history_and_is_idempotent(client,db,acct,a
     with pytest.raises(ValueError):coin_launch.reset_all(db,keep_test_coins=False)
 
 
-def test_old_rates_and_games_continue_with_test_label(client,db,acct,monkeypatch):
+def test_games_reward_lightning_without_test_coins(client,db,acct,monkeypatch):
     now=datetime.utcnow()
     assert coin_launch.LAUNCH_AT==datetime(2026,11,1,19)
     monkeypatch.setattr(coin_launch,'LAUNCH_AT',now+timedelta(days=7))
@@ -55,10 +55,9 @@ def test_old_rates_and_games_continue_with_test_label(client,db,acct,monkeypatch
     coin_launch.reset_all(db,keep_test_coins=True);db.commit()
     _,response=play_typing(client,db,10)
     result=response.json()
-    assert result['award']==10 and result['state']['dailyRewardLimit']==3
+    assert result['award']==0 and result['state']['lightning']==2 and result['state']['dailyRewardLimit']==3
     assert result['state']['coinPhase']['testMode']
-    row=db.query(MinarLedger).filter_by(kind='game').one()
-    assert row.amount==10 and row.title.startswith('Test coinlari — dushanbagacha:')
+    assert db.query(MinarLedger).filter_by(kind='game').count()==0
     assert C.PRODUCTS['keyboard'][3]==1200 and C.PRODUCTS['stickers'][3]==80
     status=client.get('/space/coins/status')
     assert status.status_code==200 and status.headers['cache-control']=='no-store'

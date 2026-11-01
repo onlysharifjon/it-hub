@@ -223,3 +223,7 @@ def game_history(offset:int=0,month:Optional[str]=None,acc:MinarAccount=Account,
 def attendance_history(offset:int=0,month:Optional[str]=None,acc:MinarAccount=Account,db:Session=Depends(get_db)):
     from .history import attendance_listing
     return attendance_listing(db,acc,month,offset)
+
+@router.get('/profiles/{login_id}')
+def student_public_profile(login_id: str, acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return service.public_profile(db, acc, login_id)

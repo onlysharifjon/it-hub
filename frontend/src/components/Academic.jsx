@@ -1,3 +1,4 @@
+import CoinBudgetPanel from './CoinBudgetPanel'
 import { PageIntro } from './ui/Workspace'
 import Overlay from './ui/Overlay'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -13,7 +14,7 @@ import {
   fetchFeedbacks, createFeedback, updateFeedback, deleteFeedback,
   fetchCertificates, createCertificate, updateCertificate, deleteCertificate, uploadCertificatePdf,
   fetchEvents, createEvent, updateEvent, deleteEvent,
-  fetchCoinSummary, giveCoins, deductCoins, fetchCoinTransactions, fetchCoinTotals, cancelCoinTransaction,
+  fetchCoinBudgets, fetchCoinSummary, giveCoins, deductCoins, fetchCoinTransactions, fetchCoinTotals, cancelCoinTransaction,
 } from '../api'
 import DataTable, { RowActions } from './ui/DataTable'
 import Badge from './ui/Badge'
@@ -26,7 +27,7 @@ const EMPTY_GRADE = { group_id: '', student_id: '', subject: '', score: '', max_
 const EMPTY_FEEDBACK = { group_id: '', student_id: '', comment: '' }
 const EMPTY_CERT = { group_id: '', student_id: '', title: '', file_url: '', issued_at: '' }
 const EMPTY_EVENT = { title: '', description: '', event_date: '', event_time: '10:00', location: '' }
-const EMPTY_COIN = { group_id: '', student_id: '', amount: '', reason: '' }
+const EMPTY_COIN = { group_id: '', student_id: '', amount: '', reason: '', reward_type: 'homework' }
 
 function fmtDate(d) {
   if (!d) return '—'
@@ -47,7 +48,7 @@ export default function Academic({ currentUser }) {
   const isAdmin = currentUser?.role === 'admin'
   const canCertificates = ['admin', 'support_teacher', 'hunter'].includes(currentUser?.role)
 
-  const [tab, setTab] = useState('grades')
+  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get('tab') === 'coins' ? 'coins' : 'grades')
   const [options, setOptions] = useState([])
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
@@ -57,6 +58,7 @@ export default function Academic({ currentUser }) {
   const [form, setForm] = useState(EMPTY_GRADE)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [coinBudgets, setCoinBudgets] = useState([])
   const [coinSummary, setCoinSummary] = useState(null)
   const [coinTotals, setCoinTotals] = useState([])
   const [coinMode, setCoinMode] = useState('give')   // give | deduct (deduct — faqat admin)
@@ -84,10 +86,10 @@ export default function Academic({ currentUser }) {
       else if (tab === 'feedback') setItems(await fetchFeedbacks(sid))
       else if (tab === 'certificates') setItems(await fetchCertificates(sid))
       else if (tab === 'coins') {
-        const [txs, summary, totals] = await Promise.all([
-          fetchCoinTransactions(sid), fetchCoinSummary(), fetchCoinTotals(),
+        const [txs, summary, totals, budgets] = await Promise.all([
+          fetchCoinTransactions(sid), fetchCoinSummary(), fetchCoinTotals(), fetchCoinBudgets(),
         ])
-        setItems(txs); setCoinSummary(summary); setCoinTotals(totals)
+        setItems(txs); setCoinSummary(summary); setCoinTotals(totals); setCoinBudgets(budgets)
       }
       else setItems(await fetchEvents())
     } catch { toast.error("Yuklab bo'lmadi") }
@@ -101,6 +103,17 @@ export default function Academic({ currentUser }) {
       : tab === 'certificates' ? EMPTY_CERT : tab === 'coins' ? EMPTY_COIN : EMPTY_EVENT)
     setModal(true)
   }
+
+  function openCoinFor(groupId, studentId) {
+    setEditing(null)
+    setCoinMode('give')
+    setForm({ ...EMPTY_COIN, group_id: String(groupId), student_id: String(studentId) })
+    setModal(true)
+  }
+
+  const selectedCoinGroup = coinBudgets.find(g => g.id === Number(form.group_id))
+  const selectedCoinStudent = selectedCoinGroup?.students.find(s => s.id === Number(form.student_id))
+  const maxCoinGrant = Math.max(0, Math.min(70, selectedCoinStudent?.remaining ?? 70, selectedCoinGroup?.available ?? 70, isTeacher ? (coinSummary?.remaining ?? 70) : 70))
 
   function openDeduct() {
     setEditing(null)
@@ -167,18 +180,22 @@ export default function Academic({ currentUser }) {
         else await createCertificate({ ...p, student_id: parseInt(form.student_id) })
       } else if (tab === 'coins') {
         if (!form.student_id) throw new Error('Talabani tanlang')
-        const amount = parseInt(form.amount)
-        if (!amount || amount < 1) throw new Error('Coin miqdorini kiriting')
+        const amount = Number(form.amount)
+        if (!Number.isInteger(amount) || amount < 1) throw new Error('Coin miqdorini kiriting')
         if (coinMode === 'deduct') {
           await deductCoins({
             student_id: parseInt(form.student_id),
             amount, reason: form.reason.trim() || null,
           })
         } else {
+          if (!form.group_id) throw new Error('Guruhni tanlang')
+          if (!selectedCoinStudent) throw new Error('Faol guruh o‘quvchisini tanlang')
+          if (amount > maxCoinGrant) throw new Error(`Bu o‘quvchiga hozir ko‘pi bilan ${maxCoinGrant} coin berish mumkin`)
+          if (form.reason.trim().length < 3) throw new Error('Bajarilgan vazifa yoki test natijasini yozing')
           await giveCoins({
             student_id: parseInt(form.student_id),
-            group_id: form.group_id ? parseInt(form.group_id) : null,
-            amount, reason: form.reason.trim() || null,
+            group_id: parseInt(form.group_id),
+            amount, reason: `${form.reward_type === 'test' ? 'Test' : 'Uy vazifasi'}: ${form.reason.trim()}`,
           })
         }
       } else {
@@ -325,7 +342,7 @@ export default function Academic({ currentUser }) {
         key: 'actions', header: '', align: 'right', className: 'actions',
         render: t => (isAdmin || t.teacher_id === currentUser?.id) ? (
           <RowActions>
-            <button className="btn-icon danger" title="Bekor qilish" aria-label="Bekor qilish" onClick={() => handleCancelCoin(t)}>
+            <button className="btn-icon danger" disabled={t.automatic} title={t.automatic ? 'Yo‘qlama orqali tuzatiladi' : 'Bekor qilish'} aria-label="Bekor qilish" onClick={() => handleCancelCoin(t)}>
               <FontAwesomeIcon icon={faTrash} />
             </button>
           </RowActions>
@@ -401,6 +418,7 @@ export default function Academic({ currentUser }) {
 
   return (
     <div className="page academic-studio">
+      {import.meta.env.VITE_LOCAL_PREVIEW === 'true' && <div className="coin-local-preview">Lokal sinov · Guruhlar serverdan olingan, o‘quvchi ismlari almashtirilgan. Bu yerdagi amallar sinov bazasida saqlanadi.</div>}
       {confirmUI}
       <PageIntro title={<>Baholar va izohlar</>} description={<>Bu yerdagi baholar, izohlar va sertifikatlar ota-onalar mobil ilovasida ko'rinadi.</>} actions={<><div className="header-actions">
           {tab === 'coins' && isAdmin && (
@@ -427,31 +445,7 @@ export default function Academic({ currentUser }) {
         ))}
       </div></aside><div className="academic-content"><div className="academic-content-title"><h2>{TABS.find(t => t.key === tab)?.label}</h2><span>{items.length} yozuv</span></div>
 
-      {tab === 'coins' && coinSummary && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 12, margin: '12px 0',
-          padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)',
-        }}>
-          <FontAwesomeIcon icon={faCoins} style={{ color: 'var(--warning-text)', fontSize: 22 }} />
-          {coinSummary.budget === null ? (
-            <span>Bu oy berilgani: <strong>{coinSummary.spent}</strong> coin (siz uchun limit yo'q)</span>
-          ) : (
-            <>
-              <span>Hamyon: <strong>{coinSummary.remaining}</strong> / {coinSummary.budget} coin</span>
-              <div style={{ flex: 1, maxWidth: 220, height: 8, borderRadius: 4, background: 'var(--border)', overflow: 'hidden' }}>
-                <div style={{
-                  width: `${coinSummary.budget ? Math.round((coinSummary.remaining / coinSummary.budget) * 100) : 0}%`,
-                  height: '100%', background: 'var(--warning-text)', transition: 'width .3s',
-                }} />
-              </div>
-              <span className="text-muted" style={{ fontSize: 12 }}>
-                Har oy 1-sanada to'ladi (har bir talabangizga 50 coin)
-              </span>
-            </>
-          )}
-        </div>
-      )}
-
+      {tab === 'coins' && <CoinBudgetPanel groups={coinBudgets} loading={loading} isTeacher={isTeacher} onGive={openCoinFor} onRefresh={load} />}
       <DataTable
         columns={COLUMNS_BY_TAB[tab]}
         rows={items}
@@ -477,8 +471,8 @@ export default function Academic({ currentUser }) {
         <section>
           <div className="ui-section-head">
             <div className="ui-section-head-text">
-              <h2><FontAwesomeIcon icon={faAward} /> Coin reytingi</h2>
-              <p>Eng ko'p coin to'plagan 10 ta talaba</p>
+              <h2><FontAwesomeIcon icon={faCoins} /> O‘quvchilar coin balansi</h2>
+              <p>Coin balansi bo‘yicha 10 o‘quvchi. Space reytingi ⚡ va XP orqali hisoblanadi.</p>
             </div>
           </div>
           <DataTable
@@ -515,16 +509,15 @@ export default function Academic({ currentUser }) {
             <div className="modal-body">
               {tab !== 'events' && !editing && (
                 <>
-                  <label>Guruh {isTeacher ? '*' : ''}</label>
-                  <select className="field" value={form.group_id}
+                  <label htmlFor="academic-group">Guruh {isTeacher || tab === 'coins' ? '*' : ''}</label>
+                  <select id="academic-group" className="field" value={form.group_id}
                     onChange={e => setForm(p => ({ ...p, group_id: e.target.value, student_id: '' }))}>
-                    {!isTeacher && <option value="">— Guruhsiz —</option>}
-                    {isTeacher && <option value="">— Tanlang —</option>}
+                    <option value="">{isTeacher || tab === 'coins' ? '— Guruhni tanlang —' : '— Guruhsiz —'}</option>
                     {options.map(o => <option key={o.group_id} value={o.group_id}>{o.group_name}</option>)}
                   </select>
 
-                  <label>Talaba *</label>
-                  <select className="field" value={form.student_id}
+                  <label htmlFor="academic-student">Talaba *</label>
+                  <select id="academic-student" className="field" value={form.student_id}
                     onChange={e => {
                       const sid = e.target.value
                       setForm(p => {
@@ -580,22 +573,19 @@ export default function Academic({ currentUser }) {
 
               {tab === 'coins' && (
                 <>
-                  <label>Coin miqdori *</label>
-                  <input className="field" type="number" min="1" value={form.amount}
-                    onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
-                    placeholder={coinMode === 'give' && coinSummary?.remaining != null ? `Maks. ${coinSummary.remaining}` : '50'} />
-                  {coinMode === 'deduct' ? (
-                    <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 8px', color: 'var(--danger-text)' }}>
-                      Talabaning balansidan yechiladi — balans manfiy bo'lolmaydi. Ota-onaga bildirishnoma boradi.
-                    </p>
-                  ) : coinSummary?.remaining != null && (
-                    <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
-                      Hamyoningizda {coinSummary.remaining} coin qoldi — har oy 1-sanada to'ladi.
-                    </p>
-                  )}
-                  <label>Sabab</label>
-                  <input className="field" value={form.reason}
-                    placeholder={coinMode === 'deduct' ? "Masalan: intizom buzilishi" : "Masalan: darsda faol qatnashdi"}
+                  {coinMode === 'give' && <>
+                    <div className="coin-modal-allowance"><span>Hozir berish mumkin</span><strong>{selectedCoinStudent ? maxCoinGrant : '—'} coin</strong></div>
+                    <label htmlFor="coin-reward-type">Nima uchun beriladi?</label>
+                    <select id="coin-reward-type" className="field" value={form.reward_type} onChange={e => setForm(p => ({ ...p, reward_type: e.target.value }))}><option value="homework">Bajarilgan uy vazifasi</option><option value="test">Test natijasi</option></select>
+                    <p className="text-muted">Davomat uchun 1 coin yo‘qlamada «bor» belgilanganda avtomatik beriladi.</p>
+                  </>}
+                  <label htmlFor="coin-amount">Coin miqdori *</label>
+                  <input id="coin-amount" className="field" type="number" min="1" step="1" max={coinMode === 'give' ? maxCoinGrant : undefined} value={form.amount}
+                    onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} placeholder={coinMode === 'give' ? `Maks. ${maxCoinGrant}` : 'Miqdorni kiriting'} />
+                  {coinMode === 'deduct' && <p className="text-muted">Talabaning balansidan yechiladi. Balans manfiy bo‘lolmaydi.</p>}
+                  <label htmlFor="coin-reason">{coinMode === 'give' ? 'Bajarilgan ish / natija *' : 'Sabab'}</label>
+                  <input id="coin-reason" className="field" value={form.reason} maxLength={280}
+                    placeholder={coinMode === 'deduct' ? 'Tuzatish sababi' : 'Masalan: 5-dars vazifasi to‘liq bajarildi'}
                     onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} />
                 </>
               )}
@@ -670,7 +660,7 @@ export default function Academic({ currentUser }) {
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setModal(false)}>Bekor</button>
-              <button className="button" onClick={handleSave} disabled={saving || uploading}>
+              <button className="button" onClick={handleSave} disabled={saving || uploading || (tab === 'coins' && coinMode === 'give' && selectedCoinStudent && maxCoinGrant === 0)}>
                 {saving ? 'Saqlanmoqda...' : 'Saqlash'}
               </button>
             </div>

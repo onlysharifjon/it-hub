@@ -61,7 +61,7 @@ def test_deadline_rejects_late_answers_and_records_mistakes(client,db,acct,admin
     for i in range(3):
         db.refresh(m);m.last_answer_at=datetime.utcnow()-timedelta(seconds=11);db.commit()
         r=post(client,f'/academy/practice/{m.id}',{'answer':correct});assert r.status_code==200,r.text
-    assert r.json()['resolved'] and r.json()['award']==2
+    assert r.json()['resolved'] and r.json()['award']==0
     assert post(client,f'/academy/practice/{m.id}',{'answer':correct}).status_code==409
     assert db.query(MinarLedger).filter_by(ref_key=f'academy-fix:{m.id}').count()==1
 
@@ -87,7 +87,7 @@ def test_bonus_daily_limit_and_replay(client,db,acct,admin_token):
         r=client.get('/space/academy/bonus').json();assert r['id']
         assert client.get('/space/academy/bonus').json()['id']==r['id']
         b=db.get(AcademyBonus,r['id']);answer=json.loads(b.snapshot)['answer']
-        assert post(client,'/academy/bonus/'+r['id'],{'answer':answer}).json()['award']==1
+        assert post(client,'/academy/bonus/'+r['id'],{'answer':answer}).json()['award']==0
         assert post(client,'/academy/bonus/'+r['id'],{'answer':answer}).json()['award']==0
     assert client.get('/space/academy/bonus').json()['question'] is None
     assert db.query(MinarLedger).filter(MinarLedger.ref_key.like('academy-bonus:%')).count()==10

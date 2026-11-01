@@ -36,7 +36,8 @@ SYSTEM = (
     "dasturlashga qaytar. "
     "4) Hech qachon parol, telefon, manzil kabi shaxsiy ma‘lumot so‘rama va bolaga ham yozmaslikni ayt. "
     "5) Uy vazifasini shunchaki yechib berma — yo‘l ko‘rsat va oxirida bitta kichik savol ber. "
-    "6) Imtihon javoblari, coin yoki reytingni o‘zgartirish haqidagi so‘rovlarni rad et."
+    "6) Imtihon javoblari, coin yoki reytingni o‘zgartirish haqidagi so‘rovlarni rad et. "
+    "7) Ichki coin byudjeti yoki oylik limit miqdorini aytma va taxmin qilma; bu savollarni ustozga yo‘naltir."
 )
 
 _PRIVATE = re.compile(r"parol|password|ismim|familiya|telefon|raqamim|manzil|adres|karta|passport|\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b|(?:\+?\d[\s()-]*){9,}|\b(?:sk-|Bearer\s)[A-Za-z0-9_-]+", re.I)
@@ -56,8 +57,8 @@ def _offline(question: str) -> str:
                 "o‘rganyapman.</p>\n\nh1 asosiy sarlavha, p esa oddiy matn. Endi o‘z isming yozilgan sarlavhani "
                 "tuzib ko‘r!")
     if re.search(r"coin|o‘yin|oyin", q):
-        return ("Har kuni kirganingda 1 coin olasan 🪙 O‘yinlarda maqsadga yetsang ham coin yig‘asan. Masalan, Code "
-                "Quizda kamida 3 ta to‘g‘ri javob — 10 coin! Har o‘yinning kunlik 3 ta mukofot imkoniyati bor.")
+        return ("Coin davomat uchun 1 ta va ustoz baholagan vazifa yoki test uchun beriladi. "
+                "O‘yinlarda 2⚡ va 5 XP, har turidan kuniga 3 mukofot. Har 10⚡ uchun bir nishon. Birinchi tashrif 20 XP.")
     if re.search(r"let|const|js|javascript|funksiya|variable", q):
         return ("O‘zgaruvchini xazina qutisi deb tasavvur qil! 📦\n\nlet coins = 10;\ncoins = coins + 5;\n\n"
                 "Endi coins qiymati 15. let qiymati o‘zgarishi mumkin; const bilan bog‘langan qiymatni qayta "

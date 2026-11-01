@@ -2,7 +2,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List, Literal
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, conint
 
 from .models import UserRole, LeadStatus
 from . import uploads_sign
@@ -1692,11 +1692,12 @@ class CoinSummary(BaseModel):
 class CoinGive(BaseModel):
     student_id: int
     group_id: Optional[int] = None
-    amount: int = Field(..., ge=1, le=1000)   # bitta amalda maks. 1000; real chek — oylik budjet
+    amount: conint(strict=True, ge=1, le=70)  # student monthly cap is also checked transactionally
     reason: Optional[str] = Field(None, max_length=300)
 
 
 class CoinTransactionRead(BaseModel):
+    automatic: bool = False
     id: int
     student_id: int
     student_name: Optional[str] = None

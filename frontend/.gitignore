@@ -1,2 +1,5 @@
 .design-qa/
 dist/
+
+# This machine's preview options
+.env.local

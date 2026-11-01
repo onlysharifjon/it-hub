@@ -22,8 +22,8 @@ from .models import MinarAccount, MinarLedger, MinarPlaygroundSolve
 CODE_MAX = 20_000
 OUTPUT_LINES_MAX = 100
 OUTPUT_LINE_MAX = 300
-REWARD = 5
-XP = 30
+REWARD = 0
+XP = 0
 
 
 # ── HTML ────────────────────────────────────────────────────────────────────

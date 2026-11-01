@@ -60,7 +60,7 @@ def test_points_sum_week_sources_only(db, league):
     db.add(MinarLesson(account_id=a.id, course="HTML", lesson_index=0, completed_at=MID))
     db.add(MinarPlaygroundSolve(account_id=a.id, task_id="html-1", code="{}", xp=30, solved_at=MID))
     db.commit()
-    assert weekly.points(db, WEEK, [a.id]) == {a.id: 50 + 10 + 50 + 30}
+    assert weekly.points(db, WEEK, [a.id]) == {a.id: 50 + 10 + 30}
 
 
 def test_finalize_awards_top3_per_group_once(db, league):
@@ -70,7 +70,7 @@ def test_finalize_awards_top3_per_group_once(db, league):
     assert weekly.finalize_week(db, WEEK) == 3                                     # Eli < MIN_POINTS, Test — test akkaunt
     awards = {a.account_id: a for a in db.query(MinarTournamentAward).all()}
     assert [(awards[accs[n].id].place, awards[accs[n].id].coins) for n in ("Ali A", "Bek B", "Can C")] == \
-        [(1, 50), (2, 30), (3, 20)]
+        [(1, 0), (2, 0), (3, 0)]
     assert db.query(MinarLedger).filter(MinarLedger.kind == "tournament").count() == 3
     assert db.query(MinarNotification).filter(MinarNotification.kind == "tournament").count() == 3
     codes = {a.code for a in db.query(MinarAchievement).filter(MinarAchievement.account_id == accs["Ali A"].id)}
