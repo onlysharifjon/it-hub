@@ -7,6 +7,7 @@ from sqlalchemy import func, case
 from sqlalchemy.orm import joinedload
 from fastapi import HTTPException
 from . import models, tz
+from .coin_launch import active_since
 
 MONTHLY_COINS = 70
 
@@ -25,6 +26,9 @@ def positive(column):
 def month_query(db):
     now = tz.now()
     start, end = tz.month_bounds(now.year, now.month)
+    cutoff = active_since(db)
+    if cutoff:
+        start = max(start, cutoff)
     return db.query(models.CoinTransaction).filter(
         models.CoinTransaction.created_at >= start, models.CoinTransaction.created_at < end)
 
@@ -36,6 +40,9 @@ def student_usage(db, student_ids):
         return {}
     now = tz.now()
     start, end = tz.month_bounds(now.year, now.month)
+    cutoff = active_since(db)
+    if cutoff:
+        start = max(start, cutoff)
     crm = dict(month_query(db).filter(models.CoinTransaction.student_id.in_(student_ids))
                .with_entities(models.CoinTransaction.student_id, positive(models.CoinTransaction.amount))
                .group_by(models.CoinTransaction.student_id).all())

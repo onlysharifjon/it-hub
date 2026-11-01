@@ -5749,6 +5749,10 @@ def _coins_spent_this_month(db: Session, teacher_id: int, now: Optional[datetime
     """
     now = now or tz.now()
     start_utc, end_utc = tz.month_bounds(now.year, now.month)
+    from .coin_launch import active_since
+    cutoff = active_since(db)
+    if cutoff:
+        start_utc = max(start_utc, cutoff)
     from .minar.service import _positive
     return int(
         db.query(_positive(models.CoinTransaction.amount))

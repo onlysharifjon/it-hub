@@ -63,7 +63,6 @@ def points(db: Session, start: date, account_ids: list[int]) -> dict[int, int]:
     lo, hi = _bounds(start)
     ids = list(account_ids) or [0]
     queries = (
-        db.query(MinarProgress.account_id,func.count(MinarProgress.id)*30).filter(MinarProgress.account_id.in_(ids),MinarProgress.completed_at>=lo,MinarProgress.completed_at<hi).group_by(MinarProgress.account_id),
         db.query(MinarResult.account_id, func.sum(MinarResult.xp))
         .filter(MinarResult.account_id.in_(ids), MinarResult.created_at >= lo, MinarResult.created_at < hi)
         .group_by(MinarResult.account_id),

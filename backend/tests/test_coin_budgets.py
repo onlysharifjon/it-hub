@@ -64,7 +64,7 @@ def test_budget_reads_are_batched(db, classroom):
     finally:
         event.remove(db.bind, 'before_cursor_execute', record)
     assert len(rows) == 21
-    assert len(queries) <= 6
+    assert len(queries) <= 11  # fixed number of queries, including reset-epoch lookups
 
 
 def test_api_student_cap_survives_cancellation(client, db, classroom):
@@ -153,3 +153,24 @@ def test_attendance_coin_must_be_reversed_from_attendance(client, db, classroom)
     assert response.status_code == 400 and 'yo‘qlama' in response.json()['detail']
     save_attendance(group.id, tz.today().isoformat(), [{'student_id': student.id, 'is_present': False}], db, teacher)
     assert sum(t.amount for t in db.query(models.CoinTransaction)) == 0
+
+
+def test_manual_restart_restores_full_monthly_allowance(db, classroom):
+    from datetime import datetime, timedelta
+    from backend import models
+    from backend.reward_policy import student_used, budgets, validate_grant
+    from backend.main import _coins_spent_this_month
+    from backend.minar.models import MinarAccount, MinarLedger
+    teacher, student, group = classroom
+    now = datetime.utcnow()
+    db.add(models.CoinTransaction(student_id=student.id, teacher_id=teacher.id, group_id=group.id, amount=70, created_at=now-timedelta(minutes=1)))
+    account = MinarAccount(student_id=student.id, login_id='RESET1', password_hash='unused')
+    db.add(account); db.flush()
+    db.add(MinarLedger(account_id=account.id, ref_key='old-game', kind='game', title='Old game', amount=10, local_date=now.date().isoformat(), created_at=now-timedelta(minutes=1)))
+    db.add(models.CoinLaunch(id=1, reset_at=now, launch_at=now, keep_test_coins=False, balance_snapshot='{}'))
+    db.commit()
+    assert student_used(db, student.id) == 0
+    row = budgets(db, teacher)[0]
+    assert row['used'] == row['teacher_used'] == 0 and row['students'][0]['remaining'] == 70
+    assert _coins_spent_this_month(db, teacher.id) == 0
+    validate_grant(db, teacher, student.id, group.id, 70)
