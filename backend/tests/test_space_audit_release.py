@@ -24,8 +24,8 @@ def test_wallet_shared_and_reversal_preserves_history(client,db,acct,admin_token
     from backend.parent.service import build_coins
     st,_=acct;give_coins(db,st,100,admin_user.id)
     original=db.query(models.CoinTransaction).one()
-    assert post(client,'/shop/purchases',{'productId':'cap','requestId':'purchase-intent-01'}).status_code==200
-    assert build_coins(db,st).total==35
+    assert post(client,'/shop/purchases',{'productId':'planet-pyron','requestId':'purchase-intent-01'}).status_code==200
+    assert build_coins(db,st).total==10
     r=client.post('/coins/deduct',json={'student_id':st.id,'amount':40,'reason':'test'},headers=H(admin_token));assert r.status_code==400
     # Already spent grant cannot be reversed into a negative wallet.
     assert client.delete(f'/coins/transactions/{original.id}',headers=H(admin_token)).status_code==400
@@ -34,8 +34,8 @@ def test_wallet_shared_and_reversal_preserves_history(client,db,acct,admin_token
     db.expire_all();assert db.query(models.CoinTransaction).filter_by(id=original.id).first()
     assert db.query(models.CoinTransaction).filter_by(reversal_of_id=original.id).count()==1
     assert client.delete(f'/coins/transactions/{original.id}',headers=H(admin_token)).status_code==409
-    assert build_coins(db,st).total==35
-    assert service.balance_and_earned(db,account(db))==(35,100)
+    assert build_coins(db,st).total==10
+    assert service.balance_and_earned(db,account(db))==(10,100)
 
 
 def test_battle_fake_losses_and_duplicate_match_cannot_mint(client,db,acct):
@@ -210,11 +210,11 @@ def test_postgres_concurrent_crm_and_space_spend_never_overdraw(client,db,acct,a
     if db.bind.dialect.name!='postgresql':pytest.skip('PostgreSQL row locks required')
     st,creds=acct;give_coins(db,st,100,admin_user.id)
     student_client=TestClient(app);login(student_client,creds)
-    def buy():return student_client.post('/space/shop/purchases',json={'productId':'cap','requestId':'concurrent-purchase-1'}).status_code
+    def buy():return student_client.post('/space/shop/purchases',json={'productId':'planet-pyron','requestId':'concurrent-purchase-1'}).status_code
     def deduct():return TestClient(app).post('/coins/deduct',json={'student_id':st.id,'amount':60,'reason':'Concurrency test'},headers=H(admin_token)).status_code
     with ThreadPoolExecutor(max_workers=2) as pool:codes=list(pool.map(lambda fn:fn(),[buy,deduct]))
     assert sorted(codes) in ([200,400],[201,400]),codes
-    db.expire_all();assert service.balance_and_earned(db,account(db))[0] in (35,40)
+    db.expire_all();assert service.balance_and_earned(db,account(db))[0] in (10,40)
 
 
 def test_postgres_two_students_cannot_buy_last_stock_twice(client,db,acct,admin_user,metodist_token):

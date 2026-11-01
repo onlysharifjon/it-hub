@@ -10,7 +10,7 @@ CHARACTERS = ("robo", "foxy", "drako") + tuple(f"hero{i:02d}" for i in range(4, 
 CHARACTER_LEVEL = {key: 1 + i // 4 for i, key in enumerate(CHARACTERS)}
 LEADERBOARD_LEADER = "MATEST"
 CHARACTER_EMOJI = {"robo": "🤖", "foxy": "🦊", "drako": "🐲"}
-SLOTS = ("hat", "accessory", "outfit", "background")
+SLOTS = ("hat", "accessory", "outfit", "background", "planet")
 
 # id -> (nomi, kategoriya, slot, narx)
 PRODUCTS = {
@@ -27,6 +27,19 @@ PRODUCTS = {
     "mouse": ("Gaming sichqoncha", "space", None, 650),
     "keyboard": ("Mexanik klaviatura", "space", None, 1200),
 }
+
+# Legacy IDs remain readable for purchase history; new purchases use planets.
+RETIRED_HERO_PRODUCTS = frozenset(pid for pid, item in PRODUCTS.items() if item[1] == "hero")
+PLANETS = {
+    "planet-verdora": ("Verdora", 35),
+    "planet-pelagia": ("Pelagia", 60),
+    "planet-pyron": ("Pyron", 90),
+    "planet-glacia": ("Glacia", 120),
+    "planet-aurelia": ("Aurelia", 160),
+    "planet-ametis": ("Ametis", 220),
+    "planet-celestia": ("Celestia", 280),
+}
+PRODUCTS.update({pid: (name, "hero", "planet", price) for pid, (name, price) in PLANETS.items()})
 
 # Daraja bilan ochiladigan imkoniyatlar: "o'yin:qiyinlik" -> daraja
 UNLOCK_LEVEL = {"typing:normal": 2, "ztype:normal": 2, "ztype:hard": 4}

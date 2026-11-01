@@ -107,7 +107,7 @@ def test_login_and_bootstrap_shape(client, db, metodist_token):
     assert s["profile"] == {"id": creds["login_id"], "name": "Azizbek", "surname": "Komilov", "course": "HTML",
                             "group": "S-100", "character": "robo"}
     assert (s["balance"], s["earned"], s["xp"], s["streak"]) == (0, 0, 0, 0)
-    assert s["equipment"] == {"hat": None, "accessory": None, "outfit": None, "background": None}
+    assert s["equipment"] == {"hat": None, "accessory": None, "outfit": None, "background": None, "planet": None}
     for k in ("history", "attendance", "purchases", "results", "completedLessons", "claimedQuests", "checkins", "owned"):
         assert s[k] == []
 
@@ -444,50 +444,49 @@ def test_battle_reward_needs_server_confirmed_win(client, db, acct):
 def test_purchase_rules_server_price_and_idempotency(client, db, acct, metodist_user):
     st, _ = acct
     req = str(uuid.uuid4())
-    r = post(client, "/shop/purchases", {"type": "purchase", "productId": "cap", "requestId": req}, key=req)
+    r = post(client, "/shop/purchases", {"type": "purchase", "productId": "planet-verdora", "requestId": req}, key=req)
     assert r.status_code == 400 and "yetmaydi" in r.json()["message"]                  # coin yo'q
     give_coins(db, st, 100, metodist_user.id)                                          # o'qituvchi coini
     assert client.get("/space/students/me/bootstrap").json()["balance"] == 100
-    r = post(client, "/shop/purchases", {"type": "purchase", "productId": "cap", "requestId": req, "price": 1}, key=req)
+    r = post(client, "/shop/purchases", {"type": "purchase", "productId": "planet-verdora", "requestId": req, "price": 1}, key=req)
     s = r.json()["state"]
-    assert r.status_code == 200 and s["balance"] == 35 and s["owned"] == ["cap"]        # narx serverdan (65)
-    assert s["purchases"][0]["status"] == "delivered" and s["purchases"][0]["price"] == 65
+    assert r.status_code == 200 and s["balance"] == 65 and s["owned"] == ["planet-verdora"]        # narx serverdan (35)
+    assert s["purchases"][0]["status"] == "delivered" and s["purchases"][0]["price"] == 35
     assert s["earned"] == 100                                                          # sarf earned ni kamaytirmaydi
-    assert s["history"][0]["kind"] == "purchase" and s["history"][0]["amount"] == -65
-    replay = post(client, "/shop/purchases", {"type": "purchase", "productId": "cap", "requestId": req}, key=req).json()
-    assert replay["state"]["balance"] == 35 and len(replay["state"]["purchases"]) == 1  # ikki marta yechilmadi
-    again = post(client, "/shop/purchases", {"type": "purchase", "productId": "cap", "requestId": str(uuid.uuid4())})
+    assert s["history"][0]["kind"] == "purchase" and s["history"][0]["amount"] == -35
+    replay = post(client, "/shop/purchases", {"type": "purchase", "productId": "planet-verdora", "requestId": req}, key=req).json()
+    assert replay["state"]["balance"] == 65 and len(replay["state"]["purchases"]) == 1  # ikki marta yechilmadi
+    again = post(client, "/shop/purchases", {"type": "purchase", "productId": "planet-verdora", "requestId": str(uuid.uuid4())})
     assert again.status_code == 409                                                     # Hero buyumi bir marta
     assert post(client, "/shop/purchases", {"productId": "nope", "requestId": str(uuid.uuid4())}).status_code == 404
     assert post(client, "/shop/purchases", {"productId": "crown"}).status_code == 400   # requestId yo'q
 
 
-def test_equip_toggle_and_ownership(client, db, acct, metodist_user):
+def test_planet_selection_is_owned_and_idempotent(client, db, acct, metodist_user):
     st, _ = acct
     give_coins(db, st, 500, metodist_user.id)
-    assert post(client, "/avatar/equipment", {"type": "equip", "productId": "cap"}).status_code == 400    # olinmagan
-    locked = post(client, "/shop/purchases", {"productId": "crown", "requestId": str(uuid.uuid4())})
-    assert locked.status_code == 403 and "4-darajada" in locked.json()["message"]       # daraja qulfi
-    acc = db.query(MinarAccount).one()
-    acc.xp = C.LEVEL_XP * 2 ** (C.PRODUCT_MIN_LEVEL["crown"] - 2)
-    db.commit()
-    for pid in ("cap", "crown"):
-        assert post(client, "/shop/purchases", {"productId": pid, "requestId": str(uuid.uuid4())}).status_code == 200
-    eq = post(client, "/avatar/equipment", {"type": "equip", "productId": "cap"}).json()["state"]["equipment"]
-    assert eq["hat"] == "cap"
-    eq = post(client, "/avatar/equipment", {"type": "equip", "productId": "crown"}).json()["state"]["equipment"]
-    assert eq["hat"] == "crown"                                                          # almashtiradi
-    eq = post(client, "/avatar/equipment", {"type": "equip", "productId": "crown"}).json()["state"]["equipment"]
-    assert eq["hat"] is None                                                             # yechadi
-    assert post(client, "/avatar/equipment", {"type": "equip", "productId": "mouse"}).status_code == 400  # sovg'a kiyilmaydi
+    assert post(client, "/avatar/equipment", {"productId": "planet-verdora"}).status_code == 400
+    for pid in ("planet-verdora", "planet-aurelia"):
+        r = post(client, "/shop/purchases", {"productId": pid, "requestId": str(uuid.uuid4())})
+        assert r.status_code == 200, r.text
+        assert r.json()["state"]["equipment"]["planet"] == pid
+    balance = r.json()["state"]["balance"]
+    for pid in ("planet-verdora", "planet-aurelia", "planet-aurelia"):
+        s = post(client, "/avatar/equipment", {"productId": pid}).json()["state"]
+        assert s["equipment"]["planet"] == pid
+        assert s["balance"] == balance
+    assert post(client, "/avatar/equipment", {"productId": "mouse"}).status_code == 400
+    for pid in C.RETIRED_HERO_PRODUCTS:
+        assert post(client, "/shop/purchases", {"productId": pid, "requestId": str(uuid.uuid4())}).status_code == 410
 
 
 def test_character_change_keeps_everything(client, db, acct, metodist_user):
     st, _ = acct
     give_coins(db, st, 100, metodist_user.id)
-    post(client, "/shop/purchases", {"productId": "cap", "requestId": str(uuid.uuid4())})
+    post(client, "/shop/purchases", {"productId": "planet-verdora", "requestId": str(uuid.uuid4())})
     before = client.get("/space/students/me/bootstrap").json()
     after = post(client, "/avatar/character", {"type": "character", "character": "drako"}).json()["state"]
+    assert after["equipment"] == before["equipment"]
     assert after["profile"]["character"] == "drako"
     assert (after["balance"], after["owned"], after["purchases"]) == (before["balance"], before["owned"], before["purchases"])
     assert post(client, "/avatar/character", {"character": "godzilla"}).status_code == 400
@@ -584,7 +583,7 @@ def test_leaderboard_masks_names_filters_and_includes_self(client, db, metodist_
     rows = client.get("/space/leaderboard?metric=coins&period=all&course=all").json()
     assert isinstance(rows, list) and [r["name"] for r in rows] == ["Azizbek K.", "Malika K."]
     assert rows[1] == {"id": c2["login_id"], "name": "Malika K.", "avatar": "🤖", "character": "robo",
-                       "equipment": {"hat": None, "accessory": None, "outfit": None, "background": None}, "coins": 80, "week": 80, "xp": 0,
+                       "equipment": {"hat": None, "accessory": None, "outfit": None, "background": None, "planet": None}, "coins": 80, "week": 80, "xp": 0,
                        "active": 0, "course": "JavaScript", "rank": 2, "total": 2, "lightning": 0, "level": 1}
     js = client.get("/space/leaderboard?course=JavaScript").json()
     assert [r["id"] for r in js] == [c2["login_id"]]

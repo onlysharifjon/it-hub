@@ -95,7 +95,12 @@ def get_equipment(acc: MinarAccount) -> dict:
         raw = json.loads(acc.equipment or "{}")
     except ValueError:
         raw = {}
-    return {slot: (raw.get(slot) if isinstance(raw.get(slot), str) else None) for slot in C.SLOTS}
+    if not isinstance(raw, dict):
+        raw = {}
+    eq = {slot: (raw.get(slot) if isinstance(raw.get(slot), str) else None) for slot in C.SLOTS}
+    if eq["planet"] not in C.PLANETS:
+        eq["planet"] = None
+    return eq
 
 
 def owned_hero_items(db: Session, acc: MinarAccount) -> list[str]:
@@ -336,6 +341,8 @@ def act_purchase(db: Session, acc: MinarAccount, product_id: Any, request_id: An
     product = C.PRODUCTS.get(product_id) if isinstance(product_id, str) else None
     if not product:
         raise MinarError(404, "Bu mahsulot topilmadi.")
+    if product_id in C.RETIRED_HERO_PRODUCTS:
+        raise MinarError(410, "Bu buyum sotuvdan olindi. Hero shopdan sayyora tanlang.")
     name, category, _slot, price = product
     if category == "hero" and product_id in owned_hero_items(db, acc):
         raise MinarError(409, "Bu buyum senda bor.")
@@ -344,7 +351,7 @@ def act_purchase(db: Session, acc: MinarAccount, product_id: Any, request_id: An
         raise MinarError(403, f"Bu buyum {need}-darajada ochiladi. XP yig‘ishda davom et!")
     balance, _ = balance_and_earned(db, acc)
     if balance < price:
-        raise MinarError(400, "Coinlaring hali yetmaydi. Yana bir o‘yin o‘ynab ko‘r!")
+        raise MinarError(400, "Coinlaring hali yetmaydi. Darslarda qatnashib, vazifalarni bajarib coin yig‘.")
 
     if category == "space":
         stock = db.query(MinarStock).filter_by(product_id=product_id).with_for_update().first()
@@ -359,9 +366,13 @@ def act_purchase(db: Session, acc: MinarAccount, product_id: Any, request_id: An
         name=name, price=price, status="delivered" if category == "hero" else "pending",
         local_date=today_key(), created_at=now, updated_at=now,
     ))
+    if _slot == "planet":
+        eq = get_equipment(acc)
+        eq["planet"] = product_id
+        acc.equipment = json.dumps(eq)
     _commit(db)
     if category == "hero":
-        return 0, "Xarid muborak! Qahramoningga kiydirib ko‘r."
+        return 0, "Sayyora seniki! Profilingda yangi olam ochildi."
     return 0, "Buyurtma qabul qilindi! Tayyor bo‘lganda “Olib ketish mumkin” holati chiqadi."
 
 
@@ -371,7 +382,7 @@ def act_equip(db: Session, acc: MinarAccount, product_id: Any) -> tuple[int, str
         raise MinarError(400, "Avval buyumni xarid qil.")
     slot = product[2]
     eq = get_equipment(acc)
-    eq[slot] = None if eq.get(slot) == product_id else product_id
+    eq[slot] = product_id if slot == "planet" else None if eq.get(slot) == product_id else product_id
     acc.equipment = json.dumps(eq)
     _commit(db)
     return 0, "Qahramoning yangilandi!"
@@ -597,14 +608,24 @@ def lightning_total(db, account_id, since=None):
 
 
 def public_profile(db, me, login_id):
-    # Only authenticated students can view self or the academy's top three.
-    allowed={row['id'] for metric in ('lightning','xp') for row in leaderboard(db,me,metric,'all','all')[:3]}
-    if login_id != me.login_id and login_id not in allowed:
-        raise MinarError(404, 'Ommaviy profil topilmadi.')
-    acc=db.query(MinarAccount).filter_by(login_id=login_id,is_active=True).first()
-    if not acc: raise MinarError(404, 'Profil topilmadi.')
-    st=db.query(models.Student).filter_by(id=acc.student_id).one()
-    coins,_=balance_and_earned(db,acc)
-    return {'id':acc.login_id,'name':st.full_name,'course':acc.course,'character':acc.character,
-            'level':C.level_of(acc.xp),'xp':acc.xp,'lightning':lightning_total(db,acc.id),'coins':coins,
-            'badges':lightning_total(db,acc.id)//10,'equipment':get_equipment(acc)}
+    # Only authenticated students see the public whitelist. Planet ownership opts
+    # a profile into visits; phone, group, surname and account settings stay private.
+    acc = db.query(MinarAccount).filter_by(login_id=login_id, is_active=True).first()
+    if not acc:
+        raise MinarError(404, 'Profil topilmadi.')
+    st = db.query(models.Student).filter_by(id=acc.student_id).one()
+    eq = get_equipment(acc)
+    if login_id != me.login_id:
+        if acc.is_test or not st.is_active or st.is_archived:
+            raise MinarError(404, 'Ommaviy profil topilmadi.')
+        has_planet = eq['planet'] and eq['planet'] in owned_hero_items(db, acc)
+        if not has_planet:
+            allowed = {row['id'] for metric in ('lightning', 'xp')
+                       for row in leaderboard(db, me, metric, 'all', 'all')[:3]}
+            if login_id not in allowed:
+                raise MinarError(404, 'Ommaviy profil topilmadi.')
+    coins, _ = balance_and_earned(db, acc)
+    lightning = lightning_total(db, acc.id)
+    return {'id': acc.login_id, 'name': st.full_name if login_id == me.login_id else public_name(st.full_name),
+            'course': acc.course, 'character': acc.character, 'level': C.level_of(acc.xp),
+            'xp': acc.xp, 'lightning': lightning, 'coins': coins, 'badges': lightning // 10, 'equipment': eq}
