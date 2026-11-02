@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from .. import models, security
 from . import table_rules as rules
-from .models import MinarAccount, MinarTableRoom as Room, MinarTablePlayer as Player
+from .models import MinarAccount, MinarTableRoom as Room, MinarTablePlayer as Player, MinarResult
 from .errors import MinarError
 
 
@@ -62,6 +62,14 @@ def _public(db, acc, room):
 def listing(db, acc, game):
     rules.require(isinstance(game, str) and game in rules.GAMES)
     active = _active(db, acc)
+    if not active:
+        # A disconnect during the final move must not lose the result or its reward.
+        claimed = db.query(MinarResult.id).filter(
+            MinarResult.account_id == acc.id,
+            MinarResult.result_id == 'table:' + Room.id).exists()
+        active = db.query(Room).join(Player, Player.room_id == Room.id).filter(
+            Player.account_id == acc.id, Room.game == game,
+            Room.status == 'finished', ~claimed).order_by(Room.updated_at.desc()).first()
     # Codes are intentionally private; students share a code with classmates.
     return {'active': _public(db, acc, active) if active else None}
 

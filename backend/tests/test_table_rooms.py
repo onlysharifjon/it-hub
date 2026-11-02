@@ -131,8 +131,10 @@ def test_sudoku_unique_hidden_solution_and_server_checked(client, db, acct):
     assert room['status']=='playing'
     room=action(client,room,'solve',grid=stored['solution'])
     assert room['status']=='finished'
+    assert client.get('/space/tables?game=sudoku').json()['active']['id']==room['id']
     state=post(client,'/games/results',{'result':{'roomId':room['id']}}).json()['state']
     assert state['xp']==5 and state['lightning']==2 and state['balance']==0
+    assert client.get('/space/tables?game=sudoku').json()['active'] is None
 
 
 def test_host_transfer_capacity_and_abort_no_reward(client, db, acct, metodist_token):
