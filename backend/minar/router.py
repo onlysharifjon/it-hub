@@ -227,3 +227,27 @@ def attendance_history(offset:int=0,month:Optional[str]=None,acc:MinarAccount=Ac
 @router.get('/profiles/{login_id}')
 def student_public_profile(login_id: str, acc: MinarAccount = Account, db: Session = Depends(get_db)):
     return service.public_profile(db, acc, login_id)
+
+
+# Durable student game rooms (CSRF checked by current_account for all POSTs).
+from . import tables
+
+@router.get('/tables')
+def table_list(game: str, acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return tables.listing(db, acc, game)
+
+@router.post('/tables')
+def table_create(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return tables.create(db, acc, payload)
+
+@router.post('/tables/{code}/join')
+def table_join(code: str, acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return tables.join(db, acc, code)
+
+@router.get('/tables/{code}')
+def table_get(code: str, acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return tables.get(db, acc, code)
+
+@router.post('/tables/{code}/actions')
+def table_action(code: str, payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return tables.act(db, acc, code, payload)

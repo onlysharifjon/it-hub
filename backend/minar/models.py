@@ -361,3 +361,27 @@ class MinarStock(Base):
     product_id = Column(String(30), primary_key=True)
     quantity = Column(Integer, nullable=False, default=0)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class MinarTableRoom(Base):
+    """Durable, server-authoritative board/card room; state contains private hands."""
+    __tablename__ = 'minar_table_rooms'
+    id = Column(String(36), primary_key=True)
+    code = Column(String(8), nullable=False, unique=True, index=True)
+    game = Column(String(12), nullable=False)
+    host_id = Column(Integer, ForeignKey('minar_accounts.id', ondelete='CASCADE'), nullable=False)
+    status = Column(String(12), nullable=False, default='waiting', index=True)
+    state = Column(Text, nullable=False, default='{}')
+    version = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+
+class MinarTablePlayer(Base):
+    __tablename__ = 'minar_table_players'
+    __table_args__ = (UniqueConstraint('room_id', 'account_id', name='uq_table_member'),)
+    id = Column(Integer, primary_key=True)
+    room_id = Column(String(36), ForeignKey('minar_table_rooms.id', ondelete='CASCADE'), nullable=False, index=True)
+    account_id = Column(Integer, ForeignKey('minar_accounts.id', ondelete='CASCADE'), nullable=False, index=True)
+    ready = Column(Boolean, nullable=False, default=False)

@@ -45,7 +45,7 @@ def test_failed_purchase_does_not_change_wallet_or_planet(client, db, acct, meto
         assert before[key] == after[key]
 
 
-def test_planet_owner_outside_podium_has_public_profile(client, db, acct, metodist_user):
+def test_every_active_student_has_private_whitelist_world_profile(client, db, acct, metodist_user):
     me = db.query(MinarAccount).one()
     others = []
     for i in range(5):
@@ -57,11 +57,12 @@ def test_planet_owner_outside_podium_has_public_profile(client, db, acct, metodi
     db.commit()
     other = others[0]
     url = '/space/profiles/'+other.login_id
-    assert client.get(url).status_code == 404
-    # A forged selection without a purchase does not publish a profile.
+    assert client.get(url).status_code == 200
+    assert client.get(url).json()['equipment']['planet'] is None
+    # A forged selection cannot replace the free Moon environment.
     other.equipment = json.dumps({'planet':'planet-glacia'})
     db.commit()
-    assert client.get(url).status_code == 404
+    assert client.get(url).json()['equipment']['planet'] is None
     give_coins(db, db.get(models.Student, other.student_id), 120, metodist_user.id)
     service.run(db, other, service.act_purchase, 'planet-glacia', 'planet-public-intent')
     response = client.get(url)

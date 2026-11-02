@@ -476,7 +476,12 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
     if not isinstance(result, dict):
         raise MinarError(400, "Natija topilmadi.")
     session = None
-    if result.get("game") == "battle":
+    table_result = None
+    if result.get("roomId"):
+        from . import tables
+        table_result = tables.result(db, acc, result["roomId"])
+        rid = "table:" + result["roomId"]
+    elif result.get("game") == "battle":
         if result.get("practice") is True:
             return 0, "Mashq yakunlandi. Mashq uchun XP va coin berilmaydi."
         match_id = result.get("matchId")
@@ -490,7 +495,7 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
         session = games.load(db, acc, result.get("session") or result.get("id"))
         rid = session.id
     # Preserve idempotency for matches rewarded by older releases using client result IDs.
-    if session is None:
+    if session is None and table_result is None:
         for old in db.query(MinarResult).filter(MinarResult.account_id==acc.id,MinarResult.game=="battle").all():
             try:
                 if json.loads(old.payload).get("matchId")==battle.match_id:
@@ -501,7 +506,9 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
     if prev:
         return prev.award, "Natija allaqachon saqlangan."
 
-    if session is None:
+    if table_result is not None:
+        payload, eligible = table_result
+    elif session is None:
         eligible = not battle.draw and battle.winner_account_id == acc.id
         payload = {"game": "battle", "mode": battle.mode, "matchId": battle.match_id,
                    "won": eligible, "draw": bool(battle.draw), "practice": False,
@@ -608,22 +615,17 @@ def lightning_total(db, account_id, since=None):
 
 
 def public_profile(db, me, login_id):
-    # Only authenticated students see the public whitelist. Planet ownership opts
-    # a profile into visits; phone, group, surname and account settings stay private.
+    # All active students have a world; private fields remain outside this whitelist.
     acc = db.query(MinarAccount).filter_by(login_id=login_id, is_active=True).first()
     if not acc:
         raise MinarError(404, 'Profil topilmadi.')
     st = db.query(models.Student).filter_by(id=acc.student_id).one()
     eq = get_equipment(acc)
+    if eq['planet'] not in owned_hero_items(db, acc):
+        eq['planet'] = None
     if login_id != me.login_id:
         if acc.is_test or not st.is_active or st.is_archived:
             raise MinarError(404, 'Ommaviy profil topilmadi.')
-        has_planet = eq['planet'] and eq['planet'] in owned_hero_items(db, acc)
-        if not has_planet:
-            allowed = {row['id'] for metric in ('lightning', 'xp')
-                       for row in leaderboard(db, me, metric, 'all', 'all')[:3]}
-            if login_id not in allowed:
-                raise MinarError(404, 'Ommaviy profil topilmadi.')
     coins, _ = balance_and_earned(db, acc)
     lightning = lightning_total(db, acc.id)
     return {'id': acc.login_id, 'name': st.full_name if login_id == me.login_id else public_name(st.full_name),

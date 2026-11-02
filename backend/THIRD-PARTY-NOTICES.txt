@@ -1,0 +1,7 @@
+Online chess rules use python-chess (PyPI distribution chess), version 1.11.2.
+Copyright (C) 2012-2025 Niklas Fiekas and contributors.
+License: GNU General Public License, version 3 or later.
+Project and corresponding source: https://github.com/niklasf/python-chess
+Pinned source distribution: https://pypi.org/project/chess/1.11.2/
+The package license is retained in the installed distribution. It runs only on
+our Python server; no python-chess code is bundled into the browser JavaScript.

@@ -61,6 +61,7 @@ XP_TRY = 0
 DAILY_REWARDED_GAMES = 3
 GAME_BASE = {"typing": 10, "ztype": 15, "quiz": 10, "memory": 8, "bug": 10, "battle": 15}
 GAME_TITLE = {
+    "chess": "Shaxmat", "checkers": "Shashka", "uno": "UNO", "mafia": "Mafia", "sudoku": "Sudoku",
     "typing": "Minar Type", "ztype": "ZType Galaxy", "quiz": "Code Quiz",
     "memory": "Memory Match", "bug": "Bug Hunter", "battle": "Battle",
 }

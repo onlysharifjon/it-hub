@@ -59,6 +59,11 @@ CATALOG: tuple[Achievement, ...] = (
     Achievement("tournament_podium", "Shohsupada", "Haftalik turnirda 1–3-o‘rinni egalla.", "trophy", "tournament_podium", 1, 0),
     Achievement("tournament_win", "Hafta chempioni", "Haftalik turnirda guruhingda 1-o‘rinni ol.", "crown", "tournament_wins", 1, 0),
     Achievement("code_all", "Kod ustasi", "Kod maydonidagi barcha topshiriqlarni bajar.", "crown", "code_solved", len(playground.TASKS), 0),
+    Achievement("chess_win", "Shoh va mat", "Shaxmat o‘yinida birinchi g‘alabani qo‘lga kirit.", "trophy", "chess_wins", 1, 0),
+    Achievement("checkers_win", "Dama ustasi", "Shashka o‘yinida birinchi g‘alabani qo‘lga kirit.", "trophy", "checkers_wins", 1, 0),
+    Achievement("mafia_win", "Sirli shahar", "Mafia o‘yinida birinchi g‘alabani qo‘lga kirit.", "trophy", "mafia_wins", 1, 0),
+    Achievement("uno_win", "So‘nggi karta", "UNO o‘yinida birinchi g‘alabani qo‘lga kirit.", "trophy", "uno_wins", 1, 0),
+    Achievement("sudoku_win", "Mantiq me’mori", "Sudoku o‘yinida birinchi g‘alabani qo‘lga kirit.", "trophy", "sudoku_wins", 1, 0),
 )
 BY_CODE = {a.code: a for a in CATALOG}
 
@@ -139,6 +144,8 @@ def _values(db: Session, acc: MinarAccount, metrics: set[str]) -> dict[str, int]
         "tournament_wins": count(MinarTournamentAward,MinarTournamentAward.account_id==acc.id,MinarTournamentAward.place==1),
         "earned": scope(db, db.query(_positive(models.CoinTransaction.amount)).filter(models.CoinTransaction.student_id==acc.student_id), models.CoinTransaction).scalar_subquery()+scope(db, db.query(_positive(MinarLedger.amount)).filter(MinarLedger.account_id==acc.id), MinarLedger).scalar_subquery(),
     }
+    for game in ("chess", "checkers", "mafia", "uno", "sudoku"):
+        fields[game+"_wins"] = count(MinarResult, MinarResult.account_id==acc.id, MinarResult.game==game, MinarResult.xp==C.XP_WIN)
     wanted=[m for m in fields if m in metrics]
     values=dict(zip(wanted,db.query(*(fields[m] for m in wanted)).one())) if wanted else {}
     values.update(streak=acc.streak or 0,level=C.level_of(acc.xp))
