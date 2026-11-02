@@ -88,7 +88,7 @@ def test_profile_whitelist(client,db,acct):
  assert set(p)=={'id','name','course','character','level','xp','lightning','coins','badges','equipment'}
  with pytest.raises(Exception):service.public_profile(db,a,'missing')
 
-def test_only_top_three_profiles_visible_and_coin_does_not_rank(client,db,acct):
+def test_active_profiles_visible_and_coin_does_not_rank(client,db,acct):
  from backend.minar.errors import MinarError
  me=db.query(MinarAccount).one();others=[]
  for i in range(4):
@@ -99,7 +99,7 @@ def test_only_top_three_profiles_visible_and_coin_does_not_rank(client,db,acct):
  rows=service.leaderboard(db,me,'lightning','all','all')
  assert rows[0]['id']==others[3].login_id
  assert service.public_profile(db,me,others[3].login_id)['xp']==8000
- with pytest.raises(MinarError):service.public_profile(db,me,others[0].login_id)
+ assert service.public_profile(db,me,others[0].login_id)['xp']==2000
 
 def test_student_actions_cannot_credit_coin(client,db,acct):
  r=post(client,'/courses/complete',{'index':0});assert r.status_code==200
