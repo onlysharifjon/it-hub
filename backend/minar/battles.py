@@ -108,9 +108,10 @@ def join_room(db: Session, acc: MinarAccount, code: str) -> dict:
 # ── WebSocket: xona holati ──────────────────────────────────────────────────
 
 class Conn:
-    def __init__(self, ws: WebSocket, sender: str, name: str, account_id: int, login_id: str, role: str):
+    def __init__(self, ws: WebSocket, sender: str, name: str, account_id: int, login_id: str, role: str, character: str = "robo", level: int = 1):
         self.ws, self.sender, self.name = ws, sender, name
         self.account_id, self.login_id, self.role = account_id, login_id, role
+        self.character, self.level = character, level
         self.replaced = False
         self.window_start, self.window_count = time.monotonic(), 0
 
@@ -190,7 +191,7 @@ def _load_participant(claims: dict) -> Optional[dict]:
             return None
         return {"room_id": b.room_id, "code": b.code, "mode": b.mode, "course": b.course,
                 "name": (student.full_name or "O‘quvchi").split()[0], "account_id": acc.id, "login_id": acc.login_id,
-                "role": role}
+                "role": role, "character": acc.character, "level": C.level_of(acc.xp)}
     finally:
         db.close()
 
@@ -246,7 +247,7 @@ async def handle(ws: WebSocket) -> None:
     if room.state in ("playing", "done", "closed"):
         await _reject(ws)
         return
-    conn = Conn(ws, sender, info["name"], info["account_id"], info["login_id"], info["role"])
+    conn = Conn(ws, sender, info["name"], info["account_id"], info["login_id"], info["role"], info["character"], info["level"])
     old = room.conn(conn.role)
     if old is not None:                       # xuddi shu akkaunt qayta ulandi — eskisini almashtiramiz
         old.replaced = True
@@ -301,9 +302,9 @@ async def _maybe_pair(room: Room) -> None:
     room.paired = True
     room.state = "ready"
     await _send(room.guest, {"type": "welcome", "sender": room.host.sender, "target": room.guest.sender,
-                             "name": room.host.name, "mode": room.mode, "course": room.course})
+                             "name": room.host.name, "character": room.host.character, "level": room.host.level, "mode": room.mode, "course": room.course})
     await _send(room.host, {"type": "join", "sender": room.guest.sender, "name": room.guest.name,
-                            "roomId": room.id})
+                            "character": room.guest.character, "level": room.guest.level, "roomId": room.id})
     await run_in_threadpool(_db_update, room.id, status="ready")
 
 

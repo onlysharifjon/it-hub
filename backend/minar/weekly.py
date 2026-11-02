@@ -96,6 +96,7 @@ def _group_of(db: Session, student_ids: list[int]) -> dict[int, models.Group]:
 
 def _row(acc: MinarAccount, st: models.Student, pts: int, me: MinarAccount) -> dict:
     return {"id": acc.login_id, "name": public_name(st.full_name), "avatar": C.CHARACTER_EMOJI.get(acc.character, "🤖"),
+            "character": acc.character, "level": C.level_of(acc.xp),
             "points": pts, "me": acc.id == me.id, "accountOrder": acc.id}
 
 

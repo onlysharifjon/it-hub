@@ -85,8 +85,14 @@ def test_standings_for_group_and_overall(client, db, league, monkeypatch):
     xp(db, accs["Ali A"], 120)
     xp(db, accs["Eli E"], 500)
     xp(db, accs["Test T"], 999)
+    accs["Ali A"].character = "foxy"
+    accs["Ali A"].xp = 2000
+    db.commit()
     data = weekly.standings(db, accs["Bek B"])
     assert data["week"] == {"start": "2026-09-28", "end": "2026-10-04", "endsAt": "2026-10-05T00:00:00+05:00"}
+    leader = data["group"]["standings"][0]
+    assert leader["character"] == "foxy" and leader["level"] == 2
+    assert "password_hash" not in leader and "phone1" not in leader
     names = [r["name"] for r in data["group"]["standings"]]
     assert data["group"]["name"] == "F-1" and names[0] == "Ali A." and "Test T." not in names
     me = next(r for r in data["group"]["standings"] if r["me"])

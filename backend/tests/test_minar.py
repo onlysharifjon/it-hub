@@ -661,13 +661,20 @@ def _recv_until(ws, kind, limit=16):
 
 def test_ws_typing_battle_full_flow_and_reward(client, ws_client, db, metodist_token, monkeypatch):
     hc, gc, host, guest, room, joined = _ws_pair(client, db, metodist_token, "typing")
+    host_acc = db.query(MinarAccount).filter_by(login_id=host["login_id"]).one()
+    guest_acc = db.query(MinarAccount).filter_by(login_id=guest["login_id"]).one()
+    host_acc.character, host_acc.xp = "foxy", 2000
+    guest_acc.character = "drako"
+    db.commit()
     with ws_client.websocket_connect("/space/battles") as hws, ws_client.websocket_connect("/space/battles") as gws:
-        hws.send_json({"type": "join", "ticket": room["ticket"], "roomId": room["roomId"], "sender": "tab-host", "name": "X"})
+        hws.send_json({"type": "join", "ticket": room["ticket"], "roomId": room["roomId"], "sender": "tab-host", "name": "X", "character": "robo", "level": 99})
         gws.send_json({"type": "join", "ticket": joined["ticket"], "roomId": joined["roomId"], "sender": "tab-guest", "name": "Y"})
         welcome = _recv_until(gws, "welcome")
         assert welcome["sender"] == "tab-host" and welcome["target"] == "tab-guest" and welcome["name"] == "Host"
         assert welcome["mode"] == "typing" and welcome["course"] == "HTML"
-        assert _recv_until(hws, "join")["sender"] == "tab-guest"
+        assert welcome["character"] == "foxy" and welcome["level"] == 2
+        peer = _recv_until(hws, "join")
+        assert peer["sender"] == "tab-guest" and peer["character"] == "drako" and peer["level"] == 1
         gws.send_json({"type": "start"})                                                 # mehmon boshlay olmaydi
         hws.send_json({"type": "start", "at": 1, "matchId": "forged"})
         start = _recv_until(hws, "start")
