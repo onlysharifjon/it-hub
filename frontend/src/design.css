@@ -572,7 +572,7 @@ div.field > textarea { min-height: 110px; }
 .lesson-completion strong { color: var(--primary-text); font-weight: 600; }
 .lesson-completion .progress { width: 100%; min-width: 0; height: 5px; background: var(--border); border-radius: 4px; }
 .lesson-completion .progress-bar { background: var(--primary); border-radius: inherit; transition: width .6s var(--ease); }
-.lesson-tracks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.lesson-tracks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 16px; margin-bottom: 24px; }
 .lesson-track { padding: 19px; display: flex; align-items: center; gap: 13px; text-align: left; border: 1px solid var(--border); border-radius: 13px; background: var(--surface); color: var(--text); transition: background .2s, border-color .2s, transform .2s; }
 .lesson-track:hover { border-color: var(--primary-border); transform: translateY(-2px); }
 .lesson-track.is-active { border-color: var(--primary); background: var(--primary-light); box-shadow: 0 0 0 1px var(--primary); }

@@ -733,7 +733,7 @@ class BlockUserRequest(BaseModel):
 
 # ── Lessons ───────────────────────────────────────────────────────────────────
 
-LESSON_CATEGORIES = {'foundation', 'frontend', 'backend'}
+LESSON_CATEGORIES = {'foundation', 'frontend', 'backend', 'fullstack'}
 
 
 class LessonRead(BaseModel):

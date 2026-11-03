@@ -11,6 +11,7 @@ const CATEGORIES = [
   { key: 'foundation', label: 'Foundation' },
   { key: 'frontend',   label: 'Frontend' },
   { key: 'backend',    label: 'Backend' },
+  { key: 'fullstack',  label: 'Fullstack' },
 ]
 
 const COLLAPSE_KEY = 'sidebar:collapsedGroups'

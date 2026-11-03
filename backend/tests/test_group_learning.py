@@ -133,3 +133,16 @@ def test_learning_migration_is_idempotent_and_preserves_teacher_content(db, monk
         assert len(json.loads(original.questions))==5
         assert len(json.loads(custom.questions))==1 and custom.published
         assert legacy.published is False
+
+
+def test_fullstack_topics_can_be_authored_and_reach_the_selected_group(client, db, acct, metodist_token):
+    group=db.query(models.Group).one();group.stage='fullstack';db.commit()
+    response=client.post('/lessons',headers=H(metodist_token),json={'category':'fullstack','lesson_number':1,'title':'Guruhning yangi mavzusi'})
+    assert response.status_code==201,response.text
+    lesson=response.json()
+    response=client.post('/space/admin/study/content',headers=H(metodist_token),json={
+        'title':lesson['title'],'course':'Fullstack','topic':lesson['title'],'body':'Guruh uchun eslatma',
+        'lessonId':lesson['id'],'published':True,'questions':[{'q':'Mavzu savoli','options':['Ha','Yo‘q'],'answer':0}]})
+    assert response.status_code==200,response.text
+    path=client.get('/space/study/path').json()
+    assert path['course']=='Fullstack' and path['content'][0]['lessonId']==lesson['id']

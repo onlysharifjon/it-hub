@@ -14,6 +14,7 @@ const CATEGORY_LABELS = {
   foundation: 'Foundation',
   frontend: 'Frontend',
   backend: 'Backend',
+  fullstack: 'Fullstack',
 }
 
 export default function Lessons({ category, onSelectCategory, currentUser }) {
@@ -126,8 +127,8 @@ export default function Lessons({ category, onSelectCategory, currentUser }) {
         {Object.entries(CATEGORY_LABELS).map(([key, label], i) => (
           <button key={key} type="button" className={`lesson-track${key === category ? ' is-active' : ''}`}
             aria-pressed={key === category} onClick={() => onSelectCategory?.(key)}>
-            <span className="lesson-track-icon"><FontAwesomeIcon icon={[faLayerGroup, faCode, faServer][i]} /></span>
-            <span><strong>{label}</strong><small>{['Dasturlash asoslari', 'Veb interfeyslar', 'Server va ma’lumotlar'][i]}</small></span>
+            <span className="lesson-track-icon"><FontAwesomeIcon icon={[faLayerGroup, faCode, faServer, faLayerGroup][i]} /></span>
+            <span><strong>{label}</strong><small>{['Dasturlash asoslari', 'Veb interfeyslar', 'Server va ma’lumotlar', 'To‘liq dasturlash dasturi'][i]}</small></span>
             <span className="lesson-track-index">0{i + 1}</span>
           </button>
         ))}

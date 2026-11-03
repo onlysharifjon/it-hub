@@ -5,6 +5,7 @@ const CATEGORY_LABELS = {
   foundation: 'Foundation',
   frontend: 'Frontend',
   backend: 'Backend',
+  fullstack: 'Fullstack',
 }
 
 function AddLessonModal({ category, onSave, onClose, existingNumbers }) {
