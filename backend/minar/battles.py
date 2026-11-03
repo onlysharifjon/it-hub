@@ -31,7 +31,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import models, security
 from ..database import SessionLocal
 from . import catalog as C
-from . import games
+from . import games, study
 from .auth import account_usable, origin_allowed
 from .errors import MinarError
 from .models import MinarAccount, MinarBattle
@@ -65,6 +65,8 @@ def _payload(acc: MinarAccount, battle: MinarBattle, role: str) -> dict:
 def create_room(db: Session, acc: MinarAccount, mode: object) -> dict:
     if mode not in ("typing", "quiz"):
         raise MinarError(400, "O‘yin turi noto‘g‘ri.")
+    if mode == 'quiz':
+        study.quiz_questions(db, acc, 0)
     if not security.rate_limit_ok(f"minar-battle-create:{acc.id}", limit=10, window=60):
         raise MinarError(429, "Juda tez-tez xona yaratyapsan. Bir daqiqa kut.")
     now = datetime.utcnow()
@@ -99,6 +101,9 @@ def join_room(db: Session, acc: MinarAccount, code: str) -> dict:
         raise MinarError(400, "O‘z xonangga qo‘shila olmaysan. Kodni do‘stingga ber.")
     if battle.guest_account_id and battle.guest_account_id != acc.id:
         raise MinarError(409, "Bu xona to‘lgan. Boshqa kodni sinab ko‘r.")
+    if battle.mode == 'quiz':
+        host = db.get(MinarAccount, battle.host_account_id)
+        study.quiz_questions(db, host, 0, peer=acc)
     battle.guest_account_id = acc.id
     battle.status = "ready"
     db.commit()
@@ -327,19 +332,35 @@ async def _on_message(room: Room, conn: Conn, m: dict) -> bool:
 async def _start(room: Room, conn: Conn) -> None:
     if conn.role != "host" or room.state != "ready" or not room.host or not room.guest:
         return
-    room.questions = games.questions("quiz", room.course, secrets.randbits(31))
+    if room.mode == 'quiz':
+        try:
+            room.questions = await run_in_threadpool(_match_questions, room.host.account_id, room.guest.account_id)
+        except MinarError as exc:
+            for player in (room.host, room.guest):
+                await _send(player, {'type':'error', 'sender':'server', 'message':str(exc)})
+            return
+    else:
+        room.questions = []
     room.text = games.battle_text(room.course, secrets.randbits(31))
     room.state = "playing"
     room.match_id = str(uuid.uuid4())
     room.start_ms = int(time.time() * 1000) + 1000
     payload = {"type": "start", "sender": "server", "at": room.start_ms, "mode": room.mode,
-               "course": room.course, "matchId": room.match_id, "text": room.text,
+               "course": room.questions[0]['topic'] if room.questions else 'Typing', "matchId": room.match_id, "text": room.text,
                "questions": [{"q":q["q"], "options":q["options"]} for q in room.questions]}
     await _send(room.host, payload)
     await _send(room.guest, payload)
     await run_in_threadpool(_db_update, room.id, status="playing", match_id=room.match_id,
                             started_at=datetime.utcnow())
     room.timer = asyncio.create_task(_timeout(room))
+
+
+def _match_questions(host_id, guest_id):
+    with SessionLocal() as db:
+        host, guest = db.get(MinarAccount, host_id), db.get(MinarAccount, guest_id)
+        if not host or not guest:
+            raise MinarError(404, 'O‘quvchi topilmadi.')
+        return study.quiz_questions(db, host, secrets.randbits(31), peer=guest)
 
 
 async def _timeout(room: Room) -> None:
@@ -375,7 +396,7 @@ async def _progress(room: Room, conn: Conn, m: dict) -> None:
         qi, ai = m.get("questionIndex"), m.get("answerIndex")
         if any(isinstance(v, bool) or not isinstance(v, int) for v in (qi, ai)):
             return
-        if qi != len(p.answers) or not (0 <= qi < C.QUIZ_TOTAL) or not (0 <= ai <= 3):
+        if qi != len(p.answers) or not (0 <= qi < len(room.questions)) or not (0 <= ai < len(room.questions[qi]['options'])):
             return
         if now_ms - max(p.last_answer_ms, room.start_ms) < 300:
             return                                   # savolni o'qishga ham ulgurmaydigan tezlik

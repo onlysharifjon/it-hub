@@ -102,8 +102,12 @@ def test_active_profiles_visible_and_coin_does_not_rank(client,db,acct):
  assert service.public_profile(db,me,others[0].login_id)['xp']==2000
 
 def test_student_actions_cannot_credit_coin(client,db,acct):
- r=post(client,'/courses/complete',{'index':0});assert r.status_code==200
- assert r.json()['award']==0 and r.json()['state']['balance']==0 and r.json()['state']['xp']==0
+ r=post(client,'/courses/complete',{'index':0});assert r.status_code==410
+ from backend.tests.test_group_learning import add_content
+ from backend.minar import study
+ c=add_content(db);a=db.query(MinarAccount).one()
+ r=post(client,f'/study/content/{c.id}/assess',{'requestId':'reward-policy-001','answers':[q['answer'] for q in study.questions_for(c,a.id)]})
+ assert r.status_code==200 and r.json()['award']==0
  r=post(client,'/quests/claim',{'quest':'lesson'});assert r.status_code==200 and r.json()['award']==0 and r.json()['state']['balance']==0
  # Explicit lower-level guard also protects future reward callers.
  a=db.query(MinarAccount).one()

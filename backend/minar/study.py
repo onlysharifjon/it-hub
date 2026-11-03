@@ -4,7 +4,7 @@ import hashlib
 import random
 from datetime import datetime, timedelta
 from sqlalchemy import func
-from .. import models, tz, security
+from .. import models, tz, security, core_calc
 from ..wallet import account_transaction
 from . import learning, catalog as C
 from .models import (MinarAccount, MinarGroupCourse, MinarContent, MinarProgress, MinarLearningAttempt,
@@ -24,7 +24,7 @@ def enrollments(db, acc):
         if changed or acc.course != course:
             acc.active_group_id, acc.course = selected.id, course
             db.commit()
-    return [{'id':g.id, 'name':g.name, 'course':mappings.get(g.id) or (acc.course if g.id==acc.active_group_id else C.default_course_for_stage(g.stage)),
+    return [{'id':g.id, 'name':g.name, 'course':course_name(g), 'stage':g.stage,
              'selected':g.id==acc.active_group_id} for g in groups]
 
 
@@ -34,18 +34,76 @@ def select_group(db, acc, group_id):
     if not g:
         raise MinarError(404, 'Guruh topilmadi.')
     acc.course_override = None
-    acc.active_group_id, acc.course = g['id'], g['course']
+    acc.active_group_id = g['id']
     db.commit()
     return {'ok':True}
 
 
-def visible_query(db, acc):
+def course_name(group):
+    return group.course.name if group.course else {'foundation':'Foundation', 'frontend':'Frontend',
+        'backend':'Backend', 'fullstack':'Fullstack'}.get(group.stage, group.stage or 'Guruh dasturi')
+
+
+def learning_context(db, acc):
     groups = learning.active_groups(db, acc.student_id)
-    stages = {g.stage or 'foundation' for g in groups}
-    lesson_ids = db.query(models.Lesson.id).filter(models.Lesson.category.in_(stages))
+    group = next((g for g in groups if g.id == acc.active_group_id), groups[0] if groups else None)
+    if not group:
+        return None, 0, []
+    completed = core_calc.group_completed_lessons(db, [group.id]).get(group.id, 0)
+    lessons = db.query(models.Lesson).filter(models.Lesson.category == (group.stage or 'foundation')) \
+        .order_by(models.Lesson.lesson_number).all()
+    return group, completed, lessons
+
+
+def visible_query(db, acc):
+    # Only the selected CRM group's taught/current lessons. A legacy account
+    # course string must never make unrelated global coding drills visible.
+    group, completed, lessons = learning_context(db, acc)
+    lesson_ids = [l.id for l in lessons if l.lesson_number <= completed + 1]
     return db.query(MinarContent).filter(MinarContent.published.is_(True),
-        ((MinarContent.lesson_id.is_(None)) & (MinarContent.course == acc.course)) |
         MinarContent.lesson_id.in_(lesson_ids))
+
+
+def pathway(db, acc):
+    groups = enrollments(db, acc)
+    group, completed, lessons = learning_context(db, acc)
+    content = contents(db, acc)
+    by_lesson = {}
+    for row in content:
+        by_lesson.setdefault(row['lessonId'], []).append(row)
+    current = next((l for l in lessons if l.lesson_number > completed), lessons[-1] if lessons else None)
+    return {'groups':groups, 'groupId':group.id if group else None, 'group':group.name if group else None,
+        'course':course_name(group) if group else None, 'completed':completed,
+        'currentLessonId':current.id if current else None,
+        'lessons':[{'id':l.id, 'number':l.lesson_number, 'title':l.title, 'section':l.section,
+            'status':'done' if l.lesson_number <= completed else 'current' if l.id == current.id else 'upcoming',
+            'content':by_lesson.get(l.id, [])} for l in lessons], 'content':content}
+
+
+def quiz_questions(db, acc, seed, peer=None, count=5):
+    rows = visible_query(db, acc).join(models.Lesson, MinarContent.lesson_id == models.Lesson.id) \
+        .order_by(models.Lesson.lesson_number.desc(), MinarContent.position).all()
+    if peer is not None:
+        allowed = {c.id for c in visible_query(db, peer).all()}
+        rows = [c for c in rows if c.id in allowed]
+    rng = random.Random(seed)
+    pool, seen = [], set()
+    for c in rows:
+        for q in json.loads(c.questions):
+            if q['q'] in seen:
+                continue
+            seen.add(q['q'])
+            pool.append({**q, 'code':None, 'topic':c.title, 'contentId':c.id})
+        # Prefer the current topic; supplement only from earlier taught lessons.
+        if len(pool) >= count:
+            break
+    if len(pool) < count:
+        raise MinarError(409, 'Guruh mavzulari bo‘yicha kamida 5 ta savol tayyor bo‘lishi kerak. Kurslarim bo‘limini tekshir.')
+    result=[]
+    for q in rng.sample(pool, count):
+        order=list(range(len(q['options'])));rng.shuffle(order)
+        result.append({**q, 'options':[q['options'][i] for i in order], 'answer':order.index(q['answer'])})
+    return result
 
 
 def content_for(db, acc, cid):
@@ -67,6 +125,7 @@ def questions_for(c, aid):
 def public_content(c, p=None, full=False, aid=0):
     result={'id':c.id,'title':c.title,'course':c.course,'topic':c.topic,'lessonId':c.lesson_id,
         'score':p.last_score if p else None,'bestScore':p.best_score if p else 0,
+        'questionCount':len(json.loads(c.questions)),
         'completed':bool(p and p.completed_at),'reviewDue':bool(p and p.next_review_at and p.next_review_at <= datetime.utcnow()),
         'nextReview':tz.isoformat(p.next_review_at) if p and p.next_review_at else None}
     if full:

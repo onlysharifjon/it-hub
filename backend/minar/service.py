@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from sqlalchemy import case, func, and_, exists
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, joinedload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -24,7 +24,7 @@ from . import catalog as C
 from . import games
 from .errors import MinarError
 from .models import (
-    MinarStock, MinarAccount, MinarBattle, MinarLedger, MinarLesson, MinarPurchase, MinarQuest, MinarResult,
+    MinarStock, MinarAccount, MinarBattle, MinarLedger, MinarLesson, MinarPurchase, MinarQuest, MinarResult, MinarProgress,
 )
 
 CT = models.CoinTransaction
@@ -198,6 +198,8 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
     ]
     lessons = [f"{l.course}-{l.lesson_index}" for l in db.query(MinarLesson)
                .filter(MinarLesson.account_id == acc.id).order_by(MinarLesson.completed_at).all()]
+    lessons += [f"study-{p.content_id}" for p in db.query(MinarProgress).filter(
+        MinarProgress.account_id == acc.id, MinarProgress.completed_at.isnot(None)).order_by(MinarProgress.completed_at).all()]
     quests = [f"{q.local_date}:{q.quest}" for q in db.query(MinarQuest)
               .filter(MinarQuest.account_id == acc.id, MinarQuest.local_date >= (tz.today()-timedelta(days=7)).isoformat()).order_by(MinarQuest.claimed_at).all()]
     checkins = [k[0].split(":", 1)[1] for k in db.query(MinarLedger.ref_key).filter(
@@ -218,8 +220,8 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
         "enrollments": enrollment_rows,
         "stock": {r.product_id:r.quantity for r in db.query(MinarStock).all()},
         "profile": {
-            "id": acc.login_id, "name": name, "surname": surname, "course": acc.course,
-            "group": _group_label(db, acc.student_id), "character": acc.character,
+            "id": acc.login_id, "name": name, "surname": surname, "course": next((g['course'] for g in enrollment_rows if g['selected']), 'Guruh dasturi'),
+            "group": next((g["name"] for g in enrollment_rows if g["selected"]), "Minar Academy"), "character": acc.character,
         },
         "balance": balance,
         "earned": earned,
@@ -581,9 +583,18 @@ def leaderboard(db: Session, me: MinarAccount, metric: str, period: str, course:
         .filter(MinarAccount.is_active.is_(True), MinarAccount.is_test.is_(False), models.Student.is_active.is_(True),
                 models.Student.is_archived.is_(False))
     )
+    from .study import course_name
+    group_by_student = {}
+    memberships = db.query(models.GroupStudent.student_id, models.Group).join(
+        models.Group, models.Group.id == models.GroupStudent.group_id).options(joinedload(models.Group.course)).filter(
+        models.GroupStudent.left_at.is_(None), models.Group.is_active.is_(True)).order_by(models.GroupStudent.joined_at.desc()).all()
+    for sid, group in memberships:
+        group_by_student.setdefault(sid, []).append(group)
     for acc, full_name in q.all():
         if course != "all" and acc.course != course:
             continue
+        groups = group_by_student.get(acc.student_id, [])
+        selected = next((g for g in groups if g.id == acc.active_group_id), groups[0] if groups else None)
         rows.append({
             "id": acc.login_id,
             "name": public_name(full_name),
@@ -596,7 +607,7 @@ def leaderboard(db: Session, me: MinarAccount, metric: str, period: str, course:
             "level": C.level_of(acc.xp),
             "lightning": lightning_by_account.get(acc.id,0),
             "active": effective_streak(acc),
-            "course": acc.course,
+            "course": course_name(selected) if selected else "Guruh dasturi",
         })
 
     rows.sort(key=lambda r: (-r["xp"],-r["lightning"],r["id"]) if metric=="xp" else (-r["lightning"],-r["xp"],r["id"]))
@@ -626,8 +637,11 @@ def public_profile(db, me, login_id):
     if login_id != me.login_id:
         if acc.is_test or not st.is_active or st.is_archived:
             raise MinarError(404, 'Ommaviy profil topilmadi.')
+    from .study import course_name
+    groups = learning.active_groups(db, acc.student_id)
+    group = next((g for g in groups if g.id == acc.active_group_id), groups[0] if groups else None)
     coins, _ = balance_and_earned(db, acc)
     lightning = lightning_total(db, acc.id)
     return {'id': acc.login_id, 'name': st.full_name if login_id == me.login_id else public_name(st.full_name),
-            'course': acc.course, 'character': acc.character, 'level': C.level_of(acc.xp),
+            'course': course_name(group) if group else 'Guruh dasturi', 'character': acc.character, 'level': C.level_of(acc.xp),
             'xp': acc.xp, 'lightning': lightning, 'coins': coins, 'badges': lightning // 10, 'equipment': eq}

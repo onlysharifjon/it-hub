@@ -23,6 +23,10 @@ def enrollment(payload:dict=Body(...),acc:MinarAccount=Account,db:Session=Depend
 def content_list(acc:MinarAccount=Account,db:Session=Depends(get_db)):
     return study.contents(db,acc)
 
+@router.get('/study/path')
+def pathway(acc:MinarAccount=Account,db:Session=Depends(get_db)):
+    return study.pathway(db,acc)
+
 @router.get('/study/content/{cid}')
 def content(cid:int,acc:MinarAccount=Account,db:Session=Depends(get_db)):
     c=study.content_for(db,acc,cid)

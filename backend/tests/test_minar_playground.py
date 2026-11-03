@@ -68,34 +68,12 @@ def test_parsers_tolerate_broken_code():
     assert not all(r["ok"] for r in P.evaluate(P.BY_ID["css-1"], {"css": "}}}{{{"}))
 
 
-def test_check_endpoint_rewards_once_and_unlocks(client, db, acct):
-    r = post(client, "/playground/html-1/check", {"html": "<h1>Xayr</h1>"}).json()
-    assert r["solved"] is False and [c["ok"] for c in r["checks"]] == [True, False] and "state" not in r
-    r = post(client, "/playground/html-1/check", {"html": "<h1>Salom!</h1>"}).json()
-    first = achievements.BY_CODE["code_1"].reward
-    assert r["solved"] and r["award"] == P.REWARD and [a["id"] for a in r["unlocked"]] == ["code_1"]
-    assert r["state"]["balance"] == P.REWARD + first and r["state"]["xp"] == P.XP
-    again = post(client, "/playground/html-1/check", {"html": "<h1>Salom, yana</h1>"}).json()
-    assert again["solved"] and again["award"] == 0 and again["state"]["xp"] == P.XP
-    assert db.query(MinarPlaygroundSolve).one().code == '{"html": "<h1>Salom, yana</h1>"}'
-    assert db.query(MinarLedger).filter(MinarLedger.ref_key == "playground:html-1").count() == 1
-    data = client.get("/space/playground").json()
-    t = next(t for t in data["tasks"] if t["id"] == "html-1")
-    assert data["solved"] == 1 and data["total"] == len(P.TASKS) and t["solved"] and t["code"]["html"]
-    assert "fn" not in str(t) and t["checks"] == ["h1 sarlavha bor", "Sarlavhada “Salom” so‘zi bor"]
-
-
-def test_playground_solve_counts_for_daily_lesson_quest(client, acct):
-    post(client, "/playground/css-4/check", {"css": ".title{text-align:center}"})
-    assert post(client, "/quests/claim", {"type": "quest", "quest": "lesson"}).status_code == 200
-
-
-@pytest.mark.parametrize("task_id,payload,code", [
-    ("nope", {"html": ""}, 404),
-    ("html-1", {"html": "x" * (P.CODE_MAX + 1)}, 400),
-    ("js-1", {"js": "", "output": ["x"] * 101}, 400),
-    ("js-1", {"js": "", "output": "Salom"}, 400),
-    ("html-1", {"html": 5}, 400),
-])
-def test_check_validation(client, acct, task_id, payload, code):
-    assert post(client, f"/playground/{task_id}/check", payload).status_code == code
+def test_retired_playground_endpoints_cannot_solve_or_execute(client, db, acct):
+    assert client.get('/space/playground').status_code == 410
+    for path, payload in [('/playground/html-1/check', {'html':'<h1>Salom!</h1>'}),
+                          ('/playground/css-4/check', {'css':'.title{text-align:center}'}),
+                          ('/playground/run', {'js':'console.log(1)'})]:
+        assert post(client, path, payload).status_code == 410
+    assert db.query(MinarPlaygroundSolve).count() == 0
+    assert db.query(MinarLedger).count() == 0
+    assert post(client, '/quests/claim', {'quest':'lesson'}).status_code == 400

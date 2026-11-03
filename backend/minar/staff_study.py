@@ -48,7 +48,7 @@ def save_content(payload:dict=Body(...),db:Session=Depends(get_db),user=Depends(
     cid=payload.get('id');c=db.query(MinarContent).filter_by(id=cid).first() if cid else None
     if cid and not c:raise MinarError(404,'Dars topilmadi.')
     course=payload.get('course')
-    if course not in (*C.COURSES, 'Foundation', 'Scratch', 'AI Creator'):raise MinarError(400,'Kursni tanlang.')
+    if course not in (*C.COURSES, 'Foundation', 'Frontend', 'Backend', 'Fullstack', 'Scratch', 'AI Creator'):raise MinarError(400,'Kursni tanlang.')
     qs=payload.get('questions',[])
     if not isinstance(qs,list) or not 1<=len(qs)<=10:raise MinarError(400,'1–10 ta test savoli kiriting.')
     clean=[]
@@ -59,6 +59,8 @@ def save_content(payload:dict=Body(...),db:Session=Depends(get_db),user=Depends(
         clean.append({'q':support.text(q.get('q'),500),'options':[support.text(o,300) for o in opts],
                       'answer':q['answer'],'explain':support.text(q.get('explain',''),1000,False)})
     lid=payload.get('lessonId') or None
+    if payload.get('published') is True and not lid:
+        raise MinarError(400, 'Nashr qilish uchun materialni CRM darsi bilan bog‘lang.')
     if lid and not db.query(models.Lesson.id).filter_by(id=lid).first():raise MinarError(404,'CRM darsi topilmadi.')
     if not c:
         import uuid
@@ -75,8 +77,8 @@ def save_content(payload:dict=Body(...),db:Session=Depends(get_db),user=Depends(
 
 @router.get('/study/groups')
 def groups(db:Session=Depends(get_db),user=Depends(staff_user)):
-    maps={g.group_id:g.course for g in db.query(MinarGroupCourse).all()}
-    return [{'id':g.id,'name':g.name,'course':maps.get(g.id) or C.default_course_for_stage(g.stage)} for g in db.query(models.Group).filter_by(is_active=True).order_by(models.Group.name).all()]
+    from .study import course_name
+    return [{'id':g.id,'name':g.name,'course':course_name(g),'stage':g.stage} for g in db.query(models.Group).filter_by(is_active=True).order_by(models.Group.name).all()]
 
 @router.put('/study/groups/{gid}')
 def group_course(gid:int,payload:dict=Body(...),db:Session=Depends(get_db),user=Depends(staff_user)):

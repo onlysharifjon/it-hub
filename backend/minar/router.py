@@ -95,7 +95,7 @@ def character(payload: dict = Body(...), acc: MinarAccount = Account, db: Sessio
 
 @router.post("/courses/complete")
 def complete_lesson(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
-    return service.run(db, acc, service.act_lesson, payload.get("index"))
+    raise MinarError(410, 'Eski kurs mashqlari yopildi. Kurslarim bo‘limida guruh mavzularini oching.')
 
 
 @router.post("/games/results")
@@ -136,13 +136,13 @@ def homework_submit(homework_id: int, payload: dict = Body(...), acc: MinarAccou
 
 @router.get("/playground")
 def playground_tasks(acc: MinarAccount = Account, db: Session = Depends(get_db)):
-    return playground.task_list(db, acc)
+    raise MinarError(410, 'Kod maydoni yopildi. Kurslarim bo‘limida guruh mavzularini oching.')
 
 
 @router.post("/playground/{task_id}/check")
 def playground_check(task_id: str, payload: dict = Body(...), acc: MinarAccount = Account,
                      db: Session = Depends(get_db)):
-    return service.run_playground(db, acc, task_id, payload)
+    raise MinarError(410, 'Kod maydoni yopildi. Kurslarim bo‘limida guruh mavzularini oching.')
 
 
 @router.get("/tournament")
@@ -208,11 +208,7 @@ def coin_history(offset: int = 0, month: Optional[str] = None, acc: MinarAccount
 
 @router.post('/playground/run')
 def playground_run(payload: dict = Body(...), acc: MinarAccount = Account):
-    from .. import security
-    from .js_runner import execute
-    if not security.rate_limit_ok(f'minar-run:{acc.id}',limit=30,window=60):
-        raise MinarError(429,'Biroz kutib qayta ishga tushiring.')
-    return execute(playground._code(payload,'js'))
+    raise MinarError(410, 'Kod maydoni yopildi. Kurslarim bo‘limida guruh mavzularini oching.')
 
 @router.get('/game-history')
 def game_history(offset:int=0,month:Optional[str]=None,acc:MinarAccount=Account,db:Session=Depends(get_db)):

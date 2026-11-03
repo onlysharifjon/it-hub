@@ -104,7 +104,7 @@ def test_login_and_bootstrap_shape(client, db, metodist_token):
     assert "httponly" in r.headers["set-cookie"].lower() and "samesite=lax" in r.headers["set-cookie"].lower()
     s = client.get("/space/students/me/bootstrap").json()
     assert s["version"] == 1
-    assert s["profile"] == {"id": creds["login_id"], "name": "Azizbek", "surname": "Komilov", "course": "HTML",
+    assert s["profile"] == {"id": creds["login_id"], "name": "Azizbek", "surname": "Komilov", "course": "Foundation",
                             "group": "S-100", "character": "robo"}
     assert (s["balance"], s["earned"], s["xp"], s["streak"]) == (0, 0, 0, 0)
     assert s["equipment"] == {"hat": None, "accessory": None, "outfit": None, "background": None, "planet": None}
@@ -222,12 +222,16 @@ def test_checkin_once_per_day_and_streak(client, db, acct):
 
 
 def test_lesson_and_quest_flow(client, acct):
-    r = post(client, "/courses/complete", {"type": "lesson", "index": 0}).json()
-    assert r["award"] == 0 and r["state"]["xp"] == 0 and r["state"]["completedLessons"] == ["HTML-0"]
-    again = post(client, "/courses/complete", {"type": "lesson", "index": 0}).json()
-    assert again["award"] == 0 and again["state"]["balance"] == 0 and again["message"] == "Bu dars avval yakunlangan."
-    for bad in (3, -1, "0", None, True):
-        assert post(client, "/courses/complete", {"type": "lesson", "index": bad}).status_code == 400
+    assert post(client, "/courses/complete", {"index": 0}).status_code == 410
+    from backend.tests.test_group_learning import add_content
+    from backend.tests.conftest import TestSessionLocal
+    from backend.minar import study
+    with TestSessionLocal() as db:
+        c = add_content(db)
+        a = db.query(MinarAccount).one()
+        cid, answers = c.id, [q['answer'] for q in study.questions_for(c, a.id)]
+    r = post(client, f"/study/content/{cid}/assess", {"requestId":"quest-learning-001", "answers":answers})
+    assert r.status_code == 200 and r.json()['award'] == 0
     assert post(client, "/quests/claim", {"type": "quest", "quest": "typing"}).status_code == 400   # shart bajarilmagan
     q = post(client, "/quests/claim", {"type": "quest", "quest": "lesson"}).json()
     assert q["award"] == 0 and q["state"]["claimedQuests"] == [f"{tz.today().isoformat()}:lesson"]
@@ -237,7 +241,17 @@ def test_lesson_and_quest_flow(client, acct):
 
 # ── O'yin natijalari ────────────────────────────────────────────────────────
 
+def seed_quiz_content(db):
+    from backend.tests.test_group_learning import add_content
+    from backend.minar.models import MinarContent
+    if not db.query(MinarContent).first():
+        add_content(db)
+
+
 def start_game(client, game, **kw):
+    if game == 'quiz':
+        with TestSessionLocal() as seed_db:
+            seed_quiz_content(seed_db)
     r = post(client, "/games/start", {"game": game, **kw})
     assert r.status_code == 200, r.text
     return r.json()
@@ -261,7 +275,7 @@ def finish(client, sess, **raw):
 def play_questions(client, db, game, correct):
     sess = start_game(client, game)
     row = session_row(db, sess["id"])
-    for i, q in enumerate(games.questions(game, row.course, row.seed)):
+    for i, q in enumerate(games.session_questions(row)):
         choice = q["answer"] if i < correct else (q["answer"] + 1) % len(q["options"])
         r = post(client, "/games/answer", {"session": sess["id"], "index": i, "choice": choice}).json()
         assert r["correct"] == (i < correct) and r["answer"] == q["answer"] and r["explain"]
@@ -282,7 +296,7 @@ def test_session_hides_answers_and_shuffles_options(client, db, acct):
     positions = set()
     for _ in range(12):
         row = session_row(db, start_game(client, "quiz")["id"])
-        positions |= {q["answer"] for q in games.questions("quiz", row.course, row.seed)}
+        positions |= {q["answer"] for q in games.session_questions(row)}
     assert len(positions) >= 3                                                    # to'g'ri javob doim bir joyda emas
     assert start_game(client, "memory")["cards"] == 12 and "values" not in start_game(client, "memory")
     assert post(client, "/games/start", {"game": "hack"}).status_code == 400
@@ -293,8 +307,8 @@ def test_quiz_answer_once_and_server_score(client, db, acct):
     sess = start_game(client, "quiz")
     assert finish(client, sess).status_code == 400                                # javobsiz yakunlab bo'lmaydi
     row = session_row(db, sess["id"])
-    qs = games.questions("quiz", row.course, row.seed)
-    wrong = (qs[0]["answer"] + 1) % 4
+    qs = games.session_questions(row)
+    wrong = (qs[0]["answer"] + 1) % len(qs[0]["options"])
     assert post(client, "/games/answer", {"session": sess["id"], "index": 0, "choice": wrong}).json()["correct"] is False
     again = post(client, "/games/answer", {"session": sess["id"], "index": 0, "choice": qs[0]["answer"]})
     assert again.status_code == 409                                               # javobni almashtirib bo'lmaydi
@@ -357,7 +371,7 @@ def test_timing_and_tamper_rejected(client, db, acct):
 
 
 def test_session_expires_and_belongs_to_owner(client, db, metodist_token, acct):
-    sess = play_questions(client, db, "bug", 2)
+    sess = play_questions(client, db, "quiz", 2)
     backdate(db, sess["id"], 31 * 60)
     assert finish(client, sess).status_code == 410
     other = start_game(client, "quiz")
@@ -399,8 +413,8 @@ def test_memory_move_limit(client, db, acct):
 
 def test_all_game_rules(client, db, acct):
     assert finish(client, play_questions(client, db, "quiz", 2)).json()["award"] == 0
-    assert finish(client, play_questions(client, db, "bug", 2)).json()["state"]["results"][0]["lightning"] == 2
-    assert finish(client, play_questions(client, db, "bug", 1)).json()["award"] == 0
+    assert finish(client, play_questions(client, db, "quiz", 3)).json()["state"]["results"][0]["lightning"] == 2
+    assert post(client, "/games/start", {"game":"bug"}).status_code == 400
     for n, want in ((5, 2), (4, 0)):
         z = start_game(client, "ztype")
         for i in range(n):
@@ -539,11 +553,11 @@ def test_teacher_coins_and_attendance_flow_into_state(client, db, acct, metodist
 
 # ── Reyting ─────────────────────────────────────────────────────────────────
 
-def test_battle_text_changes_each_match_and_comes_from_the_course_bank():
+def test_battle_text_changes_each_match_and_uses_neutral_words():
     texts = {games.battle_text("HTML", seed) for seed in range(40)}
     assert len(texts) > 30
     assert all(len(text.split()) == C.BATTLE_WORDS for text in texts)
-    known = set(games.bank.TYPING_WORDS["HTML"]["easy"] + games.bank.TYPING_WORDS["HTML"]["normal"])
+    known = set(games.typing_words("HTML", "normal", 0))
     assert all(set(text.split()) <= known for text in texts)
 
 
@@ -584,7 +598,7 @@ def test_leaderboard_masks_names_filters_and_includes_self(client, db, metodist_
     assert isinstance(rows, list) and [r["name"] for r in rows] == ["Azizbek K.", "Malika K."]
     assert rows[1] == {"id": c2["login_id"], "name": "Malika K.", "avatar": "🤖", "character": "robo",
                        "equipment": {"hat": None, "accessory": None, "outfit": None, "background": None, "planet": None}, "coins": 80, "week": 80, "xp": 0,
-                       "active": 0, "course": "JavaScript", "rank": 2, "total": 2, "lightning": 0, "level": 1}
+                       "active": 0, "course": "Fullstack", "rank": 2, "total": 2, "lightning": 0, "level": 1}
     js = client.get("/space/leaderboard?course=JavaScript").json()
     assert [r["id"] for r in js] == [c2["login_id"]]
     assert client.get("/space/leaderboard?metric=hack").status_code == 400
@@ -646,6 +660,7 @@ def _ws_pair(client, db, metodist_token, mode):
     hc, gc = TestClient(app), TestClient(app)
     login(hc, host)
     login(gc, guest)
+    if mode == "quiz": seed_quiz_content(db)
     room = post(hc, "/battles", {"mode": mode}).json()
     joined = post(gc, f"/battles/{room['code']}/join").json()
     return hc, gc, host, guest, room, joined
@@ -729,7 +744,7 @@ def test_ws_quiz_battle_scoring_and_draw(client, ws_client, db, metodist_token):
         for qi in range(5):
             time.sleep(0.35)                                         # server: javoblar orasida >= 300 ms
             hws.send_json({"type": "progress", "matchId": start["matchId"], "questionIndex": qi, "answerIndex": answers[qi]})
-            wrong = (answers[qi] + 1) % 4 if qi < 2 else answers[qi]  # mehmon 2 ta xato qiladi
+            wrong = (answers[qi] + 1) % len(battles.ROOMS[room["roomId"]].questions[qi]["options"]) if qi < 2 else answers[qi]  # mehmon 2 ta xato qiladi
             gws.send_json({"type": "progress", "matchId": start["matchId"], "questionIndex": qi, "answerIndex": wrong})
         result = _recv_until(hws, "result")
         assert result["scores"] == {"host": 5, "guest": 3} and result["winnerId"] == host["login_id"]

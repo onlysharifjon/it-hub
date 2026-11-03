@@ -1,7 +1,7 @@
 """O'yinlar olami: sessiya (kontent seed'dan), javob/karta tekshiruvi va natijani serverda hisoblash.
 
 Mijoz endi "score: 5" deb yubora olmaydi:
-* Quiz / Bug Hunter — har bir javob `answer` orqali birinchi urinishdayoq serverda yoziladi.
+* Quiz — har bir javob `answer` orqali birinchi urinishdayoq serverda yoziladi.
 * Memory — kartalar joylashuvi faqat serverda; har bir karta `flip` orqali ochiladi.
 * Typing — server o'z so'zlari bilan yozilgan matnni solishtiradi.
 * ZType — urilgan asteroidlar ketma-ketlikdagi indekslar sifatida tekshiriladi.
@@ -19,11 +19,10 @@ from sqlalchemy.orm import Session
 
 from .. import security
 from . import catalog as C
-from . import game_bank as bank
 from .errors import MinarError
 from .models import MinarAccount, MinarGameSession
 
-GAMES = ("typing", "ztype", "quiz", "memory", "bug")
+GAMES = ("typing", "ztype", "quiz", "memory")
 QUIZ_COUNT = 5
 BUG_COUNT = 3
 MEMORY_PAIRS = 6
@@ -53,21 +52,6 @@ def _course(acc: MinarAccount) -> str:
     return acc.course if acc.course in C.COURSES else C.COURSES[0]
 
 
-def questions(game: str, course: str, seed: int) -> list[dict]:
-    rng = random.Random(seed)
-    items = (bank.QUIZ if game == "quiz" else bank.BUG)[course]
-    out = []
-    for i in rng.sample(range(len(items)), QUIZ_COUNT if game == "quiz" else BUG_COUNT):
-        if game == "quiz":
-            (q, opts, explain), code = items[i], None
-        else:
-            code, q, opts, explain = items[i]
-        perm = rng.sample(range(len(opts)), len(opts))
-        out.append({"q": q, "code": code, "options": [opts[p] for p in perm],
-                    "answer": perm.index(0), "explain": explain})
-    return out
-
-
 def _sequence(rng: random.Random, pool: list[str], n: int) -> list[str]:
     out: list[str] = []
     while len(out) < n:
@@ -78,22 +62,25 @@ def _sequence(rng: random.Random, pool: list[str], n: int) -> list[str]:
 
 
 def typing_words(course: str, difficulty: str, seed: int) -> list[str]:
-    return _sequence(random.Random(seed), bank.TYPING_WORDS[course][difficulty], TYPING_WORDS_COUNT)
+    pool = ('moon star light sky orbit planet comet cloud dream team book world learn space ' +
+            'friend river ocean forest sunrise journey courage curious discover explore galaxy').split()
+    if difficulty == 'easy':
+        pool = [word for word in pool if len(word) <= 5]
+    return _sequence(random.Random(seed), pool, TYPING_WORDS_COUNT)
 
 
 def battle_text(course: str, seed: int) -> str:
-    """Fresh words for each typing battle, drawn from the course's word bank."""
-    words = bank.TYPING_WORDS[course]
-    return " ".join(_sequence(random.Random(seed), words["easy"] + words["normal"], C.BATTLE_WORDS))
+    """Fresh neutral words for each typing battle."""
+    return " ".join(typing_words(course, 'normal', seed)[:C.BATTLE_WORDS])
 
 
 def ztype_words(course: str, seed: int) -> list[str]:
-    return _sequence(random.Random(seed), bank.ZTYPE_WORDS[course], 200)
+    return typing_words(course, 'normal', seed)[:200]
 
 
 def memory_cards(course: str, seed: int) -> list[str]:
     rng = random.Random(seed)
-    cards = rng.sample(bank.MEMORY_CARDS[course], MEMORY_PAIRS) * 2
+    cards = rng.sample(['MOON', 'STAR', 'ORBIT', 'COMET', 'SUN', 'MARS', 'EARTH', 'NOVA'], MEMORY_PAIRS) * 2
     rng.shuffle(cards)
     return cards
 
@@ -140,7 +127,8 @@ def public_session(s: MinarGameSession) -> dict:
     out = {"id": s.id, "game": s.game, "course": s.course, "difficulty": s.difficulty, "duration": s.duration}
     if s.game in ("quiz", "bug"):
         out["questions"] = [{"q": q["q"], "code": q["code"], "options": q["options"]}
-                            for q in questions(s.game, s.course, s.seed)]
+                            for q in session_questions(s)]
+        out['topic'] = ' · '.join(dict.fromkeys(q.get('topic', '') for q in session_questions(s)))
     elif s.game == "typing":
         out["words"] = typing_words(s.course, s.difficulty, s.seed)
     elif s.game == "ztype":
@@ -149,6 +137,14 @@ def public_session(s: MinarGameSession) -> dict:
         out["cards"] = len(memory_cards(s.course, s.seed))
         out["maxMoves"] = MEMORY_MAX_MOVES
     return out
+
+
+def session_questions(s):
+    # Immutable server-side snapshot: CRM edits cannot change answers mid-game.
+    qs = _state(s).get('questions')
+    if not qs:
+        raise MinarError(410, 'Eski test sessiyasi yakunlandi. Yangi mavzu testini boshlang.')
+    return qs
 
 
 def start(db: Session, acc: MinarAccount, payload: dict) -> dict:
@@ -177,6 +173,9 @@ def start(db: Session, acc: MinarAccount, payload: dict) -> dict:
     s = MinarGameSession(id=uuid.uuid4().hex, account_id=acc.id, game=game, course=_course(acc),
                          difficulty=difficulty, duration=duration, seed=secrets.randbits(31),
                          state="{}", started_at=now)
+    if game == 'quiz':
+        from . import study
+        s.state = json.dumps({'questions':study.quiz_questions(db, acc, s.seed)}, ensure_ascii=False)
     db.add(s)
     db.commit()
     return public_session(s)
@@ -205,7 +204,7 @@ def answer(db: Session, acc: MinarAccount, payload: dict) -> dict:
     s = _open(db, acc, payload.get("session"), ("quiz", "bug"))
     st = _state(s)
     answers = st.get("answers", [])
-    qs = questions(s.game, s.course, s.seed)
+    qs = session_questions(s)
     index = _int(payload.get("index"), 0, len(qs) - 1)
     if index != len(answers):
         raise MinarError(409, "Bu savolga javob berilgan.")
@@ -250,7 +249,7 @@ def finish(s: MinarGameSession, result: dict) -> tuple[dict, bool]:
     elapsed = (datetime.utcnow() - s.started_at).total_seconds()
     st = _state(s)
     if s.game in ("quiz", "bug"):
-        qs = questions(s.game, s.course, s.seed)
+        qs = session_questions(s)
         answers = st.get("answers", [])
         if len(answers) != len(qs):
             raise MinarError(400, "Avval barcha savollarga javob ber.")
