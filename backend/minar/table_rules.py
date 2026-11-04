@@ -7,6 +7,7 @@ import chess
 from .errors import MinarError
 
 GAMES = {'chess': (2, 2), 'checkers': (2, 2), 'uno': (2, 6), 'mafia': (6, 10), 'sudoku': (1, 1)}
+MAFIA_PHASE_SECONDS = {'night': 30, 'discussion': 45, 'vote': 25}
 RNG = random.SystemRandom()
 
 
@@ -101,7 +102,7 @@ def new_game(game, ids):
         roles = ['mafia']*(2 if len(ids) >= 7 else 1)+['doctor', 'detective']
         roles += ['citizen']*(len(ids)-len(roles))
         RNG.shuffle(roles)
-        s.update(roles=dict(zip(ids, roles)), alive=ids[:], phase='night', round=1, choices={}, investigations={}, eliminated=[], chat=[], lastNight=None)
+        s.update(roles=dict(zip(ids, roles)), alive=ids[:], phase='night', round=1, choices={}, investigations={}, eliminated=[], chat=[], lastNight=None, discussionReady=[], events=[], lastVote=None)
     elif game == 'sudoku':
         solution = sudoku_solution()
         puzzle = solution[:]
@@ -151,28 +152,53 @@ def eliminate(s, pid):
         s['eliminated'].append({'id': pid, 'role': s['roles'][pid]})
 
 
+def mafia_phase_key(s):
+    return f"{s['round']}:{s['phase']}"
+
+
+def _mafia_event(s, kind, target=None, **extra):
+    # Only resolved, public outcomes enter this log. Never include night votes,
+    # saved targets, detective choices, or the number of night actions submitted.
+    event = {'id': mafia_phase_key(s), 'round': s['round'], 'type': kind, 'target': target, **extra}
+    s['events'] = (s.get('events', []) + [event])[-40:]
+
+
+def _unique_vote_target(votes):
+    ranked = votes.most_common()
+    return ranked[0][0] if ranked and (len(ranked) == 1 or ranked[0][1] > ranked[1][1]) else None
+
+
 def mafia_advance(s):
+    if s['finished']:
+        return
     choices = s['choices']
     if s['phase'] == 'night':
         votes = Counter(v for p, v in choices.items() if s['roles'][p] == 'mafia')
-        target = votes.most_common(1)[0][0] if votes else None
+        # A split mafia vote must not be decided by request arrival order.
+        target = _unique_vote_target(votes)
         saved = {v for p, v in choices.items() if s['roles'][p] == 'doctor'}
         if target and target not in saved:
             eliminate(s, target)
         else:
             target = None
         s['lastNight'] = target
+        _mafia_event(s, 'night_eliminated' if target else 'night_safe', target)
         s['phase'] = 'discussion'
     elif s['phase'] == 'discussion':
         s['phase'] = 'vote'
     else:
-        votes = Counter(choices.values()).most_common()
-        target = votes[0][0] if votes and (len(votes) == 1 or votes[0][1] > votes[1][1]) else None
+        votes = Counter(v for v in choices.values() if v is not None)
+        target = _unique_vote_target(votes)
+        tally = dict(votes)
+        abstentions = sum(v is None for v in choices.values())
+        s['lastVote'] = {'round': s['round'], 'target': target, 'tied': bool(votes and not target), 'tally': tally, 'abstentions': abstentions}
         if target:
             eliminate(s, target)
+        _mafia_event(s, 'vote_eliminated' if target else 'vote_tied' if votes else 'no_vote', target, tally=tally, abstentions=abstentions)
         s['phase'] = 'night'
         s['round'] += 1
     s['choices'] = {}
+    s['discussionReady'] = []
     mafia_winner(s)
 
 
@@ -186,15 +212,32 @@ def move(game, s, pid, action):
         return
     if game == 'mafia':
         require(pid in s['alive'], 'Siz kuzatuvchisiz.')
+        if action.get('phaseKey') is not None and action['phaseKey'] != mafia_phase_key(s):
+            raise MinarError(409, 'Bosqich yangilandi. Yangi vaziyatni tekshiring.')
         if kind == 'chat':
             require(s['phase'] in ('discussion', 'vote'), 'Muhokama kunduz kuni ochiladi.')
             body = action.get('text')
             require(isinstance(body, str) and 0 < len(body.strip()) <= 300, 'Xabar 1–300 belgi bo‘lsin.')
             s['chat'] = (s['chat']+[{'id': secrets.token_hex(6), 'player': pid, 'text': body.strip(), 'round': s['round']}])[-60:]
             return
-        require(kind == 'choose' and s['phase'] in ('night', 'vote'))
+        if kind in ('discussion-ready', 'discussion_ready'):
+            require(s['phase'] == 'discussion', 'Tayyorlik faqat muhokama vaqtida belgilanadi.')
+            require(type(action.get('ready')) is bool, 'Tayyorlik holatini tanlang.')
+            ready = set(s.get('discussionReady', []))
+            if action['ready']:
+                ready.add(pid)
+            else:
+                ready.discard(pid)
+            s['discussionReady'] = [p for p in s['alive'] if p in ready]
+            if all(p in ready for p in s['alive']):
+                mafia_advance(s)
+            return
+        require(kind in ('choose', 'abstain') and s['phase'] in ('night', 'vote'))
+        require(pid not in s['choices'], 'Tanlovingiz yuborilgan. Bosqich yakunlanishini kuting.')
+        if kind == 'abstain':
+            require(s['phase'] == 'vote', 'Ovoz bermaslik faqat kunduzgi ovoz berishda mumkin.')
         target = action.get('target')
-        require(target in s['alive'] and pid not in s['choices'])
+        require(kind == 'abstain' or target in s['alive'])
         role = s['roles'][pid]
         if s['phase'] == 'night':
             require(role != 'citizen')
@@ -203,9 +246,9 @@ def move(game, s, pid, action):
             if role == 'detective':
                 require(pid != target)
                 s['investigations'].setdefault(pid, {})[target] = s['roles'][target] == 'mafia'
-        else:
+        elif kind == 'choose':
             require(pid != target)
-        s['choices'][pid] = target
+        s['choices'][pid] = None if kind == 'abstain' else target
         expected = s['alive'] if s['phase'] == 'vote' else [p for p in s['alive'] if s['roles'][p] != 'citizen']
         if all(p in s['choices'] for p in expected):
             mafia_advance(s)
@@ -320,7 +363,14 @@ def view(game, s, pid):
     elif game == 'uno':
         out.update(hand=copy.deepcopy(s['hands'].get(pid, [])), counts={p: len(h) for p, h in s['hands'].items()}, top=copy.deepcopy(s['discard'][-1]), color=s['color'], direction=s['direction'], deckCount=len(s['deck']), drawn=s['drawn'] if s['players'][s['turn']] == pid else None, legal=[c['id'] for c in s['hands'].get(pid, []) if uno_legal(s, c, pid)])
     elif game == 'mafia':
+        # The shared move counter would reveal how many hidden night choices
+        # have arrived. Mafia clients only need the public round/phase.
+        out.pop('plies', None)
         out.update(role=s['roles'].get(pid), alive=s['alive'][:], phase=s['phase'], round=s['round'], eliminated=copy.deepcopy(s['eliminated']), chat=copy.deepcopy(s['chat']), investigations=copy.deepcopy(s['investigations'].get(pid, {})), chosen=s['choices'].get(pid), lastNight=s['lastNight'], winningTeam=s.get('winningTeam'))
+        out.update(phaseKey=mafia_phase_key(s), phaseSeconds=0 if s['finished'] else MAFIA_PHASE_SECONDS[s['phase']],
+                   discussionReady=s.get('discussionReady', [])[:] if s['phase'] == 'discussion' else [],
+                   choiceReceived=pid in s['choices'], abstained=pid in s['choices'] and s['choices'][pid] is None,
+                   events=copy.deepcopy(s.get('events', [])), lastVote=copy.deepcopy(s.get('lastVote')))
         if s['roles'].get(pid) == 'mafia':
             out['team'] = [p for p, r in s['roles'].items() if r == 'mafia']
         if s['finished']:

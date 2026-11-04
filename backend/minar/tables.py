@@ -55,7 +55,7 @@ def _public(db, acc, room):
             'status': 'expired' if expired and room.status != 'finished' else room.status,
             'host': str(room.host_id), 'me': str(acc.id), 'version': room.version,
             'members': [{**data[m.account_id], 'ready': m.ready} for m in members],
-            'deadline': state.get('deadline'), 'serverTime': datetime.utcnow().isoformat()+'Z',
+            'deadline': state.get('deadline'), 'phaseStartedAt': state.get('phaseStartedAt'), 'serverTime': datetime.utcnow().isoformat()+'Z',
             'state': rules.view(room.game, state['game'], str(acc.id)) if 'game' in state else None}
 
 
@@ -127,8 +127,10 @@ def _deadline(room, state):
     if g['finished'] or room.game == 'sudoku':
         state['deadline'] = None
     else:
-        seconds = 90 if room.game == 'mafia' else 300
-        state['deadline'] = (datetime.utcnow()+timedelta(seconds=seconds)).isoformat()+'Z'
+        seconds = rules.MAFIA_PHASE_SECONDS[g['phase']] if room.game == 'mafia' else 300
+        now = datetime.utcnow()
+        state['phaseStartedAt'] = now.isoformat()+'Z'
+        state['deadline'] = (now+timedelta(seconds=seconds)).isoformat()+'Z'
 
 
 def act(db, acc, code, payload):
@@ -144,8 +146,17 @@ def act(db, acc, code, payload):
     kind = payload.get('type')
     if room.expires_at <= datetime.utcnow() and room.status != 'finished':
         raise MinarError(410, 'Xona vaqti tugagan. Yangi xona oching.')
-    # Tick/leave are independent of optimistic UI versions; moves must use current state.
-    if kind not in ('tick', 'leave') and payload.get('version') != room.version:
+    # Mafia choices/chat concern a phase, not incidental chat or another player's
+    # private choice. A phase key allows simultaneous actions without weakening
+    # the optimistic version check for turn-based games or older clients.
+    mafia_phase_action = (
+        room.game == 'mafia' and room.status == 'playing'
+        and kind in ('chat', 'choose', 'abstain', 'discussion-ready', 'discussion_ready')
+        and payload.get('phaseKey') is not None
+    )
+    if mafia_phase_action and payload['phaseKey'] != rules.mafia_phase_key(state['game']):
+        raise MinarError(409, 'Bosqich yangilandi. Yangi vaziyatni tekshiring.')
+    if kind not in ('tick', 'leave') and not mafia_phase_action and payload.get('version') != room.version:
         raise MinarError(409, 'Xona yangilandi. Yurishni yana tanlang.')
     members = _members(db, room)
     now = datetime.utcnow()

@@ -97,7 +97,7 @@ def test_mafia_all_six_students_have_independent_secret_roles(client, db, acct, 
     for peer in clients:
         view = peer.get('/space/tables/'+room['code']).json()
         roles.append(view['state']['role'])
-        assert not {'roles','choices'} & view['state'].keys()
+        assert not {'roles','choices','plies'} & view['state'].keys()
         assert view['state']['investigations'] == {}
         assert 'phone' not in json.dumps(view)
     assert sorted(roles) == sorted(['mafia','doctor','detective','citizen','citizen','citizen'])
@@ -247,3 +247,143 @@ def test_postgres_simultaneous_move_retries_are_one_move(client, db, acct, metod
     with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(lambda _:worker(),range(2)))
     assert [x['version'] for x in results]==[room['version']+1]*2
     assert all(x['state']['log']==['e4'] for x in results)
+
+
+def _mafia_state(count=6):
+    ids = list('abcdefghij'[:count])
+    s = r.new_game('mafia', ids)
+    roles = ['mafia'] * (2 if count >= 7 else 1) + ['doctor', 'detective']
+    s['roles'] = dict(zip(ids, roles + ['citizen'] * (count - len(roles))))
+    return s
+
+
+def test_mafia_split_night_votes_never_depend_on_request_arrival():
+    for picks in ({'a': 'f', 'b': 'g'}, {'b': 'g', 'a': 'f'}):
+        s = _mafia_state(7)
+        s['choices'] = {**picks, 'c': 'c', 'd': 'a'}
+        r.mafia_advance(s)
+        assert s['alive'] == list('abcdefg')
+        assert s['events'] == [{'id': '1:night', 'round': 1, 'type': 'night_safe', 'target': None}]
+        citizen = r.view('mafia', s, 'e')
+        assert citizen['lastNight'] is None
+        assert not {'choices', 'nightVotes', 'roles', 'team'} & citizen.keys()
+
+
+def test_mafia_discussion_readiness_retracts_and_ignores_eliminated_players():
+    s = _mafia_state()
+    with pytest.raises(MinarError):
+        r.move('mafia', s, 'd', {'type': 'discussion-ready', 'ready': True})
+    r.eliminate(s, 'f')
+    r.mafia_advance(s)
+    r.move('mafia', s, 'a', {'type': 'discussion-ready', 'ready': True, 'phaseKey': '1:discussion'})
+    r.move('mafia', s, 'a', {'type': 'discussion_ready', 'ready': False, 'phaseKey': '1:discussion'})
+    assert s['discussionReady'] == []
+    with pytest.raises(MinarError):
+        r.move('mafia', s, 'f', {'type': 'discussion-ready', 'ready': True})
+    with pytest.raises(MinarError):
+        r.move('mafia', s, 'a', {'type': 'discussion-ready', 'ready': 'false'})
+    for pid in 'abcd':
+        r.move('mafia', s, pid, {'type': 'discussion-ready', 'ready': True, 'phaseKey': '1:discussion'})
+    assert s['phase'] == 'discussion' and r.view('mafia', s, 'e')['discussionReady'] == list('abcd')
+    r.move('mafia', s, 'e', {'type': 'discussion-ready', 'ready': True, 'phaseKey': '1:discussion'})
+    assert s['phase'] == 'vote' and s['discussionReady'] == []
+    with pytest.raises(MinarError) as error:
+        r.move('mafia', s, 'e', {'type': 'chat', 'text': 'Oldingi bosqich', 'phaseKey': '1:discussion'})
+    assert error.value.status == 409
+    assert s['chat'] == []
+
+
+def test_mafia_ballot_privacy_abstention_and_resolved_tally():
+    s = _mafia_state()
+    s['phase'] = 'vote'
+    r.move('mafia', s, 'a', {'type': 'choose', 'target': 'd'})
+    assert r.view('mafia', s, 'a')['chosen'] == 'd'
+    other = r.view('mafia', s, 'b')
+    assert not other['choiceReceived'] and other['chosen'] is None and other['lastVote'] is None
+    assert other['events'] == []
+    r.move('mafia', s, 'b', {'type': 'abstain'})
+    mine = r.view('mafia', s, 'b')
+    assert mine['choiceReceived'] and mine['abstained'] and mine['chosen'] is None
+    with pytest.raises(MinarError):
+        r.move('mafia', s, 'b', {'type': 'choose', 'target': 'a'})
+    r.move('mafia', s, 'c', {'type': 'choose', 'target': 'e'})
+    for pid in 'def':
+        r.move('mafia', s, pid, {'type': 'abstain'})
+    expected = {'round': 1, 'target': None, 'tied': True, 'tally': {'d': 1, 'e': 1}, 'abstentions': 4}
+    assert s['lastVote'] == expected
+    assert s['phase'] == 'night' and s['round'] == 2 and len(s['alive']) == 6
+    assert s['events'][-1]['type'] == 'vote_tied'
+    assert r.view('mafia', s, 'a')['lastVote'] == expected
+
+
+def test_mafia_all_abstain_records_no_vote_and_old_rooms_remain_readable():
+    s = _mafia_state()
+    for key in ('events', 'lastVote', 'discussionReady'):
+        s.pop(key)
+    old_view = r.view('mafia', s, 'd')
+    assert old_view['events'] == [] and old_view['lastVote'] is None and old_view['discussionReady'] == []
+    assert old_view['phaseKey'] == '1:night' and old_view['phaseSeconds'] == 30
+    with pytest.raises(MinarError):
+        r.move('mafia', s, 'a', {'type': 'abstain'})
+    s['phase'] = 'vote'
+    for pid in 'abcdef':
+        r.move('mafia', s, pid, {'type': 'abstain'})
+    assert s['events'][-1] == {'id': '1:vote', 'round': 1, 'type': 'no_vote', 'target': None, 'tally': {}, 'abstentions': 6}
+    assert len(s['alive']) == 6
+
+
+def test_mafia_phase_keys_allow_parallel_choices_without_extending_clocks(client, db, acct, metodist_token):
+    clients = [client]
+    room = post(client, '/tables', {'game': 'mafia'}).json()
+    for index in range(5):
+        peer = TestClient(app)
+        _, creds = new_account(client, db, metodist_token, f'Phase Player{index}')
+        login(peer, creds)
+        assert post(peer, '/tables/' + room['code'] + '/join').status_code == 200
+        action(peer, room, 'ready', ready=True)
+        clients.append(peer)
+    room = action(client, room, 'start')
+    url = '/tables/' + room['code'] + '/actions'
+    members = {peer.get('/space/tables/' + room['code']).json()['me']: peer for peer in clients}
+    states = {pid: peer.get('/space/tables/' + room['code']).json()['state'] for pid, peer in members.items()}
+    by_role = {role: [pid for pid, state in states.items() if state['role'] == role] for role in ('mafia', 'doctor', 'detective', 'citizen')}
+
+    def send(pid, snapshot, kind, **kw):
+        result = post(members[pid], url, {'type': kind, 'requestId': str(uuid.uuid4()), 'version': snapshot['version'], 'phaseKey': snapshot['state']['phaseKey'], **kw})
+        assert result.status_code == 200, result.text
+        return result.json()
+
+    def duration(snapshot, seconds):
+        start = datetime.fromisoformat(snapshot['phaseStartedAt'].rstrip('Z'))
+        end = datetime.fromisoformat(snapshot['deadline'].rstrip('Z'))
+        assert (end - start).total_seconds() == seconds
+        assert snapshot['state']['phaseSeconds'] == seconds
+
+    duration(room, 30)
+    night = room
+    victim = by_role['citizen'][0]
+    partial = send(by_role['mafia'][0], night, 'choose', target=victim)
+    assert partial['deadline'] == night['deadline'] and partial['state']['choiceReceived']
+    # Both subsequent choices deliberately use the same original room version.
+    send(by_role['doctor'][0], night, 'choose', target=victim)
+    room = send(by_role['detective'][0], night, 'choose', target=by_role['mafia'][0])
+    duration(room, 45)
+    assert room['state']['events'][-1]['type'] == 'night_safe'
+    discussion = room
+    first = next(iter(members))
+    room = send(first, discussion, 'chat', text='Dalillarni solishtiramiz.')
+    assert room['deadline'] == discussion['deadline']
+    for index, pid in enumerate(members):
+        room = send(pid, discussion, 'discussion-ready', ready=True)
+        if index < 5:
+            assert room['deadline'] == discussion['deadline']
+    duration(room, 25)
+    stale = post(members[first], url, {'type': 'choose', 'target': victim, 'phaseKey': discussion['state']['phaseKey'], 'version': room['version'], 'requestId': str(uuid.uuid4())})
+    assert stale.status_code == 409
+    vote = room
+    for pid in members:
+        room = send(pid, vote, 'abstain')
+        if room['state']['phase'] == 'vote':
+            assert room['deadline'] == vote['deadline'] and room['state']['lastVote'] is None
+    duration(room, 30)
+    assert room['state']['round'] == 2 and room['state']['events'][-1]['type'] == 'no_vote'
