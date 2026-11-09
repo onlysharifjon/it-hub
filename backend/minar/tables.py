@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from .. import models, security
 from . import table_rules as rules
+from . import new_table_rules as expanded
 from .models import MinarAccount, MinarTableRoom as Room, MinarTablePlayer as Player, MinarResult
 from .errors import MinarError
 
@@ -142,14 +143,15 @@ def _deadline(room, state):
     if g['finished'] or room.game == 'sudoku':
         state['deadline'] = None
     else:
-        seconds = rules.MAFIA_PHASE_SECONDS[g['phase']] if room.game == 'mafia' else 300
+        seconds = (expanded.phase_seconds(room.game, g) if room.game in expanded.GAMES else
+                   rules.MAFIA_PHASE_SECONDS[g['phase']] if room.game == 'mafia' else 300)
         now = datetime.utcnow()
         state['phaseStartedAt'] = now.isoformat()+'Z'
         state['deadline'] = (now+timedelta(seconds=seconds)).isoformat()+'Z'
 
 
 def act(db, acc, code, payload):
-    _limited(acc, 'action', 100)
+    _limited(acc, 'action', 240)
     req = payload.get('requestId')
     rules.require(isinstance(req, str) and 8 <= len(req) <= 64, 'So‘rov kaliti kerak.')
     _account_lock(db, acc)
@@ -193,7 +195,11 @@ def act(db, acc, code, payload):
     )
     if mafia_phase_action and payload['phaseKey'] != rules.mafia_phase_key(state['game']):
         raise MinarError(409, 'Bosqich yangilandi. Yangi vaziyatni tekshiring.')
-    if kind not in ('tick', 'leave') and not mafia_phase_action and payload.get('version') != room.version:
+    expanded_phase_action = (room.game in expanded.GAMES and room.status == 'playing'
+                             and expanded.phase_actions(room.game, kind))
+    if expanded_phase_action and payload.get('phaseKey') != expanded.phase_key(state['game']):
+        raise MinarError(409, 'Bosqich yangilandi. Yangi vaziyatni tekshiring.')
+    if kind not in ('tick', 'leave') and not mafia_phase_action and not expanded_phase_action and payload.get('version') != room.version:
         raise MinarError(409, 'Xona yangilandi. Yurishni yana tanlang.')
     members = _members(db, room)
     now = datetime.utcnow()
@@ -229,8 +235,11 @@ def act(db, acc, code, payload):
         g = state['game']
         expired = state.get('deadline') and now >= datetime.fromisoformat(state['deadline'].rstrip('Z'))
         before = (g['turn'], g.get('phase'), g.get('round'), g.get('plies'))
+        previous_phase = expanded.phase_key(g) if room.game in expanded.GAMES else None
         if expired:
-            if room.game == 'mafia':
+            if room.game in expanded.GAMES:
+                expanded.advance(room.game, g)
+            elif room.game == 'mafia':
                 rules.mafia_advance(g)
             else:
                 rules.finish(g, [], 'timeout')
@@ -240,10 +249,18 @@ def act(db, acc, code, payload):
         else:
             if kind == 'chat':
                 _limited(acc, 'chat', 15)
+            if room.game == 'draw':
+                if kind == 'stroke':
+                    _limited(acc, 'stroke', 160)
+                elif kind == 'guess':
+                    _limited(acc, 'guess', 30)
+                elif kind == 'clear':
+                    _limited(acc, 'clear', 12)
             rules.move(room.game, g, str(acc.id), payload)
             after = (g['turn'], g.get('phase'), g.get('round'), g.get('plies'))
             # Chat and partial night votes must never prolong a phase.
-            changed = before[1:3] != after[1:3] if room.game == 'mafia' else before != after
+            changed = (previous_phase != expanded.phase_key(g) if room.game in expanded.GAMES else
+                       before[1:3] != after[1:3] if room.game == 'mafia' else before != after)
             if changed:
                 _deadline(room, state)
         if g['finished']:
@@ -267,4 +284,6 @@ def result(db, acc, room_id):
     rules.require(room and db.query(Player.id).filter_by(room_id=room_id, account_id=acc.id).first(), 'Yakunlangan o‘yin topilmadi.')
     state = json.loads(room.state).get('game', {})
     won = str(acc.id) in state.get('winners', []) and state.get('reason') == 'completed'
+    if room.game == 'quest':
+        won = won and str(acc.id) in state.get('contributors', [])
     return {'game': room.game, 'roomId': room_id, 'won': won, 'draw': state.get('reason') == 'draw', 'reason': state.get('reason'), 'score': int(won)}, won

@@ -5,8 +5,9 @@ import random
 import secrets
 import chess
 from .errors import MinarError
+from . import new_table_rules as expanded
 
-GAMES = {'chess': (2, 2), 'checkers': (2, 2), 'uno': (2, 6), 'mafia': (6, 10), 'sudoku': (1, 1)}
+GAMES = {'chess': (2, 2), 'checkers': (2, 2), 'uno': (2, 6), 'mafia': (6, 10), 'sudoku': (1, 1), **expanded.GAMES}
 MAFIA_PHASE_SECONDS = {'night': 30, 'discussion': 45, 'vote': 25}
 CHECKERS_RULES = 'russian-64-v2'
 RNG = random.SystemRandom()
@@ -169,6 +170,8 @@ def solution_count(grid, limit=2):
 
 
 def new_game(game, ids):
+    if game in expanded.GAMES:
+        return expanded.new_game(game, ids)
     s = {'players': ids[:], 'turn': 0, 'plies': 0, 'finished': False, 'winners': [], 'log': []}
     if game == 'chess':
         s['moves'] = []
@@ -292,6 +295,8 @@ def mafia_advance(s):
 
 
 def move(game, s, pid, action):
+    if game in expanded.GAMES:
+        return expanded.move(game, s, pid, action)
     require(not s['finished'], 'O‘yin tugagan.')
     require(pid in s['players'], 'Siz bu xonada emassiz.')
     kind = action.get('type')
@@ -452,6 +457,8 @@ def move(game, s, pid, action):
 
 
 def view(game, s, pid):
+    if game in expanded.GAMES:
+        return expanded.view(game, s, pid)
     out = {k: copy.deepcopy(s.get(k)) for k in ('players', 'turn', 'plies', 'finished', 'winners', 'reason')}
     if game == 'chess':
         b = board_chess(s)
