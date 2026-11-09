@@ -3591,29 +3591,40 @@ def server_time():
 
 # Uzbek day abbreviations → Python weekday (Mon=0)
 _DAY_WORDS = {
-    'du': 0, 'dush': 0,
-    'se': 1, 'sesh': 1,
-    'chor': 2,
-    'pay': 3,
-    'ju': 4, 'jum': 4,
-    'shan': 5,
-    'yak': 6,
+    'du': 0, 'dush': 0, 'dushanba': 0,
+    'se': 1, 'sesh': 1, 'seshanba': 1,
+    'cho': 2, 'chor': 2, 'chorshanba': 2,
+    'pay': 3, 'payshanba': 3,
+    'ju': 4, 'jum': 4, 'juma': 4,
+    'sha': 5, 'shan': 5, 'shanba': 5,
+    'yak': 6, 'yakshanba': 6,
 }
+# "Toq kunlar" = Du/Chor/Ju, "Juft kunlar" = Se/Pay/Shan (hafta kunlari, oy sanasi emas).
+_TOQ_WEEKDAYS = {0, 2, 4}
+_JUFT_WEEKDAYS = {1, 3, 5}
 
 
-def _schedule_has_today(schedule: str, today_wd: int, ref_date: date = None) -> bool:
+def _schedule_weekdays(schedule: str) -> set:
+    """Matnli jadvalni Python hafta kunlariga (Du=0) aylantiradi."""
     if not schedule:
-        return False
+        return set()
     s = schedule.lower()
     if 'toq' in s:
-        # "Toq kunlar" — oyning toq sanalari (1, 3, 5, ...), hafta kuni emas.
-        return bool(ref_date) and ref_date.day % 2 == 1
+        return set(_TOQ_WEEKDAYS)
     if 'juft' in s:
-        # "Juft kunlar" — oyning juft sanalari (2, 4, 6, ...), hafta kuni emas.
-        return bool(ref_date) and ref_date.day % 2 == 0
+        return set(_JUFT_WEEKDAYS)
     import re
-    tokens = re.split(r'[\s,\-/]+', s)
-    return any(_DAY_WORDS.get(t) == today_wd for t in tokens)
+    tokens = re.split(r'[\s,\-/·.]+', s)
+    return {_DAY_WORDS[t] for t in tokens if t in _DAY_WORDS}
+
+
+def _schedule_has_today(schedule: str, today_wd: int, ref_date: date = None,
+                        slot_weekdays: Optional[set] = None) -> bool:
+    """Guruh shu hafta kunida dars o'tadimi. Strukturaviy jadval (ScheduleSlot)
+    bo'lsa — o'sha ustun, aks holda matnli jadval (Toq/Juft yoki kun nomlari)."""
+    if slot_weekdays:
+        return today_wd in slot_weekdays
+    return today_wd in _schedule_weekdays(schedule)
 
 
 @app.get("/attendance/today")
@@ -3624,8 +3635,8 @@ def today_groups(
 ):
     """
     Groups for quick attendance — faqat shu kunga (target_date yoki bugun)
-    jadvali mos keladigan guruhlar (Toq/Juft kunlar oyning sanasi bo'yicha,
-    boshqa jadvallar hafta kuni bo'yicha).
+    jadvali mos keladigan guruhlar, hafta kuni bo'yicha (Toq kunlar = Du/Chor/Ju,
+    Juft kunlar = Se/Pay/Shan; ScheduleSlot bo'lsa o'sha ustun).
     - Admin/metodist/hunter: barcha faol guruhlar, lekin shu kunga mos keladigan.
     - Teacher: only their groups scheduled for today.
     """
@@ -3657,9 +3668,17 @@ def today_groups(
     )
     taken_map = {r.group_id: r.cnt for r in taken_rows}
 
+    # Strukturaviy jadval kunlari (1 query); day_of_week: 1=Du .. 7=Ya → Python 0..6
+    slot_days: dict = {}
+    if group_ids:
+        for gid, dow in (db.query(models.ScheduleSlot.group_id, models.ScheduleSlot.day_of_week)
+                         .filter(models.ScheduleSlot.group_id.in_(group_ids)).all()):
+            if dow and 1 <= dow <= 7:
+                slot_days.setdefault(gid, set()).add(dow - 1)
+
     result = []
     for g in groups:
-        if not _schedule_has_today(g.schedule, ref_wd, ref_date):
+        if not _schedule_has_today(g.schedule, ref_wd, ref_date, slot_days.get(g.id)):
             continue
         taken = taken_map.get(g.id, 0)
         result.append({

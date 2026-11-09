@@ -36,6 +36,32 @@ function Sidebar({
   const [rail, setRail] = useState(() => localStorage.getItem(RAIL_KEY) === '1')
   const [catOpen, setCatOpen] = useState(activePage === 'lessons')
 
+  // Sichqonchali qurilmalarda bo'limlar hover bilan ochiladi, sichqoncha
+  // ketganda yopiladi (joriy sahifa bo'limi ochiq qoladi). Sensorli
+  // ekranlarda eski bosib ochish/yopish saqlanadi.
+  const [canHover, setCanHover] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia?.('(hover: hover) and (pointer: fine)').matches)
+  const [hoverGroup, setHoverGroup] = useState(null)
+  const hoverTimer = useRef(null)
+  useEffect(() => {
+    const mq = window.matchMedia?.('(hover: hover) and (pointer: fine)')
+    if (!mq) return
+    const onChange = e => setCanHover(e.matches)
+    mq.addEventListener?.('change', onChange)
+    return () => mq.removeEventListener?.('change', onChange)
+  }, [])
+  useEffect(() => () => clearTimeout(hoverTimer.current), [])
+  function openHover(id) {
+    clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setHoverGroup(id), 60)
+  }
+  function closeHover(id) {
+    clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setHoverGroup(cur => (cur === id ? null : cur)), 180)
+  }
+  const hoverMode = canHover && !rail && !isOpen
+  const activeGroupId = groupIdForPage(role, activePage, perms)
+
   useEffect(() => {
     try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...collapsed])) } catch {}
   }, [collapsed])
@@ -117,13 +143,21 @@ function Sidebar({
 
       <nav className="sidebar-nav" aria-label="Asosiy menyu">
         {groups.map(group => {
-          const isCollapsed = collapsed.has(group.id) && !rail
+          const isCollapsed = rail ? false
+            : hoverMode ? !(group.id === hoverGroup || group.id === activeGroupId)
+            : collapsed.has(group.id)
+          const hoverProps = hoverMode ? {
+            onMouseEnter: () => openHover(group.id),
+            onMouseLeave: () => closeHover(group.id),
+            onFocus: () => openHover(group.id),
+            onBlur: e => { if (!e.currentTarget.contains(e.relatedTarget)) closeHover(group.id) },
+          } : {}
           return (
-            <div key={group.id} className={`nav-group${isCollapsed ? ' is-collapsed' : ''}`}>
+            <div key={group.id} className={`nav-group${isCollapsed ? ' is-collapsed' : ''}`} {...hoverProps}>
               {!rail && (
                 <button
                   className={`nav-section-label is-toggle${isCollapsed ? ' collapsed' : ''}`}
-                  onClick={() => toggleGroup(group.id)}
+                  onClick={() => (hoverMode ? setHoverGroup(group.id) : toggleGroup(group.id))}
                   aria-expanded={!isCollapsed}
                   aria-controls={`nav-section-${group.id}`}
                 >
