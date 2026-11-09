@@ -495,7 +495,9 @@ def test_planet_selection_is_owned_and_idempotent(client, db, acct, metodist_use
 
 
 def test_character_change_keeps_everything(client, db, acct, metodist_user):
-    st, _ = acct
+    st, creds = acct
+    db.query(MinarAccount).filter_by(login_id=creds["login_id"]).update({"xp": 4000})
+    db.commit()
     give_coins(db, st, 100, metodist_user.id)
     post(client, "/shop/purchases", {"productId": "planet-verdora", "requestId": str(uuid.uuid4())})
     before = client.get("/space/students/me/bootstrap").json()
@@ -596,7 +598,7 @@ def test_leaderboard_masks_names_filters_and_includes_self(client, db, metodist_
     post(client, "/rewards/check-in")
     rows = client.get("/space/leaderboard?metric=coins&period=all&course=all").json()
     assert isinstance(rows, list) and [r["name"] for r in rows] == ["Azizbek K.", "Malika K."]
-    assert rows[1] == {"id": c2["login_id"], "name": "Malika K.", "avatar": "🤖", "character": "robo",
+    assert rows[1] == {"id": c2["login_id"], "name": "Malika K.", "avatar": "🕷️", "character": "robo",
                        "equipment": {"hat": None, "accessory": None, "outfit": None, "background": None, "planet": None}, "coins": 80, "week": 80, "xp": 0,
                        "active": 0, "course": "Fullstack", "rank": 2, "total": 2, "lightning": 0, "level": 1}
     js = client.get("/space/leaderboard?course=JavaScript").json()

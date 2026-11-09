@@ -8,6 +8,7 @@ from .errors import MinarError
 
 GAMES = {'chess': (2, 2), 'checkers': (2, 2), 'uno': (2, 6), 'mafia': (6, 10), 'sudoku': (1, 1)}
 MAFIA_PHASE_SECONDS = {'night': 30, 'discussion': 45, 'vote': 25}
+CHECKERS_RULES = 'russian-64-v2'
 RNG = random.SystemRandom()
 
 
@@ -27,7 +28,8 @@ def board_chess(s):
     return b
 
 
-def checker_moves(s):
+def _legacy_checker_moves(s):
+    # An in-progress room must finish with the rules it started with.
     board, side, forced = s['board'], s['turn'], s.get('chain')
     jumps, steps = [], []
     for i, piece in enumerate(board):
@@ -47,6 +49,92 @@ def checker_moves(s):
                     if 0 <= y < 8 and 0 <= x < 8 and board[y*8+x] == 0:
                         jumps.append({'from': i, 'to': y*8+x, 'capture': j})
     return jumps or ([] if forced is not None else steps)
+
+
+def checker_moves(s):
+    """Draughts-64: flying kings, backward captures, and compulsory chains.
+
+    IDF rules 3.8 and 4.1–4.15: https://fmjd64.org/rules-of-the-game/
+    Captured pieces stay on the board as blockers until the complete turn ends;
+    an already-captured piece may never be jumped a second time (4.8/4.11).
+    Russian rules allow a choice of capture, not a maximum-piece requirement.
+    """
+    if s.get('rulesVersion') != CHECKERS_RULES:
+        return _legacy_checker_moves(s)
+    board, side, forced = s['board'], s['turn'], s.get('chain')
+    captured = set(s.get('pendingCaptures', []))
+    jumps, steps = [], []
+    for i, piece in enumerate(board):
+        if not piece or i in captured or (piece > 0) != (side == 0) or (forced is not None and i != forced):
+            continue
+        row, col = divmod(i, 8)
+        for dy in (-1, 1):
+            for dx in (-1, 1):
+                y, x = row + dy, col + dx
+                if abs(piece) == 1:
+                    if not (0 <= y < 8 and 0 <= x < 8):
+                        continue
+                    target = y * 8 + x
+                    if board[target] == 0:
+                        if forced is None and dy == (1 if piece > 0 else -1):
+                            steps.append({'from': i, 'to': target})
+                    elif target not in captured and (board[target] > 0) != (piece > 0):
+                        ly, lx = y + dy, x + dx
+                        if 0 <= ly < 8 and 0 <= lx < 8 and board[ly * 8 + lx] == 0:
+                            jumps.append({'from': i, 'to': ly * 8 + lx, 'capture': target})
+                    continue
+                victim = None
+                while 0 <= y < 8 and 0 <= x < 8:
+                    target = y * 8 + x
+                    occupant = board[target]
+                    if occupant:
+                        if target in captured or victim is not None or (occupant > 0) == (piece > 0):
+                            break
+                        victim = target
+                    elif victim is not None:
+                        jumps.append({'from': i, 'to': target, 'capture': victim})
+                    elif forced is None:
+                        steps.append({'from': i, 'to': target})
+                    y, x = y + dy, x + dx
+    return jumps or ([] if forced is not None else steps)
+
+
+def _checker_turn_key(s):
+    return ','.join(map(str, s['board'])) + ':' + str(s['turn'])
+
+
+def _russian_checker_move(s, chosen, pid):
+    source, target = chosen['from'], chosen['to']
+    piece = s['board'][source]
+    s['board'][source], s['board'][target] = 0, piece
+    promoted = abs(piece) == 1 and target // 8 == (7 if piece > 0 else 0)
+    if promoted:
+        s['board'][target] *= 2
+    s['lastMove'] = {'from': source, 'to': target, 'capture': chosen.get('capture'), 'promoted': promoted}
+    s['chain'] = None
+    if 'capture' in chosen:
+        s.setdefault('pendingCaptures', []).append(chosen['capture'])
+        s['quiet'] = 0
+        # Reaching the last row during a capture promotes immediately, so the
+        # same turn can continue with a king's distant jump (IDF 4.14).
+        s['chain'] = target
+        if checker_moves(s):
+            return
+        s['chain'] = None
+        for victim in s['pendingCaptures']:
+            s['board'][victim] = 0
+        s['pendingCaptures'] = []
+    else:
+        # Fifteen full turns of king-only movement with no capture is a draw.
+        s['quiet'] = s.get('quiet', 0) + 1 if abs(piece) == 2 else 0
+    s['turn'] = 1 - s['turn']
+    key = _checker_turn_key(s)
+    repetitions = s.setdefault('repetitions', {})
+    repetitions[key] = repetitions.get(key, 0) + 1
+    if not checker_moves(s):
+        finish(s, [pid])
+    elif s['quiet'] >= 30 or repetitions[key] >= 3:
+        finish(s, [], 'draw')
 
 
 def sudoku_solution():
@@ -85,7 +173,8 @@ def new_game(game, ids):
     if game == 'chess':
         s['moves'] = []
     elif game == 'checkers':
-        s.update(board=[(1 if i//8 < 3 else -1 if i//8 > 4 else 0) if (i//8+i%8)%2 else 0 for i in range(64)], chain=None, quiet=0, repetitions={})
+        s.update(board=[(1 if i//8 < 3 else -1 if i//8 > 4 else 0) if (i//8+i%8)%2 else 0 for i in range(64)], chain=None, quiet=0, repetitions={}, rulesVersion=CHECKERS_RULES, pendingCaptures=[])
+        s['repetitions'][_checker_turn_key(s)] = 1
     elif game == 'uno':
         deck = []
         for color in 'RGBY':
@@ -275,6 +364,10 @@ def move(game, s, pid, action):
         except ValueError:
             raise MinarError(400, 'Yurish noto‘g‘ri.')
         require(m in b.legal_moves)
+        s['lastMove'] = {'from': (7 - chess.square_rank(m.from_square)) * 8 + chess.square_file(m.from_square),
+                         'to': (7 - chess.square_rank(m.to_square)) * 8 + chess.square_file(m.to_square),
+                         'uci': uci, 'capture': b.is_capture(m),
+                         'promotion': chess.piece_symbol(m.promotion) if m.promotion else None}
         san = b.san(m)
         b.push(m)
         s['moves'].append(uci)
@@ -285,9 +378,14 @@ def move(game, s, pid, action):
             finish(s, [] if outcome.winner is None else [s['players'][0 if outcome.winner else 1]], 'draw' if outcome.winner is None else 'completed')
     elif game == 'checkers':
         require(kind == 'move')
+        require(type(action.get('from')) is int and type(action.get('to')) is int, 'Katak raqami noto‘g‘ri.')
         legal = checker_moves(s)
         chosen = next((m for m in legal if m['from'] == action.get('from') and m['to'] == action.get('to')), None)
         require(chosen)
+        if s.get('rulesVersion') == CHECKERS_RULES:
+            _russian_checker_move(s, chosen, pid)
+            s['plies'] += 1
+            return
         a, b = chosen['from'], chosen['to']
         piece = s['board'][a]
         s['board'][a], s['board'][b] = 0, piece
@@ -358,8 +456,11 @@ def view(game, s, pid):
     if game == 'chess':
         b = board_chess(s)
         out.update(fen=b.fen(), board=[b.piece_at(chess.square(i%8, 7-i//8)).symbol() if b.piece_at(chess.square(i%8, 7-i//8)) else '' for i in range(64)], legal=[m.uci() for m in b.legal_moves], check=b.is_check(), log=s['log'])
+        king = b.king(b.turn) if b.is_check() else None
+        out.update(lastMove=copy.deepcopy(s.get('lastMove')), checkedSquare=(7 - chess.square_rank(king)) * 8 + chess.square_file(king) if king is not None else None)
     elif game == 'checkers':
-        out.update(board=s['board'][:], legal=checker_moves(s), chain=s['chain'])
+        out.update(board=s['board'][:], legal=checker_moves(s), chain=s['chain'],
+                   rulesVersion=s.get('rulesVersion', 'legacy-v1'), pendingCaptures=s.get('pendingCaptures', [])[:], lastMove=copy.deepcopy(s.get('lastMove')))
     elif game == 'uno':
         out.update(hand=copy.deepcopy(s['hands'].get(pid, [])), counts={p: len(h) for p, h in s['hands'].items()}, top=copy.deepcopy(s['discard'][-1]), color=s['color'], direction=s['direction'], deckCount=len(s['deck']), drawn=s['drawn'] if s['players'][s['turn']] == pid else None, legal=[c['id'] for c in s['hands'].get(pid, []) if uno_legal(s, c, pid)])
     elif game == 'mafia':

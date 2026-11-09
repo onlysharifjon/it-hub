@@ -13,6 +13,15 @@ from . import table_rules as rules
 from .models import MinarAccount, MinarTableRoom as Room, MinarTablePlayer as Player, MinarResult
 from .errors import MinarError
 
+BOARD_REACTIONS = ('bravo', 'wow', 'think', 'good-game', 'oops', 'respect')
+REACTION_SECONDS = 8
+REACTION_COOLDOWN_SECONDS = 3
+
+
+def _live_reactions(state, now):
+    return [event for event in state.get('reactions', [])
+            if datetime.fromisoformat(event['expiresAt'].rstrip('Z')) > now]
+
 
 def _account_lock(db, acc):
     db.execute(select(MinarAccount.id).where(MinarAccount.id == acc.id).with_for_update()).scalar_one()
@@ -51,12 +60,18 @@ def _public(db, acc, room):
     data = {a.id: {'id': str(a.id), 'profileId': a.login_id, 'name': public_name(name), 'character': a.character} for a, name in accounts}
     state = json.loads(room.state)
     expired = room.expires_at <= datetime.utcnow()
-    return {'id': room.id, 'code': room.code, 'game': room.game,
+    result = {'id': room.id, 'code': room.code, 'game': room.game,
             'status': 'expired' if expired and room.status != 'finished' else room.status,
             'host': str(room.host_id), 'me': str(acc.id), 'version': room.version,
             'members': [{**data[m.account_id], 'ready': m.ready} for m in members],
             'deadline': state.get('deadline'), 'phaseStartedAt': state.get('phaseStartedAt'), 'serverTime': datetime.utcnow().isoformat()+'Z',
             'state': rules.view(room.game, state['game'], str(acc.id)) if 'game' in state else None}
+    if room.game in ('chess', 'checkers'):
+        result['reactionOptions'] = list(BOARD_REACTIONS)
+        # This projection contains only the deliberately shared reaction events;
+        # neither private cooldown state nor request receipts leave the server.
+        result['reactions'] = _live_reactions(state, datetime.utcnow())
+    return result
 
 
 def listing(db, acc, game):
@@ -146,6 +161,28 @@ def act(db, acc, code, payload):
     kind = payload.get('type')
     if room.expires_at <= datetime.utcnow() and room.status != 'finished':
         raise MinarError(410, 'Xona vaqti tugagan. Yangi xona oching.')
+    if kind == 'reaction':
+        rules.require(room.game in ('chess', 'checkers') and room.status in ('playing', 'finished'), 'Reaksiya o‘yin vaqtida yuboriladi.')
+        rules.require(str(acc.id) in state.get('game', {}).get('players', []), 'Siz bu o‘yin ishtirokchisi emassiz.')
+        reaction = payload.get('reaction')
+        rules.require(isinstance(reaction, str) and reaction in BOARD_REACTIONS, 'Ro‘yxatdagi reaksiyani tanlang.')
+        now = datetime.utcnow()
+        previous = state.get('reactionTimes', {}).get(str(acc.id))
+        if previous and now < datetime.fromisoformat(previous.rstrip('Z')) + timedelta(seconds=REACTION_COOLDOWN_SECONDS):
+            raise MinarError(429, 'Keyingi reaksiya uchun 3 soniya kuting.')
+        _limited(acc, 'reaction', 8)
+        now_text = now.isoformat() + 'Z'
+        event = {'id': secrets.token_hex(8), 'player': str(acc.id), 'reaction': reaction,
+                 'createdAt': now_text, 'expiresAt': (now + timedelta(seconds=REACTION_SECONDS)).isoformat() + 'Z'}
+        state['reactions'] = (_live_reactions(state, now) + [event])[-12:]
+        state.setdefault('reactionTimes', {})[str(acc.id)] = now_text
+        state['receipts'] = (state.get('receipts', []) + [receipt])[-100:]
+        room.state = json.dumps(state)
+        # Reactions are independent of the turn. They must not invalidate a
+        # legal move already selected by the opponent or restart any clock.
+        room.updated_at = now
+        db.commit()
+        return _public(db, acc, room)
     # Mafia choices/chat concern a phase, not incidental chat or another player's
     # private choice. A phase key allows simultaneous actions without weakening
     # the optimistic version check for turn-based games or older clients.

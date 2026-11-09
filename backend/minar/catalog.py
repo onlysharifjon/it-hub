@@ -7,9 +7,14 @@ from __future__ import annotations
 
 COURSES = ("HTML", "CSS", "JavaScript")
 CHARACTERS = ("robo", "foxy", "drako") + tuple(f"hero{i:02d}" for i in range(4, 51))
-CHARACTER_LEVEL = {key: 1 + i // 4 for i, key in enumerate(CHARACTERS)}
+MARVEL_CHARACTERS = CHARACTERS
+DC_CHARACTERS = ('superman', 'supergirl', 'batman', 'wonder', 'flash', 'aquaman', 'glantern', 'shazam', 'cyborg', 'martian')
+CHARACTERS = MARVEL_CHARACTERS + DC_CHARACTERS
+CHARACTER_LEVEL = {key: i + 1 for i, key in enumerate(MARVEL_CHARACTERS)}
+CHARACTER_LEVEL.update({key: (i + 1) * 5 for i, key in enumerate(DC_CHARACTERS)})
 LEADERBOARD_LEADER = "MATEST"
-CHARACTER_EMOJI = {"robo": "🤖", "foxy": "🦊", "drako": "🐲"}
+CHARACTER_EMOJI = {key: "🦸" for key in CHARACTERS}
+CHARACTER_EMOJI.update({"robo": "🕷️", "foxy": "🦾", "drako": "🛡️", "supergirl": "🦸‍♀️", "batman": "🦇"})
 SLOTS = ("hat", "accessory", "outfit", "background", "planet")
 
 # id -> (nomi, kategoriya, slot, narx)

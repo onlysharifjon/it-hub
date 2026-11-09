@@ -78,7 +78,7 @@ def test_achievement_unlocks_once_with_reward_and_notification(client, db, acct)
     assert db.query(MinarAchievement).count() == 1
     assert db.query(MinarLedger).filter(MinarLedger.kind == "achievement").count() == 0
     assert client.get("/space/notifications").json()["items"][0]["kind"] == "achievement"
-    again = post(client, "/avatar/character", {"type": "character", "character": "foxy"}).json()
+    again = post(client, "/avatar/character", {"type": "character", "character": "robo"}).json()
     assert again["unlocked"] == [] and db.query(MinarAchievement).count() == 1      # ikkinchi marta yo'q
 
 
