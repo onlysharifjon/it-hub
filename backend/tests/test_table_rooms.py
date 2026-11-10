@@ -387,3 +387,85 @@ def test_mafia_phase_keys_allow_parallel_choices_without_extending_clocks(client
             assert room['deadline'] == vote['deadline'] and room['state']['lastVote'] is None
     duration(room, 30)
     assert room['state']['round'] == 2 and room['state']['events'][-1]['type'] == 'no_vote'
+
+
+@pytest.mark.parametrize('size,mafia_count', [(6,1),(7,2),(10,2),(11,3),(12,3)])
+def test_mafia_roles_scale_to_twelve_without_changing_smaller_rooms(size, mafia_count):
+    from collections import Counter
+    assert r.GAMES['mafia'] == (6, 12)
+    state = r.new_game('mafia', [str(i) for i in range(size)])
+    assert Counter(state['roles'].values()) == {
+        'mafia': mafia_count, 'doctor': 1, 'detective': 1,
+        'citizen': size-mafia_count-2,
+    }
+    assert len(state['alive']) == size and state['phase'] == 'night'
+
+
+def test_mafia_twelve_students_capacity_private_roles_and_complete_day_cycle(client, db, acct, metodist_token):
+    room = post(client, '/tables', {'game':'mafia'}).json()
+    clients = [client]
+    for index in range(11):
+        peer = TestClient(app)
+        _, creds = new_account(client, db, metodist_token, f'Twelve Player {index}')
+        login(peer, creds)
+        joined = post(peer, '/tables/'+room['code']+'/join')
+        assert joined.status_code == 200, joined.text
+        action(peer, room, 'ready', ready=True)
+        clients.append(peer)
+    # Capacity is enforced before the match starts, not only by the UI.
+    overflow = TestClient(app)
+    _, creds = new_account(client, db, metodist_token, 'Thirteenth Player')
+    login(overflow, creds)
+    denied = post(overflow, '/tables/'+room['code']+'/join')
+    assert denied.status_code == 400 and 'to‘lgan' in denied.json()['message']
+    assert overflow.get('/space/tables/'+room['code']).status_code == 403
+    room = action(client, room, 'start')
+    assert room['status'] == 'playing' and len(room['members']) == 12
+    members = {peer.get('/space/tables/'+room['code']).json()['me']:peer for peer in clients}
+    states = {pid:peer.get('/space/tables/'+room['code']).json()['state'] for pid,peer in members.items()}
+    by_role = {role:[pid for pid,state in states.items() if state['role']==role] for role in ('mafia','doctor','detective','citizen')}
+    assert {role:len(players) for role,players in by_role.items()} == {'mafia':3,'doctor':1,'detective':1,'citizen':7}
+    for pid,state in states.items():
+        assert not {'roles','choices','plies'} & state.keys()
+        assert state['investigations'] == {} and len(state['alive']) == 12
+        if state['role'] == 'mafia':
+            assert set(state['team']) == set(by_role['mafia'])
+        else:
+            assert 'team' not in state
+
+    def send(pid, snapshot, kind, **payload):
+        response = post(members[pid], '/tables/'+room['code']+'/actions', {
+            'type':kind, 'version':snapshot['version'],
+            'phaseKey':snapshot['state']['phaseKey'],
+            'requestId':str(uuid.uuid4()), **payload,
+        })
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    # Three mafia and two special roles can act on one shared phase snapshot.
+    night = room
+    victim = by_role['citizen'][0]
+    for pid in by_role['mafia']:
+        room = send(pid, night, 'choose', target=victim)
+        assert room['state']['phase'] == 'night' and room['deadline'] == night['deadline']
+    room = send(by_role['doctor'][0], night, 'choose', target=victim)
+    assert room['state']['phase'] == 'night'
+    room = send(by_role['detective'][0], night, 'choose', target=by_role['mafia'][0])
+    assert room['state']['phase'] == 'discussion' and len(room['state']['alive']) == 12
+    assert room['state']['events'][-1]['type'] == 'night_safe'
+    for pid, peer in members.items():
+        state = peer.get('/space/tables/'+room['code']).json()['state']
+        assert state['investigations'] == ({by_role['mafia'][0]:True} if pid == by_role['detective'][0] else {})
+        assert 'roles' not in state and 'choices' not in state
+
+    discussion = room
+    for pid in members:
+        room = send(pid, discussion, 'discussion-ready', ready=True)
+    assert room['state']['phase'] == 'vote' and len(room['state']['alive']) == 12
+    vote = room
+    for pid in members:
+        room = send(pid, vote, 'abstain')
+    assert room['state']['phase'] == 'night' and room['state']['round'] == 2
+    assert room['state']['lastVote']['abstentions'] == 12
+    assert len(room['state']['players']) == len(room['state']['alive']) == 12
+    assert not room['state']['finished'] and room['state']['winners'] == []

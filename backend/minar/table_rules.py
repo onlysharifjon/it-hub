@@ -7,7 +7,7 @@ import chess
 from .errors import MinarError
 from . import new_table_rules as expanded
 
-GAMES = {'chess': (2, 2), 'checkers': (2, 2), 'uno': (2, 6), 'mafia': (6, 10), 'sudoku': (1, 1), **expanded.GAMES}
+GAMES = {'chess': (2, 2), 'checkers': (2, 2), 'uno': (2, 6), 'mafia': (6, 12), 'sudoku': (1, 1), **expanded.GAMES}
 MAFIA_PHASE_SECONDS = {'night': 30, 'discussion': 45, 'vote': 25}
 CHECKERS_RULES = 'russian-64-v2'
 RNG = random.SystemRandom()
@@ -191,7 +191,7 @@ def new_game(game, ids):
         top = deck.pop(numeric)
         s.update(deck=deck, hands=hands, discard=[top], color=top['color'], direction=1, drawn=None)
     elif game == 'mafia':
-        roles = ['mafia']*(2 if len(ids) >= 7 else 1)+['doctor', 'detective']
+        roles = ['mafia']*(3 if len(ids) >= 11 else 2 if len(ids) >= 7 else 1)+['doctor', 'detective']
         roles += ['citizen']*(len(ids)-len(roles))
         RNG.shuffle(roles)
         s.update(roles=dict(zip(ids, roles)), alive=ids[:], phase='night', round=1, choices={}, investigations={}, eliminated=[], chat=[], lastNight=None, discussionReady=[], events=[], lastVote=None)
