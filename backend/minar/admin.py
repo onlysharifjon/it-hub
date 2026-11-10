@@ -179,7 +179,7 @@ def create_account(payload: AccountCreate, db: Session = Depends(get_db), user: 
     student = db.query(models.Student).filter(models.Student.id == payload.student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Talaba topilmadi")
-    if student.is_archived or not student.is_active:
+    if not student.is_active and not student.is_archived:
         raise HTTPException(status_code=400, detail="Talaba faol emas")
     if db.query(MinarAccount.id).filter(MinarAccount.student_id == student.id).first():
         raise HTTPException(status_code=409, detail="Bu talabaning akkaunti bor. Parolni tiklash uchun reset-password ishlating")
@@ -244,7 +244,7 @@ def issue_qr_cards(payload: QrRequest, db: Session = Depends(get_db), user: mode
         q = q.filter(models.Student.id.in_(payload.student_ids))
     cards = []
     for acc, st in q.order_by(models.Student.full_name).limit(200).all():
-        if not student_auth.account_usable(acc, st):
+        if not student_auth.account_usable(acc, st) or (payload.group_id and st.is_archived):
             continue
         url = f"{SPACE_URL}/#qr={student_auth.issue_login_token(db, acc, user.id)}"
         cards.append({"student_id": st.id, "full_name": st.full_name, "login_id": acc.login_id,

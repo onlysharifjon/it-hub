@@ -69,10 +69,11 @@ def check_origin(request: Request) -> None:
 
 
 def account_usable(acc: MinarAccount | None, student: models.Student | None) -> bool:
-    """Akkaunt ochiq va talabasi faol bo'lsa (test akkaunt uchun talaba holati tekshirilmaydi)."""
+    """Akkaunt ochiq va talabasi faol yoki arxivda bo'lsa (arxivdagi talaba ham SPACE'ga kira oladi;
+    test akkaunt uchun talaba holati tekshirilmaydi)."""
     if not acc or not acc.is_active or not student:
         return False
-    return acc.is_test or (student.is_active and not student.is_archived)
+    return acc.is_test or student.is_active or student.is_archived
 
 
 def login(db: Session, request: Request, response: Response, login_id: str, password: str) -> MinarAccount:
