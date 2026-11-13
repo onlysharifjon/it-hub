@@ -124,7 +124,8 @@ def _int(v: Any, lo: int, hi: int) -> int:
 
 
 def public_session(s: MinarGameSession) -> dict:
-    out = {"id": s.id, "game": s.game, "course": s.course, "difficulty": s.difficulty, "duration": s.duration}
+    out = {"id": s.id, "game": s.game, "course": s.course, "difficulty": s.difficulty, "duration": s.duration,
+           "practice": _state(s).get('practice') is True}
     if s.game in ("quiz", "bug"):
         out["questions"] = [{"q": q["q"], "code": q["code"], "options": q["options"]}
                             for q in session_questions(s)]
@@ -153,6 +154,9 @@ def start(db: Session, acc: MinarAccount, payload: dict) -> dict:
     game = payload.get("game")
     if game not in GAMES:
         raise MinarError(400, "O‘yin topilmadi.")
+    practice = payload.get('practice', False)
+    if type(practice) is not bool:
+        raise MinarError(400, 'Mashq sozlamasi noto‘g‘ri.')
     difficulty = duration = None
     if game == "typing":
         difficulty = payload.get("difficulty") or "easy"
@@ -172,10 +176,10 @@ def start(db: Session, acc: MinarAccount, payload: dict) -> dict:
                                       MinarGameSession.started_at < now - timedelta(days=1)).delete()
     s = MinarGameSession(id=uuid.uuid4().hex, account_id=acc.id, game=game, course=_course(acc),
                          difficulty=difficulty, duration=duration, seed=secrets.randbits(31),
-                         state="{}", started_at=now)
+                         state=json.dumps({'practice': practice}), started_at=now)
     if game == 'quiz':
         from . import study
-        s.state = json.dumps({'questions':study.quiz_questions(db, acc, s.seed)}, ensure_ascii=False)
+        s.state = json.dumps({'practice': practice, 'questions':study.quiz_questions(db, acc, s.seed)}, ensure_ascii=False)
     db.add(s)
     db.commit()
     return public_session(s)
@@ -237,7 +241,7 @@ def flip(db: Session, acc: MinarAccount, payload: dict) -> dict:
         if out["match"]:
             matched.append(cards[card])
         opened = []
-    s.state = json.dumps({"open": opened, "matched": matched, "moves": moves})
+    s.state = json.dumps({**st, "open": opened, "matched": matched, "moves": moves})
     db.commit()
     return {**out, "moves": moves, "matched": len(matched)}
 

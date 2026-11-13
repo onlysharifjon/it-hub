@@ -211,7 +211,7 @@ def build_state(db: Session, acc: MinarAccount) -> dict:
             game_rewards[row.game]=game_rewards.get(row.game,0)+1
 
     today = today_key()
-    daily_games = [g for g, in db.query(MinarResult.game).filter(MinarResult.account_id==acc.id,MinarResult.local_date==today).distinct()]
+    daily_games = _daily_competitive_games(db, acc, today)
     daily_lesson = db.query(MinarLedger.id).filter(MinarLedger.account_id==acc.id,MinarLedger.kind=="lesson",MinarLedger.local_date==today).first() is not None
     return {
         "coinPhase": coin_phase(db),
@@ -422,6 +422,13 @@ def act_homework(db: Session, acc: MinarAccount, homework_id: int, payload: Any)
     return 0, "Javobing ustozga yuborildi! Baholanganda xabar beramiz."
 
 
+def _daily_competitive_games(db, acc, today):
+    # Practice must not unlock coin-bearing daily quests indirectly.
+    return list({game for game, payload in db.query(MinarResult.game, MinarResult.payload).filter(
+        MinarResult.account_id == acc.id, MinarResult.local_date == today).all()
+        if json.loads(payload).get('practice') is not True})
+
+
 def act_quest(db: Session, acc: MinarAccount, quest: Any) -> tuple[int, str]:
     if quest not in C.QUESTS:
         raise MinarError(400, "Topshiriq topilmadi.")
@@ -429,8 +436,7 @@ def act_quest(db: Session, acc: MinarAccount, quest: Any) -> tuple[int, str]:
     if db.query(MinarQuest.id).filter(
             MinarQuest.account_id == acc.id, MinarQuest.local_date == today, MinarQuest.quest == quest).first():
         raise MinarError(409, "Bu mukofot olingan.")
-    games_today = [g[0] for g in db.query(MinarResult.game).filter(
-        MinarResult.account_id == acc.id, MinarResult.local_date == today).all()]
+    games_today = _daily_competitive_games(db, acc, today)
     if quest == "typing":
         eligible = "typing" in games_today
     elif quest == "games":
@@ -517,9 +523,13 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
                    "score": (battle.host_score if acc.id == battle.host_account_id else battle.guest_score) or 0}
     else:
         payload, eligible = games.finish(session, result)
-        payload = {"game": session.game, **payload}
+        payload = {"game": session.game, **payload, "practice": games._state(session).get('practice') is True}
         session.finished_at = datetime.utcnow()
     game = payload["game"]
+    # Only immutable room/session state decides practice. Client claims cannot
+    # turn a computer opponent into a rewarded multiplayer result.
+    practice = payload.get('practice') is True
+    eligible = eligible and not practice
     payload["eligible"] = eligible
 
     today = today_key()
@@ -544,6 +554,8 @@ def act_game(db: Session, acc: MinarAccount, result: Any) -> tuple[int, str]:
     if award:
         _credit(db, acc, award, f"{C.GAME_TITLE[game]} yutug‘i", "game", f"game:{rid}")
     _commit(db)
+    if practice:
+        return 0, "Mashq yakunlandi. Mashq uchun XP, chaqmoq va coin berilmaydi."
     if lightning:
         return 0, f"Zo‘r natija! +{lightning}⚡ va +{xp} XP."
     if eligible:

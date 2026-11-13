@@ -236,6 +236,11 @@ def table_list(game: str, acc: MinarAccount = Account, db: Session = Depends(get
 def table_create(payload: dict = Body(...), acc: MinarAccount = Account, db: Session = Depends(get_db)):
     return tables.create(db, acc, payload)
 
+@router.get('/tables/servers')
+def table_servers(game: Optional[str] = None, offset: int = 0, limit: int = 30,
+                  acc: MinarAccount = Account, db: Session = Depends(get_db)):
+    return tables.servers(db, acc, game, offset, limit)
+
 @router.post('/tables/{code}/join')
 def table_join(code: str, acc: MinarAccount = Account, db: Session = Depends(get_db)):
     return tables.join(db, acc, code)

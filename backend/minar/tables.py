@@ -7,10 +7,11 @@ import json
 import secrets
 import uuid
 from datetime import datetime, timedelta
-from sqlalchemy import select
+from sqlalchemy import select, func, case, or_
 from .. import models, security
 from . import table_rules as rules
 from . import new_table_rules as expanded
+from . import practice_rooms
 from .models import MinarAccount, MinarTableRoom as Room, MinarTablePlayer as Player, MinarResult
 from .errors import MinarError
 
@@ -51,6 +52,8 @@ def _room(db, acc, code, lock=False):
         raise MinarError(404, 'Xona topilmadi.')
     if not db.query(Player.id).filter_by(room_id=room.id, account_id=acc.id).first():
         raise MinarError(403, 'Avval xona kodi bilan qo‘shiling.')
+    if practice_rooms.is_practice(json.loads(room.state)) and room.host_id != acc.id:
+        raise MinarError(403, 'Bu shaxsiy mashq xonasi.')
     return room
 
 
@@ -64,9 +67,15 @@ def _public(db, acc, room):
     result = {'id': room.id, 'code': room.code, 'game': room.game,
             'status': 'expired' if expired and room.status != 'finished' else room.status,
             'host': str(room.host_id), 'me': str(acc.id), 'version': room.version,
-            'members': [{**data[m.account_id], 'ready': m.ready} for m in members],
+            'members': [{**data[m.account_id], 'ready': m.ready, 'isBot': False} for m in members],
+            'practice': practice_rooms.is_practice(state),
             'deadline': state.get('deadline'), 'phaseStartedAt': state.get('phaseStartedAt'), 'serverTime': datetime.utcnow().isoformat()+'Z',
             'state': rules.view(room.game, state['game'], str(acc.id)) if 'game' in state else None}
+    if result['practice']:
+        result['members'] += [{key: bot[key] for key in ('id', 'name', 'character', 'ready', 'isBot')}
+                              for bot in state.get('practiceBots', [])]
+        thinking = room.status == 'playing' and not expired and bool(state.get('nextBotAt'))
+        result.update(botThinking=thinking, nextBotAt=state.get('nextBotAt') if thinking else None)
     if room.game in ('chess', 'checkers'):
         result['reactionOptions'] = list(BOARD_REACTIONS)
         # This projection contains only the deliberately shared reaction events;
@@ -86,28 +95,62 @@ def listing(db, acc, game):
         active = db.query(Room).join(Player, Player.room_id == Room.id).filter(
             Player.account_id == acc.id, Room.game == game,
             Room.status == 'finished', ~claimed).order_by(Room.updated_at.desc()).first()
-    # Codes are intentionally private; students share a code with classmates.
     return {'active': _public(db, acc, active) if active else None}
+
+
+def servers(db, acc, game=None, offset=0, limit=30):
+    """Public waiting-room metadata only; joining revalidates under a room lock."""
+    from .service import public_name
+    _limited(acc, 'servers', 90)
+    rules.require(game is None or game in rules.GAMES, 'O‘yin topilmadi.')
+    rules.require(type(offset) is int and 0 <= offset <= 10000 and type(limit) is int and 1 <= limit <= 50)
+    counts = db.query(Player.room_id, func.count(Player.id).label('count')).group_by(Player.room_id).subquery()
+    capacity = case({key: value[1] for key, value in rules.GAMES.items()}, value=Room.game, else_=0)
+    query = db.query(Room, MinarAccount, models.Student.full_name, counts.c.count).join(
+        counts, counts.c.room_id == Room.id).join(MinarAccount, MinarAccount.id == Room.host_id).join(
+        models.Student, models.Student.id == MinarAccount.student_id).filter(
+        Room.status == 'waiting', Room.expires_at > datetime.utcnow(), Room.game != 'sudoku',
+        counts.c.count < capacity, MinarAccount.is_active.is_(True),
+        or_(MinarAccount.is_test.is_(True), models.Student.is_active.is_(True), models.Student.is_archived.is_(True)))
+    if game is not None:
+        query = query.filter(Room.game == game)
+    rows = query.order_by(Room.created_at.desc(), Room.id.desc()).offset(offset).limit(limit + 1).all()
+    rooms = []
+    for room, host, full_name, count in rows[:limit]:
+        # Practice starts immediately; also exclude any legacy/recovered waiting practice state.
+        if practice_rooms.is_practice(json.loads(room.state)):
+            continue
+        name = public_name(full_name)
+        rooms.append({'code': room.code, 'game': room.game, 'title': name,
+                      'host': {'id': str(host.id), 'name': name, 'character': host.character},
+                      'count': count, 'capacity': rules.GAMES[room.game][1], 'minPlayers': rules.GAMES[room.game][0],
+                      'createdAt': room.created_at.isoformat() + 'Z', 'expiresAt': room.expires_at.isoformat() + 'Z'})
+    more = len(rows) > limit
+    return {'rooms': rooms, 'offset': offset, 'limit': limit, 'hasMore': more, 'nextOffset': offset + limit if more else None}
 
 
 def create(db, acc, payload):
     _limited(acc, 'create', 10)
     game = payload.get('game')
     rules.require(isinstance(game, str) and game in rules.GAMES, 'O‘yin topilmadi.')
+    practice = payload.get('practice', False)
+    rules.require(type(practice) is bool, 'Mashq sozlamasi noto‘g‘ri.')
     _account_lock(db, acc)
     active = _active(db, acc)
     if active:
-        if active.game != game:
+        if active.game != game or practice_rooms.is_practice(json.loads(active.state)) != practice:
             raise MinarError(409, 'Avval ochiq o‘yiningizni yakunlang yoki xonadan chiqing.')
         return _public(db, acc, active)
     code = ''.join(secrets.choice('ABCDEFGHJKLMNPQRSTUVWXYZ23456789') for _ in range(8))
     room = Room(id=str(uuid.uuid4()), code=code, game=game, host_id=acc.id, status='waiting', state='{}', version=1, expires_at=datetime.utcnow()+timedelta(minutes=30))
     db.add(room); db.flush()
     db.add(Player(room_id=room.id, account_id=acc.id, ready=True)); db.flush()
-    if game == 'sudoku':
-        state = {'game': rules.new_game(game, [str(acc.id)]), 'receipts': []}
+    if practice or game == 'sudoku':
+        state = (practice_rooms.create(game, str(acc.id)) if practice else
+                 {'game': rules.new_game(game, [str(acc.id)]), 'receipts': []})
         room.status = 'playing'
         room.expires_at = datetime.utcnow()+timedelta(hours=2)
+        _deadline(room, state)
         room.state = json.dumps(state)
     db.commit()
     return _public(db, acc, room)
@@ -123,6 +166,8 @@ def join(db, acc, code):
     room = db.query(Room).filter_by(code=code.upper()).populate_existing().with_for_update().first()
     if not room or room.expires_at <= datetime.utcnow():
         raise MinarError(404, 'Xona topilmadi yoki vaqti tugagan.')
+    if practice_rooms.is_practice(json.loads(room.state)) and room.host_id != acc.id:
+        raise MinarError(403, 'Kompyuter bilan mashq shaxsiy o‘yin hisoblanadi.')
     members = _members(db, room)
     if any(m.account_id == acc.id for m in members):
         return _public(db, acc, room)
@@ -245,7 +290,11 @@ def act(db, acc, code, payload):
                 rules.finish(g, [], 'timeout')
             _deadline(room, state)
         elif kind == 'tick':
-            return _public(db, acc, room)
+            previous_bot_phase = practice_rooms.phase(room.game, g)
+            if not practice_rooms.pump(room.game, state, now):
+                return _public(db, acc, room)
+            if previous_bot_phase != practice_rooms.phase(room.game, g):
+                _deadline(room, state)
         else:
             if kind == 'chat':
                 _limited(acc, 'chat', 15)
@@ -266,6 +315,8 @@ def act(db, acc, code, payload):
         if g['finished']:
             room.status = 'finished'
             state['deadline'] = None
+        if practice_rooms.is_practice(state):
+            practice_rooms.schedule(room.game, state)
     else:
         if kind == 'tick':
             return _public(db, acc, room)
@@ -282,8 +333,11 @@ def result(db, acc, room_id):
     rules.require(isinstance(room_id, str) and len(room_id) == 36)
     room = db.query(Room).filter_by(id=room_id, status='finished').first()
     rules.require(room and db.query(Player.id).filter_by(room_id=room_id, account_id=acc.id).first(), 'Yakunlangan o‘yin topilmadi.')
-    state = json.loads(room.state).get('game', {})
+    room_state = json.loads(room.state)
+    state = room_state.get('game', {})
+    practice = practice_rooms.is_practice(room_state)
+    rules.require(not practice or room.host_id == acc.id, 'Bu shaxsiy mashq xonasi.')
     won = str(acc.id) in state.get('winners', []) and state.get('reason') == 'completed'
     if room.game == 'quest':
         won = won and str(acc.id) in state.get('contributors', [])
-    return {'game': room.game, 'roomId': room_id, 'won': won, 'draw': state.get('reason') == 'draw', 'reason': state.get('reason'), 'score': int(won)}, won
+    return {'game': room.game, 'roomId': room_id, 'won': won, 'practice': practice, 'draw': state.get('reason') == 'draw', 'reason': state.get('reason'), 'score': int(won)}, won and not practice
