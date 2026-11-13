@@ -2,9 +2,10 @@ import { PageIntro } from './ui/Workspace'
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faUsers, faTriangleExclamation, faLink } from '@fortawesome/free-solid-svg-icons'
-import { fetchStaffOptions, fetchDisciplineCodes, setStaffTelegramChatId } from '../api'
+import { faUsers, faTriangleExclamation, faLink, faChalkboardUser } from '@fortawesome/free-solid-svg-icons'
+import { fetchStaffOptions, fetchDisciplineCodes, setStaffTelegramChatId, promoteStaffToTeacher } from '../api'
 import StaffWarningModal from './StaffWarningModal'
+import ConfirmDialog from './ui/ConfirmDialog'
 import DataTable, { RowActions } from './ui/DataTable'
 import Modal from './ui/Modal'
 import Badge from './ui/Badge'
@@ -22,6 +23,8 @@ export default function Employees({ currentUser }) {
   const [linkValue, setLinkValue] = useState('')
   const [saving, setSaving] = useState(false)
   const [warningTarget, setWarningTarget] = useState(null) // staff row to warn
+  const [promoteTarget, setPromoteTarget] = useState(null) // support → teacher
+  const [promoting, setPromoting] = useState(false)
 
   useEffect(() => {
     if (!isAudit) return
@@ -52,6 +55,17 @@ export default function Employees({ currentUser }) {
     finally { setSaving(false) }
   }
 
+  async function handlePromote() {
+    setPromoting(true)
+    try {
+      await promoteStaffToTeacher(promoteTarget.id)
+      toast.success(`${promoteTarget.full_name || promoteTarget.username} endi o'qituvchi`)
+      setPromoteTarget(null)
+      load()
+    } catch (e) { toast.error(e.message) }
+    finally { setPromoting(false) }
+  }
+
   if (!isAudit) {
     return <div className="page"><p className="muted center py-8">Ruxsat yo'q</p></div>
   }
@@ -75,6 +89,11 @@ export default function Employees({ currentUser }) {
       key: 'actions', header: '', align: 'right', className: 'actions',
       render: s => (
         <RowActions>
+          {s.role === 'support_teacher' && (
+            <button className="btn-icon" title="O'qituvchi qilish" aria-label="O'qituvchi qilish" onClick={() => setPromoteTarget(s)}>
+              <FontAwesomeIcon icon={faChalkboardUser} />
+            </button>
+          )}
           <button className="btn-icon" title="Telegram ID bog'lash" aria-label="Telegram ID bog'lash" onClick={() => openLink(s)}>
             <FontAwesomeIcon icon={faLink} />
           </button>
@@ -122,6 +141,18 @@ export default function Employees({ currentUser }) {
           hint="Xodim botga /start bosib, keyin /idyubor buyrug'i orqali o'z ID'sini yuboradi — shu ID shu yerga kiritiladi."
         />
       </Modal>
+
+      <ConfirmDialog
+        open={!!promoteTarget}
+        danger={false}
+        title="O'qituvchi qilish"
+        message={promoteTarget ? `${promoteTarget.full_name || promoteTarget.username} roli Support Teacher'dan O'qituvchiga o'zgartirilsinmi?` : ''}
+        detail="Xodim keyingi so'rovdanoq o'qituvchi huquqlari bilan ishlaydi. O'zgarish audit tarixida saqlanadi."
+        confirmLabel="Ha, o'qituvchi qilish"
+        loading={promoting}
+        onConfirm={handlePromote}
+        onClose={() => setPromoteTarget(null)}
+      />
 
       {warningTarget && (
         <StaffWarningModal

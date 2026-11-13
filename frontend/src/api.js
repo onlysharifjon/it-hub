@@ -761,6 +761,9 @@ export async function fetchStaffOptions()    { return request('/staff-options') 
 export async function setStaffTelegramChatId(id, telegram_chat_id) {
   return request(`/staff-options/${id}/telegram`, { method: 'PATCH', body: JSON.stringify({ telegram_chat_id }) })
 }
+export async function promoteStaffToTeacher(id) {
+  return request(`/staff-options/${id}/promote-to-teacher`, { method: 'POST' })
+}
 export async function fetchDisciplineCodes() { return request('/discipline-codes') }
 export async function fetchStaffWarnings(staffId) {
   const q = staffId ? `?staff_id=${staffId}` : ''

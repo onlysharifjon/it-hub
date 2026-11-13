@@ -9223,6 +9223,29 @@ def set_staff_telegram_chat_id(
     return staff
 
 
+@app.post("/staff-options/{user_id}/promote-to-teacher", response_model=schemas.StaffOption)
+def promote_staff_to_teacher(
+    user_id: int,
+    db: Session = Depends(get_db),
+    actor: models.User = Depends(require_audit),
+):
+    """Support Teacher xodimni O'qituvchi (teacher) roliga o'tkazadi.
+    Faqat support_teacher → teacher; boshqa rol o'zgarishlari admin
+    "Foydalanuvchilar" bo'limida qilinadi."""
+    staff = db.query(models.User).filter(models.User.id == user_id).first()
+    if not staff:
+        raise HTTPException(status_code=404, detail="Xodim topilmadi")
+    if staff.role != UserRole.metodist.value:
+        raise HTTPException(status_code=400, detail="Faqat Support Teacher xodimni o'qituvchi qilish mumkin")
+    staff.role = UserRole.teacher.value
+    write_audit(db, entity_type="user", entity_id=staff.id, action="promote_to_teacher",
+                changed_by_id=actor.id,
+                old_value={"role": UserRole.metodist.value}, new_value={"role": UserRole.teacher.value})
+    db.commit()
+    db.refresh(staff)
+    return staff
+
+
 @app.get("/discipline-codes", response_model=List[schemas.DisciplineCodeRead])
 def list_discipline_codes(db: Session = Depends(get_db), _: models.User = Depends(require_auth)):
     codes = (
