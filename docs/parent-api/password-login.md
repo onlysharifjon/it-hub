@@ -57,8 +57,13 @@ Ota-ona parolni o'zi almashtirsa ham, admin reset qilsa ham:
 ### Yangi ota-ona
 
 CRM → Ota-onalar → «Yaratish» (`POST /parents`). Login avtomatik = telefon, **+998XXXXXXXXX** ko'rinishida saqlanadi.
-Parol maydoni bo'sh qolsa, 20 belgili tasodifiy parol yaratiladi (o'xshash 0/O/1/l/I belgilarsiz). Qo'lda parol
-kiritilsa, u ham kamida 15 belgi bo'lishi kerak. Parol **faqat bir marta** ko'rsatiladi (`Cache-Control: no-store`).
+Parol maydoni bo'sh qolsa, avto parol = **ism + telefonning oxirgi 4 raqami** (masalan `Nodira2233`; ism —
+F.I.Sh. ning birinchi so'zi, faqat harflar, bosh harf katta). Ism yoki raqam bo'lmasa, 20 belgili tasodifiy parol.
+Qo'lda kiritilgan parol 6–128 belgi (CRM API shartnomasi o'zgarmagan).
+
+> ⚠️ Rahbariyat qarori bilan qabul qilingan xavf: login telefon bo'lgani uchun bunday parolni ota-onaning ismi va
+> raqamini biladigan kishi topa oladi. Ota-onaga ilovaga kirgach «Parolni almashtirish» orqali o'z parolini
+> qo'yish tavsiya etiladi. Shubha bo'lsa — «Parolni yangilash» bilan qo'lda kuchli parol bering. Parol **faqat bir marta** ko'rsatiladi (`Cache-Control: no-store`).
 Bazada faqat bcrypt hash saqlanadi, parol logga ham, auditga ham yozilmaydi.
 
 ### OTP orqali o'zi ro'yxatdan o'tgan ota-ona
@@ -72,7 +77,7 @@ beriladi. Farzandlar odatdagidek biriktiriladi.
 
 1. Ota-ona markazga keladi yoki ma'lum raqamidan qo'ng'iroq qiladi. Administrator shaxsini tekshiradi: ism-familiya,
    farzand ismi va guruhi, CRM'dagi raqam bilan mosligi. Faqat raqamning o'zi yetarli emas.
-2. CRM → Ota-onalar → «Parolni yangilash». Yangi parol bir marta ko'rsatiladi.
+2. CRM → Ota-onalar → «Parolni yangilash». Parol maydoni bo'sh bo'lsa ism + oxirgi 4 raqam beriladi; bir marta ko'rsatiladi.
 3. Parol shaxsan yoki ota-onaning CRM'dagi raqamiga yuboriladi (Telegram/SMS qo'lda). Parolni guruh chatlariga
    yozmang. Ekranni boshqalarga ko'rsatmang.
 4. Eski parol va barcha qurilmalardagi sessiyalar darhol bekor bo'ladi. Ota-ona ilovaga kirgach, «Parolni

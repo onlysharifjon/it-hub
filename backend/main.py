@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import unicodedata
 from uuid import uuid4
 from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal
@@ -8609,8 +8610,22 @@ import string as _string
 
 
 def _gen_password(n: int = _security.PARENT_GENERATED_PASSWORD_LEN) -> str:
-    # Kamida 15 belgili kriptografik tasodifiy parol (security.generate_parent_password)
+    # Kriptografik tasodifiy parol — ism yoki raqam yetarli bo'lmagandagi zaxira
     return _security.generate_parent_password(n)
+
+
+def _auto_parent_password(full_name: str, phone: str) -> str:
+    """Avto parol (rahbariyat qarori): ism + telefonning oxirgi 4 raqami, masalan "Nodira2233".
+    Ism — full_name ning birinchi so'zi, faqat harflar (apostrof/tutuq belgisi olib tashlanadi, aytib
+    berish oson bo'lsin), bosh harf katta. Ism yoki 4 ta raqam bo'lmasa — tasodifiy parol."""
+    first = (full_name or "").strip().split()
+    # ʻ (U+02BB) kabi modifikator "harf"lar ham olib tashlanadi — faqat oddiy harflar qoladi
+    name = "".join(ch for ch in (first[0] if first else "")
+                   if ch.isalpha() and unicodedata.category(ch) != "Lm")
+    digits = re.sub(r"\D", "", phone or "")
+    if not name or len(digits) < 4:
+        return _gen_password()
+    return name[:1].upper() + name[1:].lower() + digits[-4:]
 
 
 def _parent_phone(raw: str) -> str:
@@ -8675,7 +8690,7 @@ def create_parent_account(
     if db.query(models.Parent).filter(models.Parent.username == username).first():
         raise HTTPException(409, "Bu login band")
 
-    raw_password = payload.password or _gen_password()
+    raw_password = payload.password or _auto_parent_password(payload.full_name, phone)
     parent = models.Parent(
         full_name=payload.full_name.strip(), display_name=payload.display_name,
         phone=phone, username=username, hashed_password=hash_password(raw_password),
@@ -8765,13 +8780,13 @@ def reset_parent_password(
 ):
     """Administrator reset (parolni unutgan yoki OTP orqali yaratilgan ota-onaga parol berish).
 
-    Parol berilmasa — 20 belgili tasodifiy parol. Javobda BIR MARTA qaytadi, bazada faqat bcrypt hash,
+    Parol berilmasa — ism + telefonning oxirgi 4 raqami. Javobda BIR MARTA qaytadi, bazada faqat bcrypt hash,
     logga/auditga yozilmaydi. Barcha sessiyalar (refresh + access) darhol bekor bo'ladi."""
     response.headers["Cache-Control"] = "no-store"
     p = db.query(models.Parent).filter(models.Parent.id == parent_id).first()
     if not p or p.deleted_at is not None:
         raise HTTPException(404, "Ota-ona topilmadi")
-    raw = payload.password or _gen_password()
+    raw = payload.password or _auto_parent_password(p.full_name, p.phone)
     p.hashed_password = hash_password(raw)
     _revoke_parent_sessions(db, p.id)
     write_audit(db, entity_type="parent", entity_id=p.id, action="reset_password",

@@ -92,8 +92,7 @@ export default function Parents({ currentUser }) {
     if (!form.full_name.trim()) return toast.error("Ism-familiyani kiriting")
     if (!form.phone.trim()) return toast.error("Telefon raqamini kiriting")
     if (form.student_ids.length === 0) return toast.error("Kamida bitta farzand (talaba) tanlang")
-    if (form.password && form.password.length < 15) return toast.error("Parol kamida 15 belgi (bo'sh qoldirsangiz — avto)")
-    if (form.password && new TextEncoder().encode(form.password).length > 72) return toast.error("Parol 72 belgidan oshmasin")
+    if (form.password && form.password.length < 6) return toast.error("Parol kamida 6 belgi")
     setSaving(true)
     try {
       const res = await createParent({
@@ -292,7 +291,7 @@ export default function Parents({ currentUser }) {
                   <label>Parol</label>
                   <input className="field" value={form.password}
                     onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
-                    placeholder="Bo'sh qolsa — avto (20 belgi)" autoComplete="new-password" />
+                    placeholder="Bo'sh qolsa — avto: Ism + oxirgi 4 raqam" autoComplete="new-password" />
                 </div>
               </div>
 

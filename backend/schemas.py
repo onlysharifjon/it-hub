@@ -1278,26 +1278,13 @@ class StatsOverview(BaseModel):
 
 # ── Parent akkaunt boshqaruvi (hunter/admin) ─────────────────────────────────
 
-def _parent_password(v: Optional[str]) -> Optional[str]:
-    """Admin qo'lda bergan ota-ona paroli: bo'sh -> avto (20 belgi), aks holda siyosat (≥15 belgi, ≤72 bayt)."""
-    if v is None or v == "":
-        return None
-    from .security import parent_password_problem
-    problem = parent_password_problem(v)
-    if problem:
-        raise ValueError(problem)
-    return v
-
-
 class ParentAccountCreate(BaseModel):
     full_name:    str            = Field(..., min_length=2, max_length=200)
     phone:        str            = Field(..., min_length=7, max_length=30)
     username:     Optional[str]  = Field(None, min_length=3, max_length=100)  # bo'sh -> telefon
-    password:     Optional[str]  = Field(None, max_length=128)                # bo'sh -> avto
+    password:     Optional[str]  = Field(None, min_length=6, max_length=128)  # bo'sh -> avto (ism + oxirgi 4 raqam)
     display_name: Optional[str]  = Field(None, max_length=120)
     student_ids:  List[int]      = []
-
-    _v_password = validator("password", allow_reuse=True)(_parent_password)
 
 
 class ParentAccountUpdate(BaseModel):
@@ -1308,9 +1295,7 @@ class ParentAccountUpdate(BaseModel):
 
 
 class ResetParentPassword(BaseModel):
-    password: Optional[str] = Field(None, max_length=128)   # bo'sh -> avto (20 belgi)
-
-    _v_password = validator("password", allow_reuse=True)(_parent_password)
+    password: Optional[str] = Field(None, min_length=6, max_length=128)   # bo'sh -> avto (ism + oxirgi 4 raqam)
 
 
 class LinkChildRequest(BaseModel):

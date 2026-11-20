@@ -80,7 +80,7 @@ def test_password_policy(pw, ok):
 
 # ── Admin: yaratish / reset ─────────────────────────────────────────────────
 
-def test_admin_create_generates_strong_password_once(client, db, hunter_user):
+def test_admin_create_generates_name_last4_password_once(client, db, hunter_user):
     s = _mk_student(db)
     r = client.post("/parents", headers=_staff(client),
                     json={"full_name": "Nodira", "phone": "90 111 22 33", "student_ids": [s.id]})
@@ -88,7 +88,7 @@ def test_admin_create_generates_strong_password_once(client, db, hunter_user):
     assert r.headers.get("cache-control") == "no-store"
     body = r.json()
     pw = body["generated_password"]
-    assert len(pw) == 20
+    assert pw == "Nodira2233"                       # ism + telefonning oxirgi 4 raqami
     # Telefon E.164 ko'rinishida saqlanadi — iOS aynan shuni yuboradi
     assert body["phone"] == PHONE and body["username"] == PHONE
     p = db.query(Parent).filter_by(id=body["id"]).one()
@@ -101,14 +101,15 @@ def test_admin_create_generates_strong_password_once(client, db, hunter_user):
 
 def test_admin_password_policy_on_create_and_reset(client, db, hunter_user):
     h = _staff(client)
-    short = client.post("/parents", headers=h, json={"full_name": "A B", "phone": PHONE, "password": "short-pass-14ch"[:14]})
+    # CRM API shartnomasi o'zgarmagan: qo'lda parol 6..128 belgi
+    short = client.post("/parents", headers=h, json={"full_name": "A B", "phone": PHONE, "password": "12345"})
     assert short.status_code == 422
-    too_long = client.post("/parents", headers=h, json={"full_name": "A B", "phone": PHONE, "password": "x1-" * 25})
+    too_long = client.post("/parents", headers=h, json={"full_name": "A B", "phone": PHONE, "password": "x" * 129})
     assert too_long.status_code == 422
-    ok = client.post("/parents", headers=h, json={"full_name": "A B", "phone": PHONE, "password": "abcdefghijklmno"})
-    assert ok.status_code == 201 and ok.json()["generated_password"] == "abcdefghijklmno"
+    ok = client.post("/parents", headers=h, json={"full_name": "A B", "phone": PHONE, "password": "abc123"})
+    assert ok.status_code == 201 and ok.json()["generated_password"] == "abc123"
     pid = ok.json()["id"]
-    assert client.post(f"/parents/{pid}/reset-password", headers=h, json={"password": "too-short"}).status_code == 422
+    assert client.post(f"/parents/{pid}/reset-password", headers=h, json={"password": "12345"}).status_code == 422
     long64 = "Uzun-va-esda-qoladigan-parol-ibora-" + "x" * 29
     assert len(long64) == 64
     r = client.post(f"/parents/{pid}/reset-password", headers=h, json={"password": long64})
@@ -127,7 +128,7 @@ def test_admin_gives_password_to_otp_created_parent(client, db, hunter_user):
     r = client.post(f"/parents/{otp_parent.id}/reset-password", headers=h, json={})
     assert r.status_code == 200
     pw = r.json()["generated_password"]
-    assert len(pw) == 20
+    assert pw == "Nodira2233"
     assert _login(client, PHONE, pw).status_code == 200
     audit = db.query(AuditLog).filter_by(entity_type="parent", entity_id=otp_parent.id, action="reset_password").one()
     assert pw not in (audit.new_value or "") and pw not in (audit.old_value or "")
@@ -351,6 +352,25 @@ def test_hunter_cannot_duplicate_parent_with_other_phone_format(client, db, hunt
 def test_hunter_short_manual_password_rejected(client, db, hunter_user):
     s = _mk_student(db)
     r = client.post("/parents", headers=_staff(client),
-                    json={"full_name": "Nodira", "phone": PHONE, "password": "123456", "student_ids": [s.id]})
+                    json={"full_name": "Nodira", "phone": PHONE, "password": "12345", "student_ids": [s.id]})
     assert r.status_code == 422
     assert db.query(Parent).count() == 0
+
+
+@pytest.mark.parametrize("full_name,phone,expected", [
+    ("Nodira Karimova", "+998901112233", "Nodira2233"),
+    ("  nodira  ", "+998901112233", "Nodira2233"),
+    ("G'ulomjon Aliyev", "+998935554411", "Gulomjon4411"),      # apostrof olib tashlanadi
+    ("Oʻgʻiloy", "+998977770009", "Ogiloy0009"),
+    ("ДИЛШОД Каримов", "+998901234567", "Дилшод4567"),
+])
+def test_auto_password_is_name_plus_last4(full_name, phone, expected):
+    from backend.main import _auto_parent_password
+    assert _auto_parent_password(full_name, phone) == expected
+
+
+def test_auto_password_falls_back_to_random_without_name_or_digits():
+    from backend.main import _auto_parent_password
+    for name, phone in (("123", "+998901112233"), ("Nodira", "abc"), ("", "+998901112233")):
+        pw = _auto_parent_password(name, phone)
+        assert len(pw) == 20 and security.parent_password_problem(pw) is None
