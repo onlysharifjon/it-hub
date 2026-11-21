@@ -3,11 +3,12 @@ import { Initials, SummaryRow, ViewTabs } from './ui/Workspace'
 import Overlay from './ui/Overlay'
 import PersonName from './ui/PersonName'
 import { useEffect, useState } from 'react'
+import './parents-form.css'
 import { toast } from 'react-hot-toast'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPeopleRoof, faPlus, faKey, faToggleOn, faToggleOff,
-  faCopy, faSearch, faUserPlus, faXmark, faMobileScreen, faPaperPlane,
+  faCopy, faSearch, faUserPlus, faXmark, faMobileScreen, faPaperPlane, faCheck,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchParents, createParent, updateParent, resetParentPassword,
@@ -308,69 +309,113 @@ export default function Parents({ currentUser }) {
       {/* Yangi akkaunt modali */}
       {modal && (
         <Overlay className="modal-overlay" onClick={() => setModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
+          <div className="modal pf-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3><FontAwesomeIcon icon={faPeopleRoof} /> Ota-ona akkaunti ochish</h3>
               <button className="modal-close" onClick={() => setModal(false)}>✕</button>
             </div>
-            <div className="modal-body">
-              <label>Ism-familiya *</label>
-              <input className="field" value={form.full_name}
-                onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))}
-                placeholder="Farzandni belgilang — avto yoziladi" />
-              {pickedGuardians.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 4px' }}>
-                  {pickedGuardians.map(g => (
-                    <button key={g.key} type="button" className="button secondary small"
-                      title={`${g.child} — ${g.role.toLowerCase()}si`}
-                      onClick={() => pickGuardian(g)}>
-                      {g.role}: {g.name}{g.phone ? ` · ${g.phone}` : ''}
-                    </button>
-                  ))}
+            <div className="modal-body pf-body">
+              {/* 1. Avval farzand — ota-ona ismi/telefoni shundan avto yoziladi */}
+              <section className="pf-section">
+                <div className="pf-section-head">
+                  <span className="pf-step">1</span>
+                  <h4>Farzandini tanlang <span className="pf-req">*</span></h4>
+                  {form.student_ids.length > 0 && (
+                    <span className="pf-count">{form.student_ids.length} ta tanlandi</span>
+                  )}
                 </div>
-              )}
-
-              <label>Telefon *</label>
-              <input className="field" value={form.phone}
-                onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
-                placeholder="+998901234567" />
-
-              <div className="row-2">
-                <div>
-                  <label>Login</label>
-                  <input className="field" value={form.username}
-                    onChange={e => setForm(p => ({ ...p, username: e.target.value }))}
-                    placeholder="Bo'sh qolsa — telefon" />
+                <div className="pf-search">
+                  <FontAwesomeIcon icon={faSearch} />
+                  <input value={studentSearch} onChange={e => setStudentSearch(e.target.value)}
+                    placeholder="Talaba ismi yoki telefon raqami" aria-label="Talabani qidirish" />
+                  {studentSearch && (
+                    <button type="button" className="pf-search-clear" aria-label="Qidiruvni tozalash"
+                      onClick={() => setStudentSearch('')}><FontAwesomeIcon icon={faXmark} /></button>
+                  )}
                 </div>
-                <div>
-                  <label>Parol</label>
-                  <input className="field" value={form.password}
-                    onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
-                    placeholder="Bo'sh qolsa — avto: Ism + oxirgi 4 raqam" autoComplete="new-password" />
+                <div className="pf-list" role="listbox" aria-multiselectable="true" aria-label="Talabalar">
+                  {[...form.student_ids.map(id => picked[id]).filter(Boolean),
+                    ...students.filter(s => !form.student_ids.includes(s.id))].map(s => {
+                    const on = form.student_ids.includes(s.id)
+                    const gs = guardiansOf(s)
+                    return (
+                      <label key={s.id} className={'pf-row' + (on ? ' is-on' : '')} role="option" aria-selected={on}>
+                        <input type="checkbox" className="pf-check-input" checked={on} onChange={() => toggleStudent(s)} />
+                        <span className="pf-check" aria-hidden="true">{on && <FontAwesomeIcon icon={faCheck} />}</span>
+                        <span className="pf-row-main">
+                          <span className="pf-row-name">{s.full_name}</span>
+                          <span className="pf-row-meta">
+                            {s.phone1}
+                            {gs.length > 0 && <> · {gs.map(g => `${g.role}: ${g.name}`).join(', ')}</>}
+                          </span>
+                        </span>
+                      </label>
+                    )
+                  })}
+                  {students.length === 0 && form.student_ids.length === 0 && (
+                    <div className="pf-empty">Talabalar topilmadi</div>
+                  )}
                 </div>
-              </div>
+              </section>
 
-              <label>Farzandlari (talabalar) *</label>
-              <input className="field" value={studentSearch}
-                onChange={e => setStudentSearch(e.target.value)}
-                placeholder="Talabani qidirish: ism yoki telefon" style={{ marginBottom: 6 }} />
-              <div style={{
-                maxHeight: 180, overflowY: 'auto', border: '1px solid var(--border, var(--border))',
-                borderRadius: 8, padding: '6px 10px',
-              }}>
-                {[...form.student_ids.map(id => picked[id]).filter(Boolean),
-                  ...students.filter(s => !form.student_ids.includes(s.id))].map(s => (
-                  <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={form.student_ids.includes(s.id)}
-                      onChange={() => toggleStudent(s)}
-                    />
-                    {s.full_name} <span className="text-muted" style={{ fontSize: 12 }}>({s.phone1})</span>
-                  </label>
-                ))}
-                {students.length === 0 && <div className="muted py-2">Talabalar topilmadi</div>}
-              </div>
+              {/* 2. Ota-ona */}
+              <section className="pf-section">
+                <div className="pf-section-head">
+                  <span className="pf-step">2</span>
+                  <h4>Ota-ona</h4>
+                </div>
+                {pickedGuardians.length > 0 && (
+                  <div className="pf-guardians">
+                    {pickedGuardians.map(g => {
+                      const active = form.full_name === g.name && (!g.phone || form.phone === g.phone)
+                      return (
+                        <button key={g.key} type="button" className={'pf-guardian' + (active ? ' is-on' : '')}
+                          title={`${g.child} — ${g.role.toLowerCase()}si`} onClick={() => pickGuardian(g)}>
+                          <strong>{g.role}: {g.name}</strong>
+                          {g.phone && <span>{g.phone}</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                <div className="pf-grid">
+                  <div>
+                    <label>Ism-familiya *</label>
+                    <input className="field" value={form.full_name}
+                      onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))}
+                      placeholder="Farzand tanlansa — avto" />
+                  </div>
+                  <div>
+                    <label>Telefon *</label>
+                    <input className="field" value={form.phone} inputMode="tel"
+                      onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
+                      placeholder="+998901234567" />
+                  </div>
+                </div>
+              </section>
+
+              {/* 3. Kirish ma'lumotlari */}
+              <section className="pf-section">
+                <div className="pf-section-head">
+                  <span className="pf-step">3</span>
+                  <h4>Ilovaga kirish</h4>
+                </div>
+                <div className="pf-grid">
+                  <div>
+                    <label>Login</label>
+                    <input className="field" value={form.username}
+                      onChange={e => setForm(p => ({ ...p, username: e.target.value }))}
+                      placeholder="Bo'sh — telefon" />
+                  </div>
+                  <div>
+                    <label>Parol</label>
+                    <input className="field" value={form.password}
+                      onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
+                      placeholder="Bo'sh — Ism + 4 raqam" autoComplete="new-password" />
+                  </div>
+                </div>
+                <p className="pf-hint">Bo'sh qoldirilsa: login — telefon, parol — ism va telefonning oxirgi 4 raqami.</p>
+              </section>
             </div>
             <div className="modal-footer">
               <button className="button secondary" onClick={() => setModal(false)}>Bekor</button>
