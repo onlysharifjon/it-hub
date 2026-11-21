@@ -82,6 +82,15 @@ Natijadan keyin **Excel** yoki **PDF** yuklab olinadi: `POST /parents/credential
 faqat hash, shuning uchun fayl o'sha zahoti yuklab olinmasa, keyin faqat «Parolni yangilash» qoladi. Fayl serverda
 saqlanmaydi va logga yozilmaydi; uni ota-onalarga shaxsan bering.
 
+### Akkauntni o'chirish (CRM)
+
+CRM → Ota-onalar → 🗑 «Akkauntni o'chirish» (`DELETE /parents/{id}` → 204), tasdiqlash uchun `O'CHIRISH` yoziladi.
+Ilovadagi «akkauntni o'chirish» bilan bir xil funksiya (`erase_parent`): login/parol, sessiyalar (access + refresh),
+qurilmalar, xabarlar, farzand bog'lanishlari o'chiriladi, ochiq invoyslar bekor qilinadi; to'lov tarixi identifikatsiyasiz
+tombstone'da qoladi. Hunter faqat CRM orqali ochilgan akkauntlarni o'chiradi (OTP orqali o'zi ro'yxatdan o'tganni — admin),
+App Store review akkaunti o'chirilmaydi (409). `audit_logs`: `action=erase` (faqat ID'lar). Shu raqamga keyin yangi
+akkaunt ochish mumkin. Vaqtincha to'xtatish kerak bo'lsa — o'chirish o'rniga «Bloklash».
+
 ### OTP orqali o'zi ro'yxatdan o'tgan ota-ona
 
 Uning paroli tasodifiy va hech kimga ma'lum emas. Shu raqam bilan «Yaratish» bosilsa, `409 … (ID n) — «Parolni

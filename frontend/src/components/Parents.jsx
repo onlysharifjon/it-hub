@@ -9,12 +9,12 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPeopleRoof, faPlus, faKey, faToggleOn, faToggleOff,
   faCopy, faSearch, faUserPlus, faXmark, faMobileScreen, faPaperPlane, faCheck,
-  faUsers, faUser, faFileExcel, faFilePdf, faArrowLeft,
+  faUsers, faUser, faFileExcel, faFilePdf, faArrowLeft, faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   fetchParents, createParent, updateParent, resetParentPassword,
   linkParentChild, unlinkParentChild, fetchStudents, broadcastToParents,
-  bulkCreateParents, downloadParentCredentials,
+  bulkCreateParents, downloadParentCredentials, deleteParent,
 } from '../api'
 import useConfirm from './ui/useConfirm'
 import DataTable, { RowActions } from './ui/DataTable'
@@ -301,6 +301,23 @@ export default function Parents({ currentUser }) {
     finally { setSaving(false) }
   }
 
+  async function handleDelete(p) {
+    const ok = await ask({
+      title: "Akkauntni o'chirish",
+      message: `${p.full_name} (${p.phone}) akkaunti o'chirilsinmi?`,
+      detail: "Login va parol darhol ishlamay qoladi, ota-ona ilovadan chiqariladi, farzandlar bog'lanishi o'chadi. " +
+        "To'lov tarixi buxgalteriya uchun saqlanadi. Qaytarib bo'lmaydi — kerak bo'lsa keyin yangi akkaunt ochiladi.",
+      confirmLabel: "Ha, o'chirish",
+      requireText: "O'CHIRISH",
+    })
+    if (!ok) return
+    try {
+      await deleteParent(p.id)
+      toast.success("Akkaunt o'chirildi")
+      load(search.trim() || undefined)
+    } catch (e) { toast.error(e.message) }
+  }
+
   async function handleToggle(p) {
     try {
       await updateParent(p.id, { is_active: !p.is_active })
@@ -411,6 +428,9 @@ export default function Parents({ currentUser }) {
             aria-label={p.is_active ? 'Bloklash' : 'Faollashtirish'} onClick={() => handleToggle(p)}>
             <FontAwesomeIcon icon={p.is_active ? faToggleOn : faToggleOff} />
           </button>
+          <button className="btn-icon danger" title="Akkauntni o'chirish" aria-label="Akkauntni o'chirish" onClick={() => handleDelete(p)}>
+            <FontAwesomeIcon icon={faTrash} />
+          </button>
         </RowActions>
       ),
     }] : []),
@@ -435,7 +455,7 @@ export default function Parents({ currentUser }) {
 
       <SummaryRow items={[{ label: 'Ro‘yxatdagi ota-onalar', value: items.length }, { label: 'Faol akkauntlar', value: items.filter(p => p.is_active).length }, { label: 'Biriktirilgan farzandlar', value: items.reduce((n,p) => n + (p.children || []).length, 0) }]} />
       <div className="directory-toolbar"><ViewTabs value={parentView} onChange={setParentView} items={[{ key: 'families', label: 'Oilalar' }, { key: 'table', label: 'Jadval' }]} /><form onSubmit={handleSearch}><input className="field" value={search} onChange={e => setSearch(e.target.value)} placeholder="Ism yoki telefon bo‘yicha qidirish" aria-label="Ota-onani qidirish" /></form></div>
-      {parentView === 'families' && !loading && items.length > 0 ? <div className="family-grid">{items.map(p => <article key={p.id} className="family-card"><header><Initials name={p.full_name} /><div><h2>{p.full_name}</h2><a href={'tel:' + p.phone}>{p.phone || 'Telefon kiritilmagan'}</a></div><span className={'family-status' + (p.is_active ? ' is-active' : '')}>{p.is_active ? 'Faol' : 'Bloklangan'}</span></header><div className="family-children"><span className="studio-eyebrow">Farzandlar</span>{p.children?.length ? p.children.map(c => <div key={c.student_id ?? c.id}><Initials name={c.full_name || c.student_name} /><span>{c.full_name || c.student_name}</span>{canManage && <button className="btn-icon danger" title="Farzandni ajratish" aria-label="Farzandni ajratish" onClick={() => handleUnlink(p, c)}><FontAwesomeIcon icon={faXmark} /></button>}</div>) : <p>Hali farzand biriktirilmagan</p>}</div>{canManage && <footer><button className="button secondary small" onClick={() => setLinkFor(p)}><FontAwesomeIcon icon={faUserPlus} /> Biriktirish</button><button className="btn-icon" title="Parolni yangilash" aria-label="Parolni yangilash" onClick={() => handleReset(p)}><FontAwesomeIcon icon={faKey} /></button><button className="btn-icon" title={p.is_active ? 'Bloklash' : 'Faollashtirish'} aria-label={p.is_active ? 'Bloklash' : 'Faollashtirish'} onClick={() => handleToggle(p)}><FontAwesomeIcon icon={p.is_active ? faToggleOn : faToggleOff} /></button></footer>}</article>)}</div> : <DataTable
+      {parentView === 'families' && !loading && items.length > 0 ? <div className="family-grid">{items.map(p => <article key={p.id} className="family-card"><header><Initials name={p.full_name} /><div><h2>{p.full_name}</h2><a href={'tel:' + p.phone}>{p.phone || 'Telefon kiritilmagan'}</a></div><span className={'family-status' + (p.is_active ? ' is-active' : '')}>{p.is_active ? 'Faol' : 'Bloklangan'}</span></header><div className="family-children"><span className="studio-eyebrow">Farzandlar</span>{p.children?.length ? p.children.map(c => <div key={c.student_id ?? c.id}><Initials name={c.full_name || c.student_name} /><span>{c.full_name || c.student_name}</span>{canManage && <button className="btn-icon danger" title="Farzandni ajratish" aria-label="Farzandni ajratish" onClick={() => handleUnlink(p, c)}><FontAwesomeIcon icon={faXmark} /></button>}</div>) : <p>Hali farzand biriktirilmagan</p>}</div>{canManage && <footer><button className="button secondary small" onClick={() => setLinkFor(p)}><FontAwesomeIcon icon={faUserPlus} /> Biriktirish</button><button className="btn-icon" title="Parolni yangilash" aria-label="Parolni yangilash" onClick={() => handleReset(p)}><FontAwesomeIcon icon={faKey} /></button><button className="btn-icon" title={p.is_active ? 'Bloklash' : 'Faollashtirish'} aria-label={p.is_active ? 'Bloklash' : 'Faollashtirish'} onClick={() => handleToggle(p)}><FontAwesomeIcon icon={p.is_active ? faToggleOn : faToggleOff} /></button><button className="btn-icon danger" title="Akkauntni o'chirish" aria-label="Akkauntni o'chirish" onClick={() => handleDelete(p)}><FontAwesomeIcon icon={faTrash} /></button></footer>}</article>)}</div> : <DataTable
         columns={columns}
         rows={items}
         loading={loading}

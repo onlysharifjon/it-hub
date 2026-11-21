@@ -8796,6 +8796,36 @@ def reset_parent_password(
     return {"generated_password": raw}
 
 
+@app.delete("/parents/{parent_id}", status_code=204, response_class=Response)
+def delete_parent_account_crm(
+    parent_id: int,
+    actor: models.User = Depends(require_hunter),
+    db: Session = Depends(get_db),
+):
+    """CRM'dan ota-ona akkauntini o'chirish (login/parol darhol ishlamaydi, ilovadan chiqariladi).
+    Ilovadagi «akkauntni o'chirish» bilan bir xil: shaxsiy ma'lumot va bog'lanishlar o'chiriladi, to'lov
+    yozuvlari identifikatsiyasiz tombstone'ga bog'liq qoladi. Hunter — faqat CRM orqali ochilgan akkauntlar;
+    admin — istalgani. App Store review akkaunti o'chirilmaydi. Qaytarib bo'lmaydi."""
+    from .parent.router_parent import erase_parent
+    from .parent.phone_auth.service import is_review_phone
+    from .parent.service import phone_e164
+    p = db.query(models.Parent).filter(models.Parent.id == parent_id).with_for_update().first()
+    if not p or p.deleted_at is not None:
+        raise HTTPException(404, "Ota-ona topilmadi")
+    if is_review_phone(phone_e164(p.phone) or p.phone):
+        raise HTTPException(409, "App Store review akkauntini o'chirib bo'lmaydi")
+    if actor.role != UserRole.admin.value and p.created_by_id is None:
+        raise HTTPException(403, "Ota-ona ilovada o'zi ro'yxatdan o'tgan — uni faqat admin o'chira oladi")
+    children = [c.student_id for c in p.children]
+    erase_parent(db, p)
+    # Auditda faqat ID va farzandlar ID'lari — ism/telefon yozilmaydi
+    write_audit(db, entity_type="parent", entity_id=parent_id, action="erase", changed_by_id=actor.id,
+                old_value={"student_ids": children})
+    db.commit()
+    log.warning("AUDIT parent_account_deleted parent_id=%s mode=erased by=crm actor=%s", parent_id, actor.id)
+    return Response(status_code=204)
+
+
 @app.post("/parents/bulk", response_model=schemas.ParentBulkResult)
 def bulk_create_parent_accounts(
     payload: schemas.ParentBulkCreate,

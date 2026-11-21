@@ -124,3 +124,59 @@ def test_export_validates_rows(client, db, hunter):
     h = _h(client)
     assert client.post("/parents/credentials-export", headers=h, json={"format": "doc", "rows": ROWS}).status_code == 422
     assert client.post("/parents/credentials-export", headers=h, json={"format": "pdf", "rows": []}).status_code == 422
+
+
+# ── CRM: ota-ona akkauntini o'chirish ───────────────────────────────────────
+def _crm_parent(db, actor, phone="+998901112233", pwd="Nodira2233"):
+    p = Parent(full_name="Nodira", phone=phone, username=phone, hashed_password=security.hash_password(pwd),
+               is_active=True, created_by_id=actor.id if actor else None, created_at=datetime.utcnow())
+    db.add(p); db.commit(); db.refresh(p)
+    return p
+
+
+def test_hunter_deletes_crm_created_account(client, db, hunter):
+    s = _student(db, "Alibek")
+    p = _crm_parent(db, hunter)
+    db.add(ParentChild(parent_id=p.id, student_id=s.id)); db.commit()
+    tokens = client.post("/parent/auth/login", json={"username": p.phone, "password": "Nodira2233"}).json()
+    h = _h(client)
+    r = client.delete(f"/parents/{p.id}", headers=h)
+    assert r.status_code == 204 and r.content == b""
+    # Login, eski access va refresh — ishlamaydi
+    assert client.post("/parent/auth/login", json={"username": "+998901112233", "password": "Nodira2233"}).status_code == 401
+    assert client.get("/parent/profile", headers={"Authorization": f"Bearer {tokens['access_token']}"}).status_code == 401
+    assert client.post("/parent/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code == 401
+    # CRM ro'yxatida yo'q, farzand bog'lanishi o'chgan, PII o'chirilgan
+    assert all(x["id"] != p.id for x in client.get("/parents", headers=h).json())
+    assert db.query(ParentChild).filter_by(parent_id=p.id).count() == 0
+    db.refresh(p)
+    assert p.deleted_at is not None and p.phone.startswith("deleted-") and p.full_name == "O'chirilgan akkaunt"
+    audit = db.query(AuditLog).filter_by(entity_type="parent", entity_id=p.id, action="erase").one()
+    assert audit.changed_by_id == hunter.id and "Nodira" not in f"{audit.old_value}{audit.new_value}"
+    # Takroriy o'chirish — 404; shu raqamga yangi akkaunt ochiladi
+    assert client.delete(f"/parents/{p.id}", headers=h).status_code == 404
+    again = client.post("/parents", headers=h, json={"full_name": "Nodira", "phone": "+998901112233", "student_ids": [s.id]})
+    assert again.status_code == 201 and again.json()["id"] != p.id
+
+
+def test_hunter_cannot_delete_self_registered_parent_but_admin_can(client, db, hunter):
+    p = _crm_parent(db, None)                                 # OTP orqali o'zi ro'yxatdan o'tgan
+    assert client.delete(f"/parents/{p.id}", headers=_h(client)).status_code == 403
+    _create_user(db, "boss", "boss123", UserRole.admin)
+    assert client.delete(f"/parents/{p.id}", headers=_h(client, "boss", "boss123")).status_code == 204
+
+
+def test_review_account_cannot_be_deleted(client, db, hunter, monkeypatch):
+    monkeypatch.setenv("PARENT_REVIEW_PHONE", "+998901112233")
+    p = _crm_parent(db, hunter)
+    r = client.delete(f"/parents/{p.id}", headers=_h(client))
+    assert r.status_code == 409
+    db.refresh(p)
+    assert p.deleted_at is None
+
+
+def test_delete_requires_hunter_or_admin(client, db, hunter):
+    p = _crm_parent(db, hunter)
+    _create_user(db, "teach", "teach123", UserRole.teacher)
+    assert client.delete(f"/parents/{p.id}", headers=_h(client, "teach", "teach123")).status_code == 403
+    assert client.delete(f"/parents/{p.id}").status_code == 401

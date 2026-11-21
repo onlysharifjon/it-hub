@@ -732,6 +732,8 @@ export async function linkParentChild(id, studentId) {
 export async function unlinkParentChild(id, studentId) {
   return request(`/parents/${id}/children/${studentId}`, { method: 'DELETE' })
 }
+// Akkauntni o'chirish: login/parol darhol ishlamaydi (qaytarib bo'lmaydi)
+export async function deleteParent(id) { return request(`/parents/${id}`, { method: 'DELETE' }) }
 export async function bulkCreateParents(items) {
   return request('/parents/bulk', { method: 'POST', body: JSON.stringify({ items }) })
 }

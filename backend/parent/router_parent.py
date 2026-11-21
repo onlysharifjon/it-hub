@@ -322,6 +322,72 @@ def update_profile(
     return Response(status_code=204)
 
 
+def erase_parent(db: Session, target: models.Parent) -> None:
+    """Ota-ona akkauntini o'chirish (ilova «akkauntni o'chirish» va CRM bir xil yo'ldan foydalanadi).
+    Shaxsiy ma'lumot, sessiyalar, qurilmalar, xabarlar, farzand bog'lanishlari o'chiriladi; ochiq (pending)
+    invoyslar bekor qilinadi. To'lov/buxgalteriya yozuvlari identifikatsiyasiz tombstone qatorga bog'liq qoladi.
+    Chaqiruvchi `target` ni with_for_update bilan qulflaydi va commit/rollback qiladi."""
+    parent_id = target.id
+    old_phone = target.phone
+    canonical_phone = service.phone_e164(old_phone)
+    phone_values = {old_phone, canonical_phone}
+    # Provider callbacks lock transaction before invoice. Match that order
+    # to avoid deadlocks with an in-flight PerformTransaction.
+    open_invoice_ids = [id_ for (id_,) in db.query(models.ParentInvoice.id).filter(
+        models.ParentInvoice.parent_id == parent_id,
+        models.ParentInvoice.status == "pending",
+    ).all()]
+    if open_invoice_ids:
+        db.query(models.PaymentTransaction).filter(
+            models.PaymentTransaction.invoice_id.in_(open_invoice_ids),
+            models.PaymentTransaction.state == "created",
+        ).with_for_update().all()
+    open_invoices = db.query(models.ParentInvoice).filter(
+        models.ParentInvoice.id.in_(open_invoice_ids),
+        models.ParentInvoice.status == "pending",
+    ).order_by(models.ParentInvoice.id).with_for_update().all()
+    for invoice in open_invoices:
+        # Include a transaction created just before the invoice lock.
+        for txn in db.query(models.PaymentTransaction).filter(
+            models.PaymentTransaction.invoice_id == invoice.id,
+            models.PaymentTransaction.state == "created",
+        ).with_for_update().all():
+            payment_core.cancel(db, invoice, txn, reason=None)
+        invoice.status = "cancelled"
+        invoice.cancelled_at = datetime.utcnow()
+    question_ids = db.query(models.ParentTeacherQuestion.id).filter(
+        models.ParentTeacherQuestion.parent_id == parent_id
+    ).subquery()
+    db.query(models.ParentTeacherReply).filter(
+        models.ParentTeacherReply.question_id.in_(question_ids)
+    ).delete(synchronize_session=False)
+    for model in (
+        models.ParentTeacherQuestion,
+        models.ParentAbsenceExplanation,
+        models.ParentNotification,
+        models.ParentNotificationPreference,
+        models.ParentPushDevice,
+        models.ParentChild,
+        models.ParentRefreshToken,
+    ):
+        db.query(model).filter(model.parent_id == parent_id).delete(synchronize_session=False)
+    db.query(models.PhoneVerification).filter(
+        (models.PhoneVerification.parent_id == parent_id) |
+        (models.PhoneVerification.phone.in_(phone_values))
+    ).delete(synchronize_session=False)
+    # Letters only: normalize_phone must never mistake a tombstone for a real number.
+    tombstone = "deleted-" + "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(16))
+    target.full_name = "O'chirilgan akkaunt"
+    target.display_name = None
+    target.phone = tombstone
+    target.username = tombstone
+    target.hashed_password = secrets.token_hex(32)
+    target.avatar = None
+    target.phone_verified_at = None
+    target.is_active = False
+    target.deleted_at = datetime.utcnow()
+
+
 @router.delete("/account", status_code=204, response_class=Response)
 def delete_parent_account(
     request: Request,
@@ -345,65 +411,8 @@ def delete_parent_account(
         raise api_error("unauthorized", "Token yaroqsiz", 401)
 
     parent_id = target.id
-    old_phone = target.phone
-    canonical_phone = service.phone_e164(old_phone)
-    phone_values = {old_phone, canonical_phone}
     try:
-        # Provider callbacks lock transaction before invoice. Match that order
-        # to avoid deadlocks with an in-flight PerformTransaction.
-        open_invoice_ids = [id_ for (id_,) in db.query(models.ParentInvoice.id).filter(
-            models.ParentInvoice.parent_id == parent_id,
-            models.ParentInvoice.status == "pending",
-        ).all()]
-        if open_invoice_ids:
-            db.query(models.PaymentTransaction).filter(
-                models.PaymentTransaction.invoice_id.in_(open_invoice_ids),
-                models.PaymentTransaction.state == "created",
-            ).with_for_update().all()
-        open_invoices = db.query(models.ParentInvoice).filter(
-            models.ParentInvoice.id.in_(open_invoice_ids),
-            models.ParentInvoice.status == "pending",
-        ).order_by(models.ParentInvoice.id).with_for_update().all()
-        for invoice in open_invoices:
-            # Include a transaction created just before the invoice lock.
-            for txn in db.query(models.PaymentTransaction).filter(
-                models.PaymentTransaction.invoice_id == invoice.id,
-                models.PaymentTransaction.state == "created",
-            ).with_for_update().all():
-                payment_core.cancel(db, invoice, txn, reason=None)
-            invoice.status = "cancelled"
-            invoice.cancelled_at = datetime.utcnow()
-        question_ids = db.query(models.ParentTeacherQuestion.id).filter(
-            models.ParentTeacherQuestion.parent_id == parent_id
-        ).subquery()
-        db.query(models.ParentTeacherReply).filter(
-            models.ParentTeacherReply.question_id.in_(question_ids)
-        ).delete(synchronize_session=False)
-        for model in (
-            models.ParentTeacherQuestion,
-            models.ParentAbsenceExplanation,
-            models.ParentNotification,
-            models.ParentNotificationPreference,
-            models.ParentPushDevice,
-            models.ParentChild,
-            models.ParentRefreshToken,
-        ):
-            db.query(model).filter(model.parent_id == parent_id).delete(synchronize_session=False)
-        db.query(models.PhoneVerification).filter(
-            (models.PhoneVerification.parent_id == parent_id) |
-            (models.PhoneVerification.phone.in_(phone_values))
-        ).delete(synchronize_session=False)
-        # Letters only: normalize_phone must never mistake a tombstone for a real number.
-        tombstone = "deleted-" + "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(16))
-        target.full_name = "O'chirilgan akkaunt"
-        target.display_name = None
-        target.phone = tombstone
-        target.username = tombstone
-        target.hashed_password = secrets.token_hex(32)
-        target.avatar = None
-        target.phone_verified_at = None
-        target.is_active = False
-        target.deleted_at = datetime.utcnow()
+        erase_parent(db, target)
         db.commit()
     except Exception:
         db.rollback()
