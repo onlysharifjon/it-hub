@@ -732,6 +732,28 @@ export async function linkParentChild(id, studentId) {
 export async function unlinkParentChild(id, studentId) {
   return request(`/parents/${id}/children/${studentId}`, { method: 'DELETE' })
 }
+export async function bulkCreateParents(items) {
+  return request('/parents/bulk', { method: 'POST', body: JSON.stringify({ items }) })
+}
+// Login/parollar faylini serverda yasatib (xlsx | pdf), brauzerda yuklab olish. Fayl hech qayerda saqlanmaydi.
+export async function downloadParentCredentials(format, rows) {
+  let res
+  try {
+    res = await fetch(`${API_BASE}/parents/credentials-export`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ format, rows }),
+    })
+  } catch { throw new Error("Serverga ulanib bo'lmadi") }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(typeof err.detail === 'string' ? err.detail : (formatValidationDetail(err.detail) || "Fayl yaratib bo'lmadi"))
+  }
+  const blob = await res.blob()
+  const name = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || `ota-ona-login-parollar.${format}`
+  const url = URL.createObjectURL(blob)
+  const a = Object.assign(document.createElement('a'), { href: url, download: name })
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
 export async function broadcastToParents(text) {
   return request('/parents/broadcast', { method: 'POST', body: JSON.stringify({ text }) })
 }

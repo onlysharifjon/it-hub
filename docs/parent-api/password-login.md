@@ -66,6 +66,22 @@ Qo'lda kiritilgan parol 6–128 belgi (CRM API shartnomasi o'zgarmagan).
 > qo'yish tavsiya etiladi. Shubha bo'lsa — «Parolni yangilash» bilan qo'lda kuchli parol bering. Parol **faqat bir marta** ko'rsatiladi (`Cache-Control: no-store`).
 Bazada faqat bcrypt hash saqlanadi, parol logga ham, auditga ham yozilmaydi.
 
+### Ommaviy yaratish (hunter)
+
+CRM → Ota-onalar → «Akkaunt ochish» → **«Ommaviy yaratish»**. Chapda talabalar (filtr «Akkaunti yo'q»,
+«Barchasini belgilash»), o'ngda har talaba uchun Ona/Ota tanlovi. `POST /parents/bulk`
+`{"items":[{"student_id":1,"guardian":"mother"}]}` (≤ 300 ta):
+
+* ism/telefon talaba kartasidan (`mother_*` / `father_*`), ism formatlanadi; login = telefon, parol = ism + oxirgi 4 raqam;
+* shu raqamli ota-ona bor bo'lsa yoki shu so'rovda aka-ukasi uchun yaratilgan bo'lsa — yangi akkaunt/parol emas,
+  talaba o'sha akkauntga biriktiriladi (`status: linked`); ism yoki telefon yo'q bo'lsa — `skipped` + `reason`;
+* bitta tranzaksiya, har bir amal `audit_logs` ga (parolsiz).
+
+Natijadan keyin **Excel** yoki **PDF** yuklab olinadi: `POST /parents/credentials-export`
+`{"format":"xlsx"|"pdf","rows":[{full_name,username,password,children}]}` — faqat hozir yaratilganlar. Parollar bazada
+faqat hash, shuning uchun fayl o'sha zahoti yuklab olinmasa, keyin faqat «Parolni yangilash» qoladi. Fayl serverda
+saqlanmaydi va logga yozilmaydi; uni ota-onalarga shaxsan bering.
+
 ### OTP orqali o'zi ro'yxatdan o'tgan ota-ona
 
 Uning paroli tasodifiy va hech kimga ma'lum emas. Shu raqam bilan «Yaratish» bosilsa, `409 … (ID n) — «Parolni

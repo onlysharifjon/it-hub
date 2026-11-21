@@ -8796,6 +8796,110 @@ def reset_parent_password(
     return {"generated_password": raw}
 
 
+@app.post("/parents/bulk", response_model=schemas.ParentBulkResult)
+def bulk_create_parent_accounts(
+    payload: schemas.ParentBulkCreate,
+    response: Response,
+    actor: models.User = Depends(require_hunter),
+    db: Session = Depends(get_db),
+):
+    """Ommaviy yaratish (hunter/admin): har talaba uchun kartasidagi ona yoki ota ma'lumotidan akkaunt.
+    * login = telefon (+998XXXXXXXXX), parol = ism + oxirgi 4 raqam (javobda BIR MARTA);
+    * shu raqamli ota-ona allaqachon bor bo'lsa (yoki shu so'rovda aka-ukasi uchun yaratilgan bo'lsa) —
+      yangi akkaunt/parol emas, talaba unga biriktiriladi (status=linked);
+    * ism yoki to'g'ri telefon bo'lmasa — o'tkazib yuboriladi (status=skipped, reason).
+    Hammasi bitta tranzaksiyada; har bir yaratish/biriktirish audit_logs ga (parolsiz)."""
+    from .parent.service import format_person_name
+    response.headers["Cache-Control"] = "no-store"
+    rows: List[schemas.ParentBulkRow] = []
+    seen = set()
+    for item in payload.items:
+        key = (item.student_id, item.guardian)
+        if key in seen:
+            continue
+        seen.add(key)
+        label = "Ona" if item.guardian == "mother" else "Ota"
+        row = schemas.ParentBulkRow(student_id=item.student_id, guardian=item.guardian, status="skipped")
+        rows.append(row)
+        s = db.query(models.Student).filter(models.Student.id == item.student_id).first()
+        if not s:
+            row.reason = "Talaba topilmadi"
+            continue
+        row.student_name = s.full_name
+        raw_name = (s.mother_name if item.guardian == "mother" else s.father_name) or ""
+        raw_phone = (s.mother_phone if item.guardian == "mother" else s.father_phone) or ""
+        name = format_person_name(raw_name)
+        if not name:
+            row.reason = f"{label} ismi kiritilmagan"
+            continue
+        if len(normalize_phone(raw_phone)) != 9:
+            row.reason = f"{label} telefoni kiritilmagan yoki noto'g'ri"
+            continue
+        phone = _parent_phone(raw_phone)
+        row.full_name = name
+        same = [p for p in _parents_with_phone(db, phone) if p.deleted_at is None]
+        if len(same) > 1:
+            row.reason = "Bu raqam bir nechta akkauntda — qo'lda hal qiling"
+            continue
+        if same:
+            parent = same[0]
+            row.parent_id, row.full_name, row.username = parent.id, parent.full_name, parent.username
+            if any(c.student_id == s.id for c in parent.children):
+                row.reason = "Allaqachon shu ota-onaga biriktirilgan"
+                continue
+            db.add(models.ParentChild(parent_id=parent.id, student_id=s.id, created_at=datetime.utcnow()))
+            write_audit(db, entity_type="parent", entity_id=parent.id, action="link_child", changed_by_id=actor.id,
+                        new_value={"student_id": s.id, "bulk": True})
+            db.flush()
+            db.refresh(parent)
+            row.status, row.reason = "linked", "Mavjud akkauntga biriktirildi (parol o'zgarmadi)"
+            continue
+        if db.query(models.Parent).filter(models.Parent.username == phone).first():
+            row.reason = "Bu login band"
+            continue
+        raw_password = _auto_parent_password(name, phone)
+        parent = models.Parent(
+            full_name=name, phone=phone, username=phone, hashed_password=hash_password(raw_password),
+            is_active=True, created_by_id=actor.id, created_at=datetime.utcnow(),
+        )
+        db.add(parent)
+        db.flush()
+        db.add(models.ParentChild(parent_id=parent.id, student_id=s.id, created_at=datetime.utcnow()))
+        write_audit(db, entity_type="parent", entity_id=parent.id, action="create", changed_by_id=actor.id,
+                    new_value={"student_ids": [s.id], "generated": True, "bulk": True, "guardian": item.guardian})
+        db.flush()
+        db.refresh(parent)
+        row.status, row.parent_id, row.username, row.password = "created", parent.id, parent.username, raw_password
+    db.commit()
+    return schemas.ParentBulkResult(
+        created=sum(r.status == "created" for r in rows),
+        linked=sum(r.status == "linked" for r in rows),
+        skipped=sum(r.status == "skipped" for r in rows),
+        rows=rows,
+    )
+
+
+@app.post("/parents/credentials-export")
+def export_parent_credentials(
+    payload: schemas.ParentCredentialsExport,
+    actor: models.User = Depends(require_hunter),
+):
+    """Hozirgina yaratilgan login/parollarni Excel yoki PDF qilib qaytaradi (chop etish/tarqatish uchun).
+    Parollar bazada faqat hash — shuning uchun qiymatlar brauzerdan keladi; saqlanmaydi, logga yozilmaydi."""
+    from .parent import credentials_export
+    now = tz.now()
+    if payload.format == "xlsx":
+        body = credentials_export.to_xlsx(payload.rows, now)
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        body = credentials_export.to_pdf(payload.rows, now)
+        mime = "application/pdf"
+    return Response(content=body, media_type=mime, headers={
+        "Cache-Control": "no-store",
+        "Content-Disposition": f'attachment; filename="ota-ona-login-parollar-{now:%Y%m%d-%H%M}.{payload.format}"',
+    })
+
+
 @app.post("/parents/{parent_id}/children", response_model=schemas.ParentAccountRead)
 def link_parent_child(
     parent_id: int,

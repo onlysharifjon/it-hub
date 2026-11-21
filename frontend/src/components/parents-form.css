@@ -69,3 +69,101 @@
   .pf-grid { grid-template-columns: 1fr; }
   .pf-list { min-height: 240px; max-height: 300px; }
 }
+
+/* ── Keng oyna: chapda talabalar, o'rta/o'ngda ma'lumotlar ─────────────────── */
+.modal.pf-modal.pf-wide { width: min(1280px, 96vw); height: 90vh; max-height: 90vh; }
+.modal-header.pf-header { display: flex; align-items: center; gap: 16px; }
+.pf-header h3 { margin: 0; white-space: nowrap; }
+.pf-tabs { display: inline-flex; gap: 4px; padding: 4px; margin-right: auto; border-radius: 12px; background: var(--surface-2); }
+.pf-tab {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--muted); font-size: 14px; font-weight: 550; cursor: pointer;
+}
+.pf-tab.is-on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(16, 24, 40, .12); }
+
+.pf-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 400px minmax(0, 1fr); border-top: 1px solid var(--border); }
+.pf-left {
+  display: flex; flex-direction: column; gap: 10px; min-height: 0; padding: 18px 18px 14px;
+  border-right: 1px solid var(--border); background: var(--surface-2);
+}
+.pf-wide .pf-list { flex: 1; min-height: 0; max-height: none; }
+.pf-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.pf-selectall { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 550; cursor: pointer; color: var(--text); }
+.pf-selectall input { width: 18px; height: 18px; accent-color: var(--primary); }
+.pf-filter { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--surface); }
+.pf-filter button { border: 0; background: transparent; padding: 6px 10px; font-size: 12px; font-weight: 550; color: var(--muted); cursor: pointer; }
+.pf-filter button.is-on { background: var(--primary); color: var(--primary-on, #fff); }
+.pf-badge {
+  margin-left: 8px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; vertical-align: 2px;
+  background: var(--surface-3); color: var(--muted);
+}
+
+.pf-main { min-height: 0; overflow-y: auto; padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; }
+.pf-main-single { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 18px; }
+.pf-card {
+  display: flex; flex-direction: column; gap: 12px; padding: 18px;
+  border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
+}
+.pf-field { display: flex; flex-direction: column; gap: 6px; }
+.pf-field label { margin: 0; }
+.pf-kids { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 4px; border-top: 1px dashed var(--border); }
+.pf-kids-label { font-size: 13px; font-weight: 600; color: var(--text); margin-right: 2px; }
+.pf-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 4px 4px 10px; border-radius: 999px;
+  background: var(--primary-light); color: var(--primary-text); font-size: 13px; font-weight: 550;
+}
+.pf-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 2px 6px; border-radius: 999px; }
+.pf-chip button:hover { background: rgba(0, 0, 0, .06); }
+
+.pf-empty-big { flex: 1; display: flex; align-items: center; justify-content: center; border: 1px dashed var(--border); border-radius: 14px; }
+.pf-table-wrap { border: 1px solid var(--border); border-radius: 12px; overflow: auto; background: var(--surface); }
+.pf-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.pf-table th {
+  position: sticky; top: 0; z-index: 1; text-align: left; padding: 10px 12px; font-size: 12px; font-weight: 600;
+  color: var(--muted); background: var(--surface-2); border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.pf-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; color: var(--text); }
+.pf-table tr:last-child td { border-bottom: 0; }
+.pf-table tr.is-bad td { background: color-mix(in srgb, var(--danger, #dc2626) 5%, transparent); }
+.pf-td-strong { font-weight: 550; }
+.pf-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; white-space: nowrap; }
+.pf-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.pf-seg button { border: 0; background: var(--surface); padding: 4px 10px; font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.pf-seg button.is-on { background: var(--primary); color: var(--primary-on, #fff); }
+.pf-seg button:disabled { opacity: .35; cursor: not-allowed; }
+.pf-status { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 550; white-space: nowrap; }
+.pf-status.is-ok   { background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent); color: var(--success, #15803d); }
+.pf-status.is-info { background: var(--primary-light); color: var(--primary-text); }
+.pf-status.is-bad  { background: color-mix(in srgb, var(--danger, #dc2626) 12%, transparent); color: var(--danger, #b91c1c); white-space: normal; }
+
+.pf-result-head { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; }
+.pf-stat { display: flex; flex-direction: column; justify-content: center; padding: 10px 16px; border-radius: 12px; border: 1px solid var(--border); min-width: 120px; }
+.pf-stat b { font-size: 22px; line-height: 1.1; }
+.pf-stat span { font-size: 12px; color: var(--muted); }
+.pf-stat.is-ok b { color: var(--success, #15803d); }
+.pf-stat.is-info b { color: var(--primary); }
+.pf-stat.is-bad b { color: var(--danger, #b91c1c); }
+.pf-download { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.pf-warn {
+  margin: 0; padding: 10px 14px; border-radius: 10px; font-size: 13px; font-weight: 550;
+  background: color-mix(in srgb, var(--warning, #f59e0b) 16%, transparent); color: var(--text);
+}
+.pf-warn.is-done { background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent); }
+
+@media (max-width: 1000px) {
+  .pf-main-single { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .modal.pf-modal.pf-wide { width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; }
+  .pf-header { flex-wrap: wrap; }
+  .pf-tabs { order: 3; width: 100%; margin: 0; }
+  .pf-tab { flex: 1; justify-content: center; }
+  .pf-layout { display: flex; flex-direction: column; overflow-y: auto; }
+  .pf-layout > *, .pf-left > *, .pf-main > * { flex-shrink: 0; }
+  .pf-tab { padding: 8px 10px; font-size: 13px; white-space: nowrap; }
+  .pf-left { border-right: 0; border-bottom: 1px solid var(--border); }
+  .pf-wide .pf-list { flex: none; height: 320px; }
+  .pf-main { overflow: visible; }
+  .pf-download { margin-left: 0; width: 100%; }
+  .pf-download .button { flex: 1; justify-content: center; }
+}

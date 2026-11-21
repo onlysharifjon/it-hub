@@ -1298,6 +1298,46 @@ class ResetParentPassword(BaseModel):
     password: Optional[str] = Field(None, min_length=6, max_length=128)   # bo'sh -> avto (ism + oxirgi 4 raqam)
 
 
+class ParentBulkItem(BaseModel):
+    student_id: int
+    guardian:   Literal["mother", "father"]                 # talaba kartasidagi ona yoki ota
+
+
+class ParentBulkCreate(BaseModel):
+    items: List[ParentBulkItem] = Field(..., min_items=1, max_items=300)
+
+
+class ParentBulkRow(BaseModel):
+    student_id:   int
+    student_name: Optional[str] = None
+    guardian:     str
+    status:       Literal["created", "linked", "skipped"]  # linked — mavjud akkauntga biriktirildi
+    reason:       Optional[str] = None
+    parent_id:    Optional[int] = None
+    full_name:    Optional[str] = None
+    username:     Optional[str] = None
+    password:     Optional[str] = None                     # faqat status=created (bir marta)
+
+
+class ParentBulkResult(BaseModel):
+    created: int
+    linked:  int
+    skipped: int
+    rows:    List[ParentBulkRow]
+
+
+class ParentCredentialRow(BaseModel):
+    full_name: str           = Field(..., min_length=1, max_length=200)
+    username:  str           = Field(..., min_length=1, max_length=100)
+    password:  str           = Field(..., min_length=1, max_length=128)
+    children:  Optional[str] = Field(None, max_length=500)
+
+
+class ParentCredentialsExport(BaseModel):
+    format: Literal["xlsx", "pdf"]
+    rows:   List[ParentCredentialRow] = Field(..., min_items=1, max_items=500)
+
+
 class LinkChildRequest(BaseModel):
     student_id: int
 
