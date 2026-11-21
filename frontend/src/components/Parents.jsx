@@ -25,6 +25,8 @@ export default function Parents({ currentUser }) {
 
   const [items, setItems] = useState([])
   const [students, setStudents] = useState([])
+  const [studentSearch, setStudentSearch] = useState('')
+  const [picked, setPicked] = useState({})          // tanlangan talabalar: id -> talaba (qidiruv o'zgarsa ham saqlanadi)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [parentView, setParentView] = useState('families')
@@ -64,8 +66,14 @@ export default function Parents({ currentUser }) {
 
   useEffect(() => { load() }, [])
   useEffect(() => {
-    fetchStudents({ page_size: 100 }).then(r => setStudents(r.items || [])).catch(() => {})
-  }, [])
+    // Qidiruv serverda (/students?search=) — 100 tadan ko'p talaba bo'lsa ham hammasi topiladi
+    const t = setTimeout(() => {
+      fetchStudents({ page_size: 100, search: studentSearch.trim() || undefined })
+        .then(r => setStudents(r.items || [])).catch(() => {})
+    }, 250)
+    return () => clearTimeout(t)
+  }, [studentSearch])
+  useEffect(() => { if (linkFor) setStudentSearch('') }, [linkFor])
 
   async function load(q) {
     setLoading(true)
@@ -79,13 +87,48 @@ export default function Parents({ currentUser }) {
     load(search.trim() || undefined)
   }
 
-  function toggleStudent(id) {
-    setForm(p => ({
-      ...p,
-      student_ids: p.student_ids.includes(id)
-        ? p.student_ids.filter(x => x !== id)
-        : [...p.student_ids, id],
-    }))
+  // Talaba kartasidagi ota-ona ma'lumoti (CRM: mother_name/phone, father_name/phone)
+  function guardiansOf(s) {
+    return [
+      { role: 'Ona', name: (s.mother_name || '').trim(), phone: (s.mother_phone || '').trim() },
+      { role: 'Ota', name: (s.father_name || '').trim(), phone: (s.father_phone || '').trim() },
+    ].filter(g => g.name)
+  }
+
+  function pickGuardian(g) {
+    setForm(p => ({ ...p, full_name: g.name, phone: g.phone || p.phone }))
+  }
+
+  function toggleStudent(s) {
+    const adding = !form.student_ids.includes(s.id)
+    setPicked(p => {
+      const next = { ...p }
+      if (adding) next[s.id] = s; else delete next[s.id]
+      return next
+    })
+    setForm(p => {
+      const next = {
+        ...p,
+        student_ids: adding ? [...p.student_ids, s.id] : p.student_ids.filter(x => x !== s.id),
+      }
+      // Farzand belgilanganda ism/telefon bo'sh bo'lsa — talaba kartasidagi ota-onadan avto to'ldiriladi
+      if (adding && !p.full_name.trim()) {
+        const g = guardiansOf(s).sort((a, b) => Number(!!b.phone) - Number(!!a.phone))[0]
+        if (g) {
+          next.full_name = g.name
+          if (!p.phone.trim() && g.phone) next.phone = g.phone
+        }
+      }
+      return next
+    })
+  }
+
+  const pickedGuardians = form.student_ids
+    .map(id => picked[id]).filter(Boolean)
+    .flatMap(s => guardiansOf(s).map(g => ({ ...g, child: s.full_name, key: `${s.id}-${g.role}` })))
+
+  function openCreate() {
+    setForm(EMPTY); setPicked({}); setStudentSearch(''); setModal(true)
   }
 
   async function handleCreate() {
@@ -105,6 +148,7 @@ export default function Parents({ currentUser }) {
       toast.success("Akkaunt yaratildi")
       setModal(false)
       setForm(EMPTY)
+      setPicked({})
       setCreds({ full_name: res.full_name, username: res.username, password: res.generated_password })
       load()
     } catch (e) { toast.error(e.message) }
@@ -237,7 +281,7 @@ export default function Parents({ currentUser }) {
             </button>
           )}
           {canManage && (
-            <button className="button" onClick={() => { setForm(EMPTY); setModal(true) }}>
+            <button className="button" onClick={openCreate}>
               <FontAwesomeIcon icon={faPlus} /> Akkaunt ochish
             </button>
           )}
@@ -273,7 +317,18 @@ export default function Parents({ currentUser }) {
               <label>Ism-familiya *</label>
               <input className="field" value={form.full_name}
                 onChange={e => setForm(p => ({ ...p, full_name: e.target.value }))}
-                placeholder="Muqumov Amon" />
+                placeholder="Farzandni belgilang — avto yoziladi" />
+              {pickedGuardians.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 4px' }}>
+                  {pickedGuardians.map(g => (
+                    <button key={g.key} type="button" className="button secondary small"
+                      title={`${g.child} — ${g.role.toLowerCase()}si`}
+                      onClick={() => pickGuardian(g)}>
+                      {g.role}: {g.name}{g.phone ? ` · ${g.phone}` : ''}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <label>Telefon *</label>
               <input className="field" value={form.phone}
@@ -296,16 +351,20 @@ export default function Parents({ currentUser }) {
               </div>
 
               <label>Farzandlari (talabalar) *</label>
+              <input className="field" value={studentSearch}
+                onChange={e => setStudentSearch(e.target.value)}
+                placeholder="Talabani qidirish: ism yoki telefon" style={{ marginBottom: 6 }} />
               <div style={{
                 maxHeight: 180, overflowY: 'auto', border: '1px solid var(--border, var(--border))',
                 borderRadius: 8, padding: '6px 10px',
               }}>
-                {students.map(s => (
+                {[...form.student_ids.map(id => picked[id]).filter(Boolean),
+                  ...students.filter(s => !form.student_ids.includes(s.id))].map(s => (
                   <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
                       checked={form.student_ids.includes(s.id)}
-                      onChange={() => toggleStudent(s.id)}
+                      onChange={() => toggleStudent(s)}
                     />
                     {s.full_name} <span className="text-muted" style={{ fontSize: 12 }}>({s.phone1})</span>
                   </label>
@@ -374,6 +433,9 @@ export default function Parents({ currentUser }) {
             </div>
             <div className="modal-body">
               <p style={{ margin: '0 0 10px' }}><strong>{linkFor.full_name}</strong> ga talaba biriktirish:</p>
+              <input className="field" value={studentSearch}
+                onChange={e => setStudentSearch(e.target.value)}
+                placeholder="Talabani qidirish: ism yoki telefon" style={{ marginBottom: 8 }} />
               <div style={{ maxHeight: 260, overflowY: 'auto' }}>
                 {students
                   .filter(s => !linkFor.children.some(c => c.student_id === s.id))

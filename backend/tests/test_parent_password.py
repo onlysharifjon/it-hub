@@ -374,3 +374,73 @@ def test_auto_password_falls_back_to_random_without_name_or_digits():
     for name, phone in (("123", "+998901112233"), ("Nodira", "abc"), ("", "+998901112233")):
         pw = _auto_parent_password(name, phone)
         assert len(pw) == 20 and security.parent_password_problem(pw) is None
+
+
+# ── Ism-familiya: formatlash, parol uchun ism, ilovada to'ldirish ──────────
+@pytest.mark.parametrize("raw,expected", [
+    ("nodira karimova", "Nodira Karimova"),
+    ("  NODIRA   KARIMOVA ", "Nodira Karimova"),
+    ("o'g'iloy rahimova", "O'g'iloy Rahimova"),
+    ("karimova nodira akmal QIZI", "Karimova Nodira Akmal qizi"),
+    ("anna-mariya ivanova", "Anna-Mariya Ivanova"),
+    ("дилшод каримов", "Дилшод Каримов"),
+])
+def test_format_person_name(raw, expected):
+    from backend.parent.service import format_person_name
+    assert format_person_name(raw) == expected
+
+
+@pytest.mark.parametrize("full_name,phone,expected", [
+    ("Karimova Nodira", "+998901112233", "Nodira2233"),            # familiya oldin
+    ("Karimova Nodira Akmal qizi", "+998901112233", "Nodira2233"),
+    ("Aliyev Dilshod Karim o'g'li", "+998935554411", "Dilshod4411"),
+    ("Нодира Каримова", "+998901112233", "Нодира2233"),
+    ("Karimov", "+998901112233", "Karimov2233"),                   # faqat familiya — birinchi so'z
+])
+def test_auto_password_skips_surname(full_name, phone, expected):
+    from backend.main import _auto_parent_password
+    assert _auto_parent_password(full_name, phone) == expected
+
+
+def _patch_name(client, h, name):
+    return client.patch("/parent/profile", headers=h, json={"display_name": name})
+
+
+def test_app_completes_single_word_crm_name_and_capitalizes(client, db):
+    p = _mk_parent(db)                                    # CRM: full_name = "Nodira" (faqat ism)
+    h = _bearer(_login(client).json())
+    before = client.get("/parent/profile", headers=h).json()
+    assert len(before["full_name"].split()) == 1          # ilova shundan bilib, to'liq ism so'raydi
+    r = _patch_name(client, h, "  nodira   karimova ")
+    assert r.status_code == 204 and r.content == b""
+    after = client.get("/parent/profile", headers=h).json()
+    assert set(after) == set(before) == {"display_name", "full_name", "phone"}   # JSON shakli o'zgarmagan
+    assert after["full_name"] == after["display_name"] == "Nodira Karimova"
+    db.refresh(p)
+    assert p.full_name == "Nodira Karimova"               # CRM'da ham to'liq ism
+    assert _login(client).status_code == 200              # parol o'zgarmaydi
+
+
+def test_app_name_change_does_not_overwrite_full_crm_name(client, db):
+    p = _mk_parent(db)
+    p.full_name = "Karimova Nodira Akmal qizi"; db.commit()
+    h = _bearer(_login(client).json())
+    assert _patch_name(client, h, "nodira opa").status_code == 204
+    prof = client.get("/parent/profile", headers=h).json()
+    assert prof["display_name"] == "Nodira Opa" and prof["full_name"] == "Karimova Nodira Akmal qizi"
+
+
+def test_app_single_word_name_only_capitalized(client, db):
+    _mk_parent(db)
+    h = _bearer(_login(client).json())
+    assert _patch_name(client, h, "nodira").status_code == 204
+    prof = client.get("/parent/profile", headers=h).json()
+    assert prof["display_name"] == "Nodira" and prof["full_name"] == "Nodira"
+
+
+def test_profile_patch_contract_unchanged(client, db):
+    _mk_parent(db)
+    h = _bearer(_login(client).json())
+    assert client.patch("/parent/profile", headers=h, json={"full_name": "X Y"}).status_code == 422  # yangi maydon yo'q
+    assert _patch_name(client, h, "   ").status_code == 422
+    assert client.patch("/parent/profile", headers=h, json={}).status_code == 422

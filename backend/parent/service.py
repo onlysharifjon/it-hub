@@ -75,6 +75,45 @@ def _add_minutes(hm: str, minutes: int) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+# ── Ism-familiya ─────────────────────────────────────────────────────────────
+_SURNAME_RE = re.compile(r"(?:ov|ova|ev|eva|yev|yeva|ов|ова|ев|ева)$", re.I)
+_PATRONYMIC_MARKERS = {"o'g'li", "og'li", "ogli", "ugli", "o'gli", "qizi", "kizi", "ўғли", "угли", "қизи", "кизи"}
+_APOSTROPHES = str.maketrans({c: "'" for c in "ʻʼ‘’`´"})
+
+
+def _is_marker(word: str) -> bool:
+    return word.translate(_APOSTROPHES).lower() in _PATRONYMIC_MARKERS
+
+
+def format_person_name(raw: Optional[str]) -> str:
+    """"nodira  KARIMOVA" -> "Nodira Karimova": bo'shliqlar bittaga, har so'z (va chiziqcha bilan
+    ajratilgan qism) bosh harfi katta, qolgani kichik. O'g'li/qizi kichik harfda qoladi.
+    Apostrofdan keyingi harf kichik qoladi: o'g'iloy -> O'g'iloy (str.title() kabi O'G'Iloy emas)."""
+    words = []
+    for w in (raw or "").split():
+        if _is_marker(w):
+            words.append(w.lower())
+            continue
+        words.append("-".join(p[:1].upper() + p[1:].lower() for p in w.split("-")))
+    return " ".join(words)
+
+
+def given_name(full_name: Optional[str]) -> str:
+    """F.I.Sh. dan ism: familiya (-ov/-ova/-yev/-eva) va otasining ismi (... o'g'li/qizi) o'tkazib
+    yuboriladi. "Karimova Nodira Akmal qizi" -> "Nodira", "Nodira" -> "Nodira". Topilmasa — birinchi so'z."""
+    words = (full_name or "").split()
+    skip = set()
+    for i, w in enumerate(words):
+        if _is_marker(w):
+            skip.update({i, i - 1})
+        elif _SURNAME_RE.search(w.strip("-")):
+            skip.add(i)
+    for i, w in enumerate(words):
+        if i not in skip:
+            return w
+    return words[0] if words else ""
+
+
 def phone_e164(phone: Optional[str]) -> str:
     """'+998 90 123 45 67' → '+998901234567'. O'zbek raqami bo'lmasa — '+' va raqamlar."""
     if not phone:

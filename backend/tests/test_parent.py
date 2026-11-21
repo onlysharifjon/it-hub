@@ -191,7 +191,7 @@ def test_profile_get_and_patch(client, db):
 
     r = client.patch("/parent/profile", headers=h, json={"display_name": "  Nodira xonim  "})
     assert r.status_code == 204 and r.content == b""
-    assert client.get("/parent/profile", headers=h).json()["display_name"] == "Nodira xonim"
+    assert client.get("/parent/profile", headers=h).json()["display_name"] == "Nodira Xonim"   # har so'z bosh harfi katta (rahbariyat talabi)
 
     for bad in ({"display_name": "   "}, {"display_name": "x" * 101}, {"display_name": None},
                 {"phone": "+998900000000"}, {"child_ids": [1]}, {"role": "admin"},

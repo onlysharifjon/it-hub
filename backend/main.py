@@ -8616,11 +8616,12 @@ def _gen_password(n: int = _security.PARENT_GENERATED_PASSWORD_LEN) -> str:
 
 def _auto_parent_password(full_name: str, phone: str) -> str:
     """Avto parol (rahbariyat qarori): ism + telefonning oxirgi 4 raqami, masalan "Nodira2233".
-    Ism — full_name ning birinchi so'zi, faqat harflar (apostrof/tutuq belgisi olib tashlanadi, aytib
-    berish oson bo'lsin), bosh harf katta. Ism yoki 4 ta raqam bo'lmasa — tasodifiy parol."""
-    first = (full_name or "").strip().split()
+    Ism — F.I.Sh. dagi ism (familiya va otasining ismi o'tkazib yuboriladi: "Karimova Nodira" -> Nodira),
+    faqat harflar (apostrof/tutuq belgisi olib tashlanadi, aytib berish oson bo'lsin), bosh harf katta.
+    Ism yoki 4 ta raqam bo'lmasa — tasodifiy parol."""
+    from .parent.service import given_name
     # ʻ (U+02BB) kabi modifikator "harf"lar ham olib tashlanadi — faqat oddiy harflar qoladi
-    name = "".join(ch for ch in (first[0] if first else "")
+    name = "".join(ch for ch in given_name(full_name)
                    if ch.isalpha() and unicodedata.category(ch) != "Lm")
     digits = re.sub(r"\D", "", phone or "")
     if not name or len(digits) < 4:

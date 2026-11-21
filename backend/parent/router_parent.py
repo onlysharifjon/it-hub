@@ -305,7 +305,14 @@ def update_profile(
         raise api_error("validation_error", "Hech qanday maydon yuborilmadi", 422,
                         errors={"__root__": ["display_name yoki avatar_base64 yuboring."]})
     if "display_name" in sent:
-        parent.display_name = payload.display_name
+        # JSON shartnomasi o'zgarmagan: ism formatlanadi ("nodira karimova" -> "Nodira Karimova").
+        # CRM'da faqat ism (bitta so'z) yozilgan bo'lsa va ota-ona ilovada to'liq ism-familiya kiritsa —
+        # full_name ham yangilanadi; ilova GET /profile dagi full_name 2+ so'z bo'lishini shu bilan biladi.
+        name = service.format_person_name(payload.display_name)
+        parent.display_name = name
+        if len(name.split()) >= 2 and len((parent.full_name or "").split()) < 2:
+            log.info("parent full_name completed from app parent=%s", parent.id)
+            parent.full_name = name
     if "avatar_base64" in sent:
         if payload.avatar_base64 is None:
             raise api_error("validation_error", "Rasm noto'g'ri", 422,
